@@ -227,24 +227,28 @@ app.post('/api/materials/parse', rateLimit(20, 'RATE_PARSE_PER_MIN'), upload.arr
 app.post('/api/assets', rateLimit(60, 'RATE_ASSETS_PER_MIN'), upload.single('file'), async (req, res) => {
   try {
     const imageExtension = req.file ? path.extname(req.file.originalname).toLowerCase() : '';
-    const imageTypeMatches = req.file && (req.file.mimetype === 'image/jpeg' ? ['.jpg', '.jpeg'].includes(imageExtension) : req.file.mimetype === 'image/png' ? imageExtension === '.png' : req.file.mimetype === 'image/webp' && imageExtension === '.webp');
-    if (!req.file || req.file.size > 10 * 1024 * 1024 || !/^image\/(jpeg|png|webp)$/.test(req.file.mimetype) || !imageTypeMatches) {
+    const supportedExtensions = ['.jpg', '.jpeg', '.png', '.webp'];
+    if (!req.file || req.file.size > 10 * 1024 * 1024 || !supportedExtensions.includes(imageExtension)) {
       return res.status(400).json({ error: { code: req.file?.size > 10 * 1024 * 1024 ? 'IMAGE_TOO_LARGE' : 'INVALID_IMAGE', message: '图片格式不支持或超过 10MB' } });
     }
     const metadata = await sharp(req.file.buffer, { failOn: 'error' }).metadata();
-    const expectedFormat = { 'image/jpeg': 'jpeg', 'image/png': 'png', 'image/webp': 'webp' }[req.file.mimetype];
-    if (!metadata.format || metadata.format !== expectedFormat) {
+    const imageFormats = {
+      jpeg: { mime: 'image/jpeg', extension: 'jpg' },
+      png: { mime: 'image/png', extension: 'png' },
+      webp: { mime: 'image/webp', extension: 'webp' },
+    };
+    const format = imageFormats[metadata.format];
+    if (!format) {
       return res.status(400).json({ error: { code: 'INVALID_IMAGE', message: '图片内容与文件格式不一致' } });
     }
     if (!metadata.width || !metadata.height || metadata.width > 8000 || metadata.height > 8000) {
       return res.status(400).json({ error: { code: 'DIMENSION_EXCEEDED', message: '图片尺寸过大' } });
     }
     const id = uid('img');
-    const extension = req.file.mimetype === 'image/png' ? 'png' : req.file.mimetype === 'image/webp' ? 'webp' : 'jpg';
-    const filename = `${id}.${extension}`;
-    const normalized = await sharp(req.file.buffer).rotate().removeMetadata().toBuffer({ resolveWithObject: true });
+    const filename = `${id}.${format.extension}`;
+    const normalized = await sharp(req.file.buffer).rotate().toBuffer({ resolveWithObject: true });
     await fs.promises.writeFile(path.join(uploadDir, filename), normalized.data);
-    res.json({ asset: { id, filename, mime: req.file.mimetype, width: normalized.info.width, height: normalized.info.height, bytes: normalized.info.size, url: publicAssetUrl(filename), expiresAt: new Date(Date.now() + Number(process.env.ASSET_TTL_DAYS || 7) * 86_400_000).toISOString(), pasteStatus: 'needs-manual' } });
+    res.json({ asset: { id, filename, mime: format.mime, width: normalized.info.width, height: normalized.info.height, bytes: normalized.info.size, url: publicAssetUrl(filename), expiresAt: new Date(Date.now() + Number(process.env.ASSET_TTL_DAYS || 7) * 86_400_000).toISOString(), pasteStatus: 'needs-manual' } });
   } catch {
     res.status(400).json({ error: { code: 'INVALID_IMAGE', message: '图片无法处理' } });
   }
