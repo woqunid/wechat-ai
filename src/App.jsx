@@ -53,7 +53,6 @@ const blank = () => ({
   targetLength: 1000,
   files: [],
   images: [],
-  privacy: false,
 });
 function parseDocumentBlocks(source, sourceBlocks) {
   const blocks = sourceBlocks.map((block) => structuredClone(block));
@@ -635,7 +634,6 @@ function Create({
   toast,
   setToast,
 }) {
-  const [privacyOpen, setPrivacyOpen] = useState(false);
   const [serviceOpen, setServiceOpen] = useState(false);
   const [aiStatus, setAiStatus] = useState(null);
   const aiConfigured =
@@ -655,16 +653,6 @@ function Create({
         }),
       );
   }, []);
-  const openPrivacy = async () => {
-    try {
-      const response = await fetch("/api/config/status");
-      const data = await response.json();
-      setAiStatus(data);
-    } catch {
-      setAiStatus({ aiConfigured: false });
-    }
-    setPrivacyOpen(true);
-  };
   const textCount =
     input.text.length +
     input.files.reduce((n, f) => n + (f.text?.length || 0), 0);
@@ -709,9 +697,6 @@ function Create({
           >
             <Settings2 size={15} />
             <span>AI 服务</span>
-          </button>
-          <button className="privacy-settings-link" onClick={openPrivacy}>
-            <span>隐私说明</span>
           </button>
         </div>
       </header>
@@ -958,18 +943,6 @@ function Create({
               </div>
             </>
           )}
-          {input.mode !== "raw" && aiConfigured === true && (
-            <div className="privacy-line">
-              <input
-                type="checkbox"
-                checked={input.privacy}
-                onChange={(e) =>
-                  setInput({ ...input, privacy: e.target.checked })
-                }
-              />
-              <span>素材将提交给 AI 服务处理</span>
-            </div>
-          )}
           {input.mode !== "raw" && aiStatus?.configurationError && (
             <div className="ai-config-error" role="alert">
               <span>{aiStatus.configurationError.message}</span>
@@ -985,8 +958,7 @@ function Create({
               textCount > 30000 ||
               loading ||
               aiConfigured === null ||
-              (input.mode !== "raw" && Boolean(aiStatus?.configurationError)) ||
-              (input.mode !== "raw" && aiConfigured === true && !input.privacy)
+              (input.mode !== "raw" && Boolean(aiStatus?.configurationError))
             }
             onClick={generate}
           >
@@ -1050,37 +1022,6 @@ function Create({
                 导出草稿
               </button>
             </div>
-          </section>
-        </div>
-      )}
-      {privacyOpen && (
-        <div className="modal-backdrop" onClick={() => setPrivacyOpen(false)}>
-          <section
-            className="small-modal privacy-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              className="modal-close"
-              onClick={() => setPrivacyOpen(false)}
-            >
-              <X size={18} />
-            </button>
-            <span className="eyebrow">隐私与服务</span>
-            <h2>{aiConfigured ? "AI 服务已配置" : "AI 服务未配置"}</h2>
-            <p>
-              {aiConfigured
-                ? "素材会提交给已配置的 AI 服务，用于生成或润色。"
-                : "当前使用本地示例文章。配置服务后可使用 AI 生成与润色。"}
-            </p>
-            <p>
-              文档只在解析时提交到本服务，解析后不保存。上传图片保存在服务器七天，文章与本地图片副本保存在当前浏览器。
-            </p>
-            <button
-              className="publish-action"
-              onClick={() => setPrivacyOpen(false)}
-            >
-              关闭
-            </button>
           </section>
         </div>
       )}
@@ -1874,7 +1815,7 @@ function Edit({
               <iframe
                 ref={iframe}
                 title="文章实时预览"
-                sandbox=""
+                sandbox="allow-same-origin"
                 style={{ width: previewWidth, height: "calc(100vh - 236px)" }}
               />
             </div>
@@ -2019,29 +1960,7 @@ function Edit({
             <button className="modal-close" onClick={() => setModal(null)}>
               <X size={18} />
             </button>
-            {modal === "privacy" ? (
-              <>
-                <span className="eyebrow">隐私与服务</span>
-                <h2>素材与草稿</h2>
-                <p>
-                  {article.settings?.mockGenerated
-                    ? "当前使用本地示例内容。"
-                    : "素材会提交给已配置的 AI 服务，用于生成或润色。"}
-                </p>
-                <p>
-                  文档只在解析期间提交到本服务，解析后不保存。文章和图片副本保存在当前浏览器；服务器图片默认七天后清理。
-                </p>
-                <p>AI 服务配置保存在服务端，密钥不会存入浏览器。</p>
-                <div className="modal-buttons">
-                  <button
-                    className="ghost-action"
-                    onClick={() => setModal(null)}
-                  >
-                    关闭
-                  </button>
-                </div>
-              </>
-            ) : modal === "storage-error" ? (
+            {modal === "storage-error" ? (
               <>
                 <span className="eyebrow">本地保存</span>
                 <h2>浏览器空间不足</h2>
