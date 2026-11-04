@@ -1,0 +1,29 @@
+{
+  "name": "wechat-ai-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"vite --host 0.0.0.0\" \"node server/index.js\"",
+    "build": "vite build",
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "6.2.1",
+    "concurrently": "10.0.6",
+    "dotenv": "18.0.9",
+    "express": "5.3.0",
+    "htmlparser2": "^12.0.0",
+    "lucide-react": "1.67.0",
+    "mammoth": "1.13.0",
+    "multer": "2.5.0",
+    "pdf-parse": "1.1.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "sharp": "0.35.5",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "vite": "8.3.5"
+  }
+}

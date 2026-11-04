@@ -1,0 +1,260 @@
+# 实施计划（plan.md）
+
+版本：v1.0｜日期：2026-11-03｜依据：`spec.md`（需求以其为准）、`wechat_ai_mvp_prd_v1.md`
+使用方式：按阶段顺序执行；每个任务有编号、依赖、产出和验收。任务完成后把 `[ ]` 改为 `[x]`。任何需求变更先改 spec.md，再改本文。
+
+---
+
+## 0. 范围调整（2026-11-03，需求方确认）
+
+- **不编写自动化测试**：本文中出现的 Vitest / Playwright / 截图回归 / 属性测试等任务一律不做；各任务的"验收"仅作为需求方独立测试时的检查口径。开发交付标准是：按本文与 spec 编写完成后，应用可启动、能正常预览、能复制。
+- 因此 `packages/fixtures` 仅保留供手动预览的样张（含示例文章），不含测试用例；"自动断言"类约束（如同系列模板差异数、对比度）改为在模板加载时的开发期校验函数（`validateTemplates()`，控制台告警），不作为测试。
+- **AI 服务商**：仅 OpenAI 兼容接口，不向用户提供任何选择。服务端同时实现 Chat Completions（`/chat/completions`）与 Responses（`/responses`）两种调用，**启动后首次调用前探测**：先试 Responses，若返回 404/405/不支持则回退 Chat Completions，结果缓存在进程内；可用 `AI_API_STYLE=auto|chat|responses`（默认 `auto`）覆盖。取代下文 M2-4 中"可加 Anthropic 实现"的表述。
+
+### 自动获取模型（2026-11-04）
+
+- [x] 服务端接入 URL/Key 校验、模型发现、配置保存/恢复及脱敏状态接口；模型失效或请求失败不覆盖原配置。
+- [x] 创作页、编辑页接入 AI 服务设置，展示模型列表、保存状态与具体错误；密钥不进入浏览器存储。
+- [x] 文章生成使用已保存配置；缺少 `AI_MODEL` 时自动发现；按配置缓存接口探测，保留 Responses 到 Chat Completions 回退。
+- [x] 更新接口与配置文档，完成构建、语法检查和本地接口/页面冒烟验证；不新增自动化测试套件。
+
+## 1. 技术选型
+
+| 层 | 选择 | 理由 |
+|---|---|---|
+| 包管理/仓库 | pnpm workspace monorepo | 前后端共享 Schema、渲染器、模板 |
+| 语言 | TypeScript（strict） | 共享类型，减少前后端不一致 |
+| 前端 | React 18 + Vite + Zustand | 三栏编辑器状态简单，开发快 |
+| 样式（应用本体） | Tailwind CSS 或 CSS Modules（二选一，M0 定） | 与"模板样式"严格分离，模板只由 renderer 产出内联样式 |
+| 本地存储 | Dexie（IndexedDB） | 存草稿与图片 Blob |
+| 后端 | Node 20 + Fastify | 轻量，multipart/限流插件成熟 |
+| 校验 | Zod | 一份 Schema 同时用于类型、API 校验、AI 输出校验 |
+| 文件解析 | `mammoth`（docx）、`pdfjs-dist` 或 `pdf-parse`（pdf）、`iconv-lite`（GBK 回退）、`file-type`（magic bytes） | |
+| 图片处理 | `sharp`（尺寸、去 EXIF、格式校验） | |
+| AI | `LLMProvider` 抽象 + OpenAI 兼容实现（默认，读 `AI_BASE_URL/AI_API_KEY/AI_MODEL`）；可加 Anthropic 实现 | 当前环境默认模型为 deepseek 系列；密钥只在服务端 |
+| 测试 | Vitest（单元/集成）、Playwright（E2E、截图回归） | |
+| 代码质量 | ESLint + Prettier + `tsc --noEmit` + husky/lint-staged（可选） | |
+
+> 若 M0 阶段发现必须改栈（如部署平台限制），先改本节再改代码。
+
+---
+
+## 2. 架构与目录
+
+```
+wechat-ai/
+├─ apps/
+│  ├─ web/                  # React 前端
+│  │  └─ src/{pages,components,stores,services,storage,styles}
+│  └─ server/               # Fastify 后端
+│     └─ src/{routes,services/{parse,ai,assets},middleware,config}
+├─ packages/
+│  ├─ core/                 # Article/Block/Asset 类型 + Zod Schema + 常量/限制 + 一致性检测 plain()
+│  ├─ templates/            # 40 套 TemplateMeta（tokens.ts）+ 维度枚举 + 校验
+│  ├─ renderer/             # renderArticle、各 layout 生成器、sanitize 白名单、纯文本生成
+│  ├─ recommender/          # 特征提取、词典、评分、选取 3 套、规则文案
+│  ├─ rawparser/            # 原文排版的确定性解析（md/txt/docx 段落模型）
+│  └─ fixtures/             # 标准样张与边界样张、样例文件（docx/pdf/…）
+├─ tools/
+│  ├─ gen-thumbs.ts         # 用 Playwright 渲染样张生成缩略图
+│  └─ compat-harness/       # 阶段 1 的复制原型页
+├─ docs/{compat-notes.md, compat-report.md, known-limitations.md, api.md}
+├─ spec.md  plan.md  THIRD_PARTY.md
+└─ .env.example
+```
+
+依赖方向（只能向下）：`web/server → recommender/renderer/rawparser → templates → core`。`renderer` 不得依赖 DOM、React、Node API，保证前后端、测试、截图工具都可用。
+
+数据流：
+```
+P01 输入 ─(create/polish)→ server /articles/generate → ArticleDraft ┐
+        └─(raw)→ rawparser(本地) → 一致性检测 → ArticleDraft ─────┤
+                                                                   ▼
+                     useDraftStore(Article) ⇄ IndexedDB
+                          │               │              │
+                    编辑器 UI        recommender      renderer(preview) → iframe 预览
+                                                     renderer(wechat)  → 剪贴板
+```
+
+---
+
+## 3. 全局约定
+
+- **完成定义（DoD）**：代码+测试+类型检查通过；对应 spec 条款可被指出；无 `any` 逃逸（必要处注释理由）；无控制台报错。
+- **分支/提交**：功能分支，提交信息 `feat|fix|test|docs(scope): ...`；每个任务至少一次提交。
+- **配置**：全部通过 `.env`（`AI_BASE_URL, AI_API_KEY, AI_MODEL, AI_TIMEOUT_MS, ASSET_DIR, ASSET_TTL_DAYS, PUBLIC_BASE_URL, ALLOWED_ORIGIN, RATE_*`）；`.env.example` 入库，真实 `.env` 不入库。
+- **Mock 优先**：AI 提供者有 `MockProvider`（返回 fixtures），前端与 E2E 默认使用，以便离线开发与稳定测试。
+- **模板状态**：新实现的模板默认 `draft`，通过自动测试+真实回归后才改 `available`。
+
+---
+
+## 4. 里程碑总览
+
+| 里程碑 | 对应 PRD 阶段 | 目标 | 退出标准 |
+|---|---|---|---|
+| M0 工程脚手架 | — | 仓库、工具链、CI 脚本、共享包骨架 | `pnpm test/lint/typecheck` 在空项目上通过 |
+| M1 基础验证 | ① | Schema、渲染器雏形、5 套代表模板、复制原型、真实公众号粘贴实测 | `docs/compat-notes.md` 给出图片/样式结论；5 套粘贴可读 |
+| M2 核心 MVP | ② | 输入、AI 三模式、编辑、预览、推荐、草稿、复制闭环 | 六项功能端到端贯通，A01–A04、A06、A07(部分)、A09 通过 |
+| M3 全量模板 | ③ | 40 套完整实现、缩略图、模板库、批量回归 | A05、A07、A08 通过；360 张基线审核完成 |
+| M4 上线验收 | ④ | 安全、异常、兼容、真实回归、文档 | spec §13.4 清单全勾 |
+
+建议节奏（单人全职参考）：M0 1–2 天｜M1 3–5 天｜M2 2–3 周｜M3 2–3 周（模板设计占大头）｜M4 1 周。以实际为准。
+
+---
+
+## 5. M0 工程脚手架
+
+- [ ] **M0-1** 初始化 pnpm workspace、`tsconfig.base.json`（strict）、ESLint、Prettier。*产出*：根配置。*验收*：`pnpm -r typecheck` 通过。
+- [ ] **M0-2** 创建 `packages/*`、`apps/*` 骨架（各自 package.json、index.ts、vitest 配置）。*验收*：跨包引用可编译。
+- [ ] **M0-3** `apps/web` Vite+React 初始化，空页面运行；`apps/server` Fastify 启动并提供 `GET /api/health`。*验收*：浏览器访问前端，前端能请求 health（含开发代理）。
+- [ ] **M0-4** 根脚本：`dev`（并行启动）、`test`、`lint`、`typecheck`、`e2e`、`build`。`.env.example`。
+- [ ] **M0-5** `THIRD_PARTY.md` 占位与许可证检查脚本（`license-checker` 或同类）。
+- [ ] **M0-6** Git 仓库初始化、`.gitignore`（含 `.env`、`ASSET_DIR`、`node_modules`、截图临时目录）。
+
+---
+
+## 6. M1 基础验证（先验证最大风险：微信粘贴）
+
+目标：尽早回答"这套 HTML 子集在真实公众号后台粘贴后是否可用、图片怎么办"，结论决定后续渲染与图片方案。
+
+- [ ] **M1-1 核心类型与 Schema**（`core`）：Block、Run、Article、Asset、ArticleDraft 的 TS 类型+Zod；限制常量（字数、文件数等，spec §3/§4/§5）；校验函数；id 生成。*验收*：单元测试覆盖合法/非法样例（每种块≥2 个反例）。
+- [ ] **M1-2 渲染器骨架**（`renderer`）：`renderArticle`；`sanitize` 白名单扫描（标签、CSS 属性、协议）；HTML 转义；纯文本生成；`ImageRef` 清单。*验收*：对样张输出通过白名单扫描；注入 `<script>`、`onerror`、`javascript:` 用例被转义/丢弃；纯函数、无 DOM 依赖。
+- [ ] **M1-3 版式生成器与 token 体系**：实现 `titleLayout`、`sectionMark`、`calloutStyle`、`cardStyle`、`rhythm` 各取值的结构生成器（先覆盖 5 套代表模板用到的取值）。*验收*：每个取值有快照测试。
+- [ ] **M1-4 5 套代表模板**：T01（极简）、T06（科技）、T11（商务）、T26（活动）、T37（品牌），选择覆盖差异最大的维度组合。*验收*：三种样张下视觉合理，对比度测试通过。
+- [ ] **M1-5 复制原型页**（`tools/compat-harness`）：选择样张+模板→预览→`clipboard.write`（html+plain）；含"纯文本备选"。*验收*：Chrome 点击后用 `clipboard.readText/read` 验证双格式。
+- [ ] **M1-6 真实公众号粘贴实测**（**需人工，需公众号账号**）：对 5 套×3 样张执行"复制→粘贴→保存草稿→重开"，并单独实测图片四种情形（公网 https 外链、localhost 外链、data: URI、带防盗链）。截图与结论写入 `docs/compat-notes.md`。*验收*：文档明确回答——哪些样式保留/被改写；图片各情形结果；是否需调整白名单（如 `border-radius`、`display`、`letter-spacing`）。
+- [ ] **M1-7 依据实测调整**：更新 spec §8.2 白名单与 §8.4 图片策略（有变动必须同步修改 spec）；决定最终图片方案：
+  - 方案 A（外链可用）：服务端公网 URL 直接输出 `<img>`。
+  - 方案 B（外链不可用）：复制 HTML 保留 `<img>` 占位+P04 提供"按顺序下载图片包"和逐张替换指引。
+- [ ] **M1-8 阶段评审**：向需求方展示 5 套模板粘贴结果与图片结论，确认是否进入 M2。
+
+> 如果 M1-6 发现大量样式被公众号剥离，优先缩小白名单/改版式生成器，而不是继续堆模板。
+
+---
+
+## 7. M2 核心 MVP
+
+### 7.1 后端
+- [ ] **M2-1 配置与中间件**：env 校验（Zod）、CORS、请求 ID、统一错误处理（`{error:{code,message}}`）、限流（`@fastify/rate-limit`，按路由配置）、日志（不记录正文）。*验收*：429 带 `Retry-After`；错误体格式统一；日志无素材全文。
+- [ ] **M2-2 文档解析服务**（依赖 M2-1）：`POST /api/materials/parse`；docx/pdf/txt/md；编码回退；magic bytes；提取质量检查；解析超时与页数上限；单文件失败隔离；不落盘。*验收*：`fixtures` 样例集——正常 docx/pdf/txt/md 成功；扫描 PDF、加密 PDF、损坏文件、改后缀文件、空文件、GBK txt 各有预期结果（spec A02、§4.1）。
+- [ ] **M2-3 图片资产服务**：`POST /api/assets`、`DELETE /api/assets/:id`、静态访问路由；sharp 校验与去 EXIF；尺寸上限；随机 ID；TTL 清理任务（可由脚本/定时器触发）。*验收*：非图片伪装被拒；EXIF GPS 被移除；过期清理有测试；返回 `Asset.url` 基于 `PUBLIC_BASE_URL`。
+- [ ] **M2-4 AI Provider 抽象**：`LLMProvider` 接口；OpenAI 兼容实现（超时、AbortSignal）；`MockProvider`。*验收*：可通过 env 切换；超时用例。
+- [ ] **M2-5 提示词与生成服务**（依赖 M1-1、M2-4）：create/polish 提示词（版本化）；素材分隔与注入防护；要求只输出符合 Schema 的 JSON；Zod 校验；失败自动重试 1 次并回传校验错误；服务端重新生成 block id；校验 assetId 引用并补齐遗漏图片；润色模式受保护片段校验（spec §4.2.1）生成 warnings；字数目标写入提示词。*验收*：Mock 返回非法 JSON/缺字段/越界 assetId/超长文本均被正确处理；重试只发生 1 次；真实模型冒烟测试（手动）三种长度各一次。
+- [ ] **M2-6 `POST /api/articles/generate`** 路由：参数校验、模式分支、错误码映射（spec §9）、并发限制。*验收*：每个错误码有集成测试。
+- [ ] **M2-7 `POST /api/templates/recommend/explain`**（可后置到 M2 末）：8 秒超时，失败回退。
+
+### 7.2 前端共享逻辑
+- [ ] **M2-8 rawparser**（`rawparser`）：md/txt/docx 段落→Block；规则按 spec §4.3；`plain()` 与一致性检测在 `core`。*验收*：每条规则≥2 个用例；含中文标点、全角空格、`\r\n`、混合列表；一致性检测对故意删字/改字的用例报错并定位。
+- [ ] **M2-9 recommender**：特征提取、词典（初版每类 ≥30 词）、评分、选取 3 套（不同系列）、规则文案。*验收*：纯函数、同输入同输出；任意输入得到 3 个不同系列；使用 5 套 M1 模板+占位元数据先行测试，M3 完成后用全量元数据再测。
+- [ ] **M2-10 草稿存储**（`apps/web/src/storage`）：Dexie 表 `drafts/blobs/inputs/snapshots`；防抖保存；恢复；配额错误处理；清空草稿并调用删除资产。*验收*：刷新恢复（A04）；配额模拟失败提示。
+
+### 7.3 前端页面
+- [ ] **M2-11 应用外壳与路由**：P01/P02 路由；启动检测草稿并询问恢复；隐私声明确认。
+- [ ] **M2-12 P01 创作页**：文本/主题/模式/语气/长度；文档与图片上传（逐项状态、预览片段、删除）；校验矩阵（spec §3.1）；字数统计；超长/超目标长度提示。*验收*：各校验分支与提示语与 spec 一致；上传失败仅影响单项。
+- [ ] **M2-13 生成流程**：调用 generate（create/polish）或本地解析（raw）；加载态分阶段；取消；错误与重试；成功后写入 store、触发推荐、跳转 P02。*验收*：断网/超时/429/无效输出用例（Mock 注入）。
+- [ ] **M2-14 P02 左栏内容编辑器**：标题/摘要；块列表；各块类型编辑组件；行内加粗/重点色；新增/删除（5 秒撤销）/移动/类型切换（含降级提示）；图片插入/替换/删除/caption；图片块与 imageCard 互转；撤销重做；粘贴去格式。*验收*：spec §4.5 每条操作有 E2E 或组件测试。
+- [ ] **M2-15 P02 中栏预览**：手机外框、仿公众号头部、宽度切换、sandbox iframe + srcdoc、防抖更新、保持滚动位置、图片失败占位、宽屏检查。*验收*：断言 preview 主体 HTML 与 wechat 模式一致（排除外壳）；图片 404 显示占位。
+- [ ] **M2-16 P02 右栏推荐**：推荐 3 套卡片（M1 的 5 套模板可用即可）、选中态、推荐理由、"重新推荐"；"全部 40 套"入口（M3 前显示现有模板）。
+- [ ] **M2-17 重新生成与快照**：二次确认；快照；撤销到重新生成前。
+- [ ] **M2-18 复制与 P04**：复制流程（spec §8.5）、错误分类、成功态、图片清单（可粘贴性三态、下载原图）、纯文本备选、粘贴步骤。*验收*：Playwright 授权剪贴板后断言双格式；模拟权限拒绝/不支持。
+- [ ] **M2-19 应用级文案与空/错/加载态**：对照 spec §3.4.1 逐页检查。
+- [ ] **M2-20 M2 端到端回归**：用 Mock AI 跑通"主题→生成→编辑→切模板→复制"、raw 流程、刷新恢复；用真实 AI 手动跑一次 create 与 polish。*退出标准*：A01–A04、A06、A09 通过，A07 在已有模板上通过。
+
+---
+
+## 8. M3 全量模板（40 套）
+
+### 8.1 版式生成器补全
+- [ ] **M3-1** 补全所有维度取值的生成器（titleLayout 11 种、sectionMark 12 种、calloutStyle 8 种、cardStyle 8 种、rhythm 3 种），逐一快照测试，并确认全部使用白名单属性。*验收*：生成器测试 100% 覆盖各取值；sanitize 扫描无告警。
+- [ ] **M3-2 模板元数据文件**：按 spec §6.4 写入 `packages/templates`：40 套 `TemplateMeta`（含 industries、styleTags、fit、完整 tokens）。*验收*：
+  - 恰好 40 个、ID 连续唯一；
+  - 同系列任意两套 5 维度差异数 ≥2（自动断言）；
+  - 对比度断言（spec §6.4 末尾）；
+  - tokens 数值范围断言（字号、圆角、间距）。
+- [ ] **M3-3 设计走查**：按系列逐套目视检查（8 批，每批 5 套），修正 token 或生成器；记录在 PR 描述。*验收*：每套在三篇样张下无明显缺陷。
+
+### 8.2 模板库与缩略图
+- [ ] **M3-4 缩略图生成**（`tools/gen-thumbs.ts`）：Playwright 渲染"标准样张"→截图→压缩→输出 `thumb-Txx.png`；纳入构建。*验收*：40 张，尺寸统一；缩略图由真实渲染产生（A05"与完整版一致"）。
+- [ ] **M3-5 P03 模板选择弹层**：系列筛选、搜索、网格懒加载、试用态/确定/取消、当前与推荐标记、空结果。*验收*：首次加载 ≤3 秒（Lighthouse/手动计时，普通网络）；切换≤1 秒（2000 字+5 图）。
+- [ ] **M3-6 推荐用全量数据复测**：补充词典；构造 ≥30 篇覆盖各类型的测试文本，检查推荐合理（人工评审），调整权重（权重变更须更新 spec §7.2）。
+
+### 8.3 批量回归
+- [ ] **M3-7 自动测试矩阵**：40×3 样张×3 宽度渲染；检查横向溢出、文本完整性、白名单、空标签、对比度；生成 360 张截图基线并人工审核。*验收*：全部通过；基线入库（或存于 CI 制品，需决定并写入 docs）。
+- [ ] **M3-8 真实公众号回归**（**人工**）：40 套×(Chrome, Edge)；含图文卡片模板检查图片。记录到 `docs/compat-report.md` 表。问题按"模板×问题"建缺陷项，修复后复测。*验收*：全部模板问题关闭，才可批量置 `available`。
+- [ ] **M3-9 置位 available**：由测试结果生成脚本更新 `status`；上线构建断言 40 套均 available。
+- *退出标准*：A05、A07（40 套）、A08 通过。
+
+---
+
+## 9. M4 上线验收
+
+- [ ] **M4-1 安全检查**：构建产物 grep 无密钥；上传攻击用例（伪装类型、超大文件、路径穿越、zip 炸弹/超页数 PDF）；XSS 用例集（标题、段落、caption、cite、文件名）；CSP 配置验证；CORS 验证；限流压测。*验收*：用例全部被拦截或转义，并有自动化测试。
+- [ ] **M4-2 异常矩阵逐项验证**：对照 spec §11 每行执行并记录（可用 Mock 注入失败）。
+- [ ] **M4-3 浏览器兼容**：Chrome/Edge 最新两个大版本手动走主流程；非 Chromium 浏览器显示"请使用 Chrome/Edge"提示且纯文本备选可用。
+- [ ] **M4-4 性能验证**：模板目录首屏、模板切换耗时、编辑流畅度（块数 120、文本 30,000 字）、AI 延迟与失败率记录。
+- [ ] **M4-5 可访问性基础检查**：键盘走查、焦点可见、表单错误关联。
+- [ ] **M4-6 AI 内容标识与隐私**：落实 spec §10 的提示文案；素材保留期、删除机制、审核规则按运营确认值配置，未确认则以默认值上线并在文档标注待确认。
+- [ ] **M4-7 最终真实公众号回归（A10）**：随机抽 8 套（每系列 1 套）复测"复制→粘贴→保存草稿→重开"。
+- [ ] **M4-8 文档**：`docs/api.md`（由 Zod/手写）、`docs/known-limitations.md`、README（安装、配置、开发、部署）、`THIRD_PARTY.md` 终稿。
+- [ ] **M4-9 部署**：构建、环境变量、HTTPS（剪贴板必需）、静态资源与 `ASSET_DIR` 持久化与清理定时任务、健康检查、日志。*验收*：在 HTTPS 域名下走通完整流程。
+- [ ] **M4-10 上线清单**：逐项勾选 spec §13.4。
+
+---
+
+## 10. 测试策略
+
+| 类型 | 范围 | 工具 | 触发 |
+|---|---|---|---|
+| 单元 | core Schema、plain/一致性、rawparser、recommender、renderer 各生成器、sanitize | Vitest | 每次提交 |
+| 属性/模糊 | renderer：随机文本（含特殊字符/emoji/超长）输出始终通过 sanitize 且可见文本不丢 | Vitest + fast-check | 每次提交 |
+| 集成 | 后端各路由（parse/assets/generate），Mock AI 与真实解析库 | Vitest + fastify.inject | 每次提交 |
+| 组件 | 编辑器块操作、P01 校验 | Vitest + Testing Library | 每次提交 |
+| E2E | 主流程、raw 流程、异常流程、刷新恢复、复制双格式 | Playwright（Chromium；Edge 通道可选） | PR/每日 |
+| 视觉回归 | 40×3×3 截图 | Playwright 截图对比 | 模板或渲染器变更时 |
+| 真实回归 | 公众号后台粘贴 | 人工 + 记录表 | M1、M3、M4 |
+| AI 质量 | 真实模型对 10 个固定主题/素材：校验 Schema 通过率、受保护片段保留率、字数偏差 | 脚本+人工抽查 | 提示词变更时 |
+
+关键断言（必须自动化）：
+1. 切换模板前后 `article` 深比较相等，且无网络请求。（A07）
+2. 预览 HTML 主体与复制 HTML 主体一致。
+3. 渲染后可见文本拼接 = 文章文本拼接（无丢字）。
+4. raw 模式 `plain(blocks)===plain(source)`。
+5. 推荐 3 套来自 3 个不同系列、结果确定。
+6. 任一渲染输出通过 HTML/CSS 白名单扫描。
+
+---
+
+## 11. 风险与对策
+
+| 风险 | 影响 | 对策 |
+|---|---|---|
+| 公众号对粘贴 HTML 的处理与预期不符（样式被剥离） | 模板效果失真，返工量大 | M1 先实测并以结果收敛白名单；渲染器集中控制样式出口 |
+| 外链/本地图片无法在公众号保留 | 图文体验受损 | M1-6 实测；方案 B（下载包+逐张替换）与清晰提示；不声称无损 |
+| AI 输出不稳定、虚构事实 | 内容质量/合规 | Schema 校验+重试；提示词约束；润色后置校验；编辑页显式"请核对"提示 |
+| 40 套模板设计工作量大 | M3 延期 | 维度生成器复用；按系列批次推进并每批走查；允许人工回归并行 |
+| 模板差异化不足 | 不满足"非换色" | 自动差异断言+设计走查；必要时增加维度取值 |
+| 本地存储配额/丢失 | 用户损失草稿 | 配额提示、导出 JSON、恢复提示与告知文案 |
+| 解析库对复杂 docx/PDF 失败 | 体验差 | 明确错误提示+引导粘贴；样例集持续扩充 |
+| 提示词注入 | 输出被操纵 | 数据区隔离、仅结构化输出、Schema 验证，输出不可执行 |
+| 剪贴板 API 限制（HTTPS、用户手势） | 复制失败 | 同步调用栈内调用；错误分类提示；纯文本备选 |
+| 依赖许可证问题 | 合规 | M0-5 脚本持续检查 |
+
+---
+
+## 12. 开放事项（不阻塞开发，需在对应里程碑前确认）
+
+| 事项 | 需要的人 | 最晚确认点 | 暂定默认 |
+|---|---|---|---|
+| 真实公众号账号与测试权限 | 需求方 | M1-6 | 无则 M1 无法完成，需优先提供 |
+| 正式使用的 AI 服务商/模型 | 需求方 | M2-5 | OpenAI 兼容接口，默认 deepseek 系列 |
+| 部署环境（域名、HTTPS、服务器） | 需求方 | M4-9 | 自备 Node 主机 + 反向代理 |
+| 素材保留期、AI 内容标识与审核规则 | 运营/法务 | M4-6 | 图片 7 天；文档不落盘；标识默认关闭 |
+| 截图基线存放方式 | 开发 | M3-7 | 入库（Git LFS 或制品库） |
+| 应用本体样式方案（Tailwind / CSS Modules） | 开发 | M0-3 | Tailwind |
+
+---
+
+## 13. 变更管理
+- 需求变化：先改 spec.md（并在 §0 记录），再改本文任务。
+- 白名单、图片策略、推荐权重的调整必须同步 spec 对应章节。
+- 每个里程碑结束更新本文勾选状态并写 3–5 行回顾（做了什么、偏差、下一步）。
