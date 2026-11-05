@@ -28,6 +28,7 @@ import { describeTemplateFit, recommendTemplates } from "./recommender";
 import { AIServiceSettings } from "./AIServiceSettings";
 import { ArticleEditor } from "./ArticleEditor";
 import { ImageLinkInput } from "./ImageLinkInput";
+import { clearArticleStyles, layoutSignature } from "./layout-design.js";
 import {
   saveAsset,
   loadAssets,
@@ -46,6 +47,7 @@ import {
 import "./styles.css";
 
 const API = "";
+const LayoutDesigner = React.lazy(() => import('./LayoutDesigner').then(module => ({ default: module.LayoutDesigner })));
 const sample = `城市正在重新定义工作方式。技术、组织与个人选择彼此交织，新的效率机会也带来了新的判断成本。\n\n真正有价值的变化，通常从一个具体问题开始：我们如何把时间留给更重要的事？`;
 const blank = () => ({
   topic: "",
@@ -1039,7 +1041,7 @@ function TemplateThumb({ article, template, assets, large = false }) {
   const container = useRef();
   const [scale, setScale] = useState(large ? 0.5 : 0.2);
   const html = useMemo(() => renderArticle(
-    { ...article, blocks: article.blocks.slice(0, 12) },
+    { ...article, layoutDesign: undefined, blocks: article.blocks.slice(0, 12) },
     template,
     assets,
     { mode: "preview" },
@@ -1104,7 +1106,11 @@ function Edit({
   const [library, setLibrary] = useState(false);
   const [libraryView, setLibraryView] = useState("templates");
   const [libraryOriginal, setLibraryOriginal] = useState(selected);
+  const [layoutTrial, setLayoutTrial] = useState(null);
+  const [layoutReset, setLayoutReset] = useState(0);
+  const resetLayoutTrial = () => { setLayoutTrial(null); setLayoutReset(value => value + 1); };
   const openLibrary = () => {
+    resetLayoutTrial();
     setLibraryOriginal(selected);
     setLibraryView("templates");
     setLibrary(true);
@@ -1154,6 +1160,7 @@ function Edit({
     setHistorySize(history.current.length);
     historyMove.current = true;
     setArticle(prev);
+    setSelected(prev.templateId);
   };
   const redo = () => {
     const next = future.current.pop();
@@ -1163,6 +1170,7 @@ function Edit({
     setFutureSize(future.current.length);
     historyMove.current = true;
     setArticle(next);
+    setSelected(next.templateId);
   };
   useEffect(() => {
     const key = (e) => {
@@ -1241,12 +1249,12 @@ function Edit({
   const preview = useMemo(
     () =>
       renderArticle(
-        { ...article, settings: { ...article.settings, accountName: account } },
+        { ...(layoutTrial?.signature === layoutSignature(article) ? clearArticleStyles(article) : article), layoutDesign: library ? undefined : layoutTrial?.signature === layoutSignature(article) ? layoutTrial.design : article.layoutDesign, settings: { ...article.settings, accountName: account } },
         template,
         assets,
         { mode: "preview", interactive: true },
       ).html,
-    [article, template, assets, account],
+    [article, template, assets, account, library, layoutTrial],
   );
   useEffect(() => {
     let removeClick;
@@ -1286,11 +1294,13 @@ function Edit({
     };
   }, [preview]);
   const chooseTemplate = (id) => {
+    resetLayoutTrial();
     setSelected(id);
     if (!library)
       setArticle((a) => ({
         ...a,
         templateId: id,
+        layoutDesign: undefined,
         updatedAt: new Date().toISOString(),
       }));
   };
@@ -1432,7 +1442,7 @@ function Edit({
           <button className="ghost-action" onClick={() => setModal("clear")}>
             清空草稿
           </button>
-          <button className="publish-action" onClick={() => copy()}>
+          <button className="publish-action" disabled={Boolean(layoutTrial)} title={layoutTrial ? '应用新版式后再复制' : undefined} onClick={() => copy()}>
             <Copy size={16} />
             复制到公众号
           </button>
@@ -1607,7 +1617,7 @@ function Edit({
         </aside>
         <main className="preview-pane">
           <div className="preview-toolbar">
-            <span className="preview-label">实时预览<small>点击内容，双向定位</small></span>
+            <span className="preview-label">{layoutTrial ? '新版式试用' : '实时预览'}<small>{layoutTrial ? '应用后即可复制' : '点击内容，双向定位'}</small></span>
             <div className="width-switch">
               {[320, 375, 414].map((w) => (
                 <button
@@ -1683,6 +1693,7 @@ function Edit({
             </div>
             <span className="template-total">{templates.length}</span>
           </div>
+          <React.Suspense fallback={null}><LayoutDesigner key={article.id} article={article} setArticle={setArticle} onTrial={setLayoutTrial} resetKey={layoutReset} disabled={library || regenerating} setToast={setToast} /></React.Suspense>
           <div className="recommend-label">
             <span>为这篇文章挑选</span>
             <small>随内容实时匹配</small>
@@ -1715,10 +1726,10 @@ function Edit({
           <div className="template-current">
             <span>当前使用</span>
             <strong>
-              {template.id} · {template.name}
+              {article.layoutDesign ? article.layoutDesign.name : `${template.id} · ${template.name}`}
             </strong>
-            <p>{template.visual}</p>
-            <small>{describeTemplateFit(article, template)}</small>
+            <p>{article.layoutDesign ? article.layoutDesign.description : template.visual}</p>
+            <small>{article.layoutDesign ? 'AI 定制排版 · 全文保留' : describeTemplateFit(article, template)}</small>
           </div>
         </aside>
       </div>
@@ -1820,6 +1831,7 @@ function Edit({
                   setArticle((a) => ({
                     ...a,
                     templateId: selected,
+                    layoutDesign: undefined,
                     updatedAt: new Date().toISOString(),
                   }));
                   setLibrary(false);

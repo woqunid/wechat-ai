@@ -17,6 +17,9 @@ import { recommendTemplates } from '../src/recommender.js';
 import { DomUtils, parseDocument } from 'htmlparser2';
 import { fetchModels, getAIConfig, getAIStatus, resetAIConfig, resolveAIConfig, resolveCredentials, saveAIConfig } from './ai-config.js';
 import { fetchRemoteImage, MAX_IMAGE_BYTES } from './remote-image.js';
+import { clearArticleStyles, layoutSource, LAYOUT_TIMEOUT_MS, validateLayoutDesign } from '../src/layout-design.js';
+import { renderArticle } from '../src/renderer.js';
+import { layoutInstructions } from './layout-rules.js';
 
 dotenv.config();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -71,7 +74,10 @@ const concurrentGenerationLimit = (req, res, next) => {
     return res.status(429).json({ error: { code: 'RATE_LIMITED', message: '生成任务较多，请稍后再试' } });
   }
   activeGenerations++;
-  res.once('finish', () => activeGenerations--);
+  let released = false;
+  const release = () => { if (!released) { released = true; activeGenerations--; } };
+  res.once('finish', release);
+  res.once('close', release);
   next();
 };
 const waitFor = (promise, ms) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('parse timeout')), ms))]);
@@ -284,13 +290,13 @@ app.delete('/api/assets/:id', (req, res) => {
 });
 
 const outputText = data => data.output_text || data.choices?.[0]?.message?.content || data.output?.flatMap(item => item.content || []).find(item => item.type === 'output_text')?.text || '';
-async function requestModel({ config, system, source, topic, mode, tone, targetLength, assetIds, template, task, signal, previousError, revision }) {
+async function requestModel({ config, system, source, topic, mode, tone, targetLength, assetIds, template, task, signal, previousError, revision, inputData }) {
   const base = config.baseUrl;
   const style = process.env.AI_API_STYLE || 'auto';
   const cacheKey = `${base}\0${crypto.createHash('sha256').update(config.apiKey).digest('hex')}\0${config.model}`;
   const resolvedApiStyle = resolvedApiStyles.get(cacheKey);
   const templateContentGuide = template ? { preferredBlocks: template.fit.preferredBlocks, headingLevels: [1, 2], missingContent: 'omit', priority: 'below-writing-rules' } : undefined;
-  const input = JSON.stringify({ task: task || (mode === 'polish' ? '润色文章，保留事实与重要细节及叙事顺序' : '基于主题和素材创作文章'), mode, topic, source, imageAssetIds: assetIds, tone, targetLength, templateContentGuide, revision, schemaVersion: 1, previousValidationError: previousError || undefined });
+  const input = JSON.stringify(inputData || { task: task || (mode === 'polish' ? '润色文章，保留事实与重要细节及叙事顺序' : '基于主题和素材创作文章'), mode, topic, source, imageAssetIds: assetIds, tone, targetLength, templateContentGuide, revision, schemaVersion: 1, previousValidationError: previousError || undefined });
   const responsesBody = { model: config.model, input: [{ role: 'system', content: [{ type: 'input_text', text: system }] }, { role: 'user', content: [{ type: 'input_text', text: input }] }], text: { format: { type: 'json_object' } } };
   const chatBody = { model: config.model, temperature: 0.5, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content: input }] };
   const request = async (kind, body) => {
@@ -411,6 +417,44 @@ app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concu
   if (!templateId) parsed.data.templateId = recommendTemplates(parsed.data)[0]?.id || 'T01';
   parsed.data.settings.generationWarnings = warnings;
   res.json({ article: parsed.data, warnings, meta: { promptVersion: useAI ? 'semantic-3' : 'mock-2', schemaVersion: 1, model, latencyMs: Date.now() - startedAt, retried, ...(report ? { length: report.length, protectedMissingCount: report.missing.length } : {}) } });
+});
+
+app.post('/api/articles/design', rateLimit(10, 'RATE_DESIGN_PER_MIN'), concurrentGenerationLimit, async (req, res) => {
+  if (!canWriteConfig(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
+  const { mode, prompt = '' } = req.body || {};
+  const parsed = ArticleSchema.pick({ title: true, summary: true, blocks: true }).safeParse(req.body?.article);
+  if (!parsed.success || !['auto', 'prompt'].includes(mode) || typeof prompt !== 'string' || prompt.length > 1000 || (mode === 'prompt' && !prompt.trim())) return res.status(400).json({ error: { code: 'INVALID_DESIGN_INPUT', message: '请提供有效文章、设计方式和不超过1000字的风格要求' } });
+  const article = parsed.data;
+  const content = layoutSource(article);
+  if (!content.some(item => item.text?.trim() || item.items?.some(text => text.trim()))) return res.status(400).json({ error: { code: 'CONTENT_EMPTY', message: '请先添加文章内容' } });
+  if (new Set(content.map(item => item.ref)).size !== content.length) return res.status(400).json({ error: { code: 'INVALID_CONTENT_REFS', message: '文章内容编号重复，请恢复草稿后重试' } });
+  if (JSON.stringify(content).length > 180_000) return res.status(400).json({ error: { code: 'CONTENT_TOO_LONG', message: '文章过长，请分篇后设计；全文不会被截断提交' } });
+  const controller = new AbortController();
+  res.once('close', () => { if (!res.writableEnded) controller.abort(); });
+  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(LAYOUT_TIMEOUT_MS)]);
+  let config;
+  try { config = await resolveAIConfig(); }
+  catch (error) { return res.status(error.status || 502).json({ error: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '无法连接 AI 服务' } }); }
+  if (!config.baseUrl || !config.apiKey || !config.model) return res.status(400).json({ error: { code: 'AI_NOT_CONFIGURED', message: '请先在顶部设置中配置 AI 服务' } });
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (signal.aborted) break;
+    try {
+      const output = await requestModel({ config, system: layoutInstructions, signal, inputData: { mode, designPrompt: mode === 'prompt' ? prompt.trim() : undefined, content, previousValidationError: lastError?.message.slice(0, 800) } });
+      const value = JSON.parse(output.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/, '$1'));
+      const design = validateLayoutDesign(value, article);
+      renderArticle({ ...clearArticleStyles(article), layoutDesign: design }, templates[0]);
+      if (!controller.signal.aborted) return res.json({ design, meta: { model: config.model, retried: attempt > 0 } });
+      return;
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      lastError = error;
+      if (error.status) break;
+    }
+  }
+  if (controller.signal.aborted) return;
+  const timeout = signal.aborted || ['TimeoutError', 'AbortError'].includes(lastError?.name);
+  return res.status(timeout ? 504 : 502).json({ error: { code: timeout ? 'AI_TIMEOUT' : 'AI_DESIGN_FAILED', message: timeout ? '设计超时，当前排版已保留，请重试' : '新版式未通过完整性或适配检查，当前排版已保留，请重试' } });
 });
 
 app.post('/api/articles/rewrite', rateLimit(20, 'RATE_REWRITE_PER_MIN'), concurrentGenerationLimit, async (req, res) => {

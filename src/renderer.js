@@ -1,4 +1,5 @@
 import { BlockStyleSchema, blockText } from './core.js';
+import { renderLayoutArticle } from './layout-renderer.js';
 
 const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fonts = {
@@ -386,7 +387,8 @@ export function renderArticle(article, template, assets = new Map(), opts = {}) 
     if (block.type === 'heading' && block.level === primaryLevel) context.headingIndex++;
     return anchor(renderBlock(block, template, assets, mode, primaryLevel, context), `block:${block.id}`);
   }).join('');
-  const html = assertSafeHtml(`<section style="${base(template)}max-width:100%;padding:24px ${template.tokens.pagePadding || 14}px;background-color:${template.tokens.page || '#FFFFFF'};${pageCss(template)}">${anchor(renderHeader(article, template), 'title')}${anchor(renderSummary(article.summary, template), 'summary')}${renderContents(headings, template)}${inner}${renderEnding(template)}</section>`, { interactive });
+  const customHtml = article.layoutDesign ? renderLayoutArticle(article, assets, { mode, anchor, imageUrl }) : null;
+  const html = assertSafeHtml(customHtml ?? `<section style="${base(template)}max-width:100%;padding:24px ${template.tokens.pagePadding || 14}px;background-color:${template.tokens.page || '#FFFFFF'};${pageCss(template)}">${anchor(renderHeader(article, template), 'title')}${anchor(renderSummary(article.summary, template), 'summary')}${renderContents(headings, template)}${inner}${renderEnding(template)}</section>`, { interactive });
   const plainBlocks = article.blocks.map(block => block.type === 'image' || block.type === 'imageCard' ? `[图片：${block.caption || block.title || '文章图片'}]` : block.type === 'quote' && block.cite ? `${blockText(block)}\n— ${block.cite}` : blockText(block));
   const text = [article.title, article.summary, ...plainBlocks].filter(Boolean).join('\n\n');
   const images = article.blocks.filter(block => block.type === 'image' || block.type === 'imageCard').map(block => ({ assetId: block.assetId, caption: block.caption || block.title || '' }));
