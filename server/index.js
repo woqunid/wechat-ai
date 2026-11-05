@@ -11,13 +11,14 @@ import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { ArticleSchema, uid } from '../src/core.js';
 import { templates } from '../src/templates.js';
-import { markdownBlocks, normalizeDraft } from '../src/content.js';
+import { normalizeDraft } from '../src/content.js';
 import { GENERATION_TIMEOUT_MS, TARGET_LENGTHS, WRITING_TONES } from '../src/creation.js';
 import { generationInstructions, inspectDraft, preferDraft, protectedFragments } from './writing-rules.js';
 import { recommendTemplates } from '../src/recommender.js';
 import { DomUtils, parseDocument } from 'htmlparser2';
-import { fetchModels, getAIConfig, getAIStatus, resetAIConfig, resolveAIConfig, resolveCredentials, saveAIConfig } from './ai-config.js';
+import { fetchModels, getAIConfig, getAIStatus, resolveAIConfig, resolveCredentials, resolveRequestAIConfig } from './ai-config.js';
 import { fetchRemoteImage, MAX_IMAGE_BYTES } from './remote-image.js';
+import { cleanupExpiredAssets, findImageFiles, imageDateDirectory, imageLifetime } from './image-storage.js';
 import { clearArticleStyles, layoutSource, LAYOUT_TIMEOUT_MS, validateLayoutDesign } from '../src/layout-design.js';
 import { renderArticle } from '../src/renderer.js';
 import { layoutInstructions } from './layout-rules.js';
@@ -90,7 +91,7 @@ const concurrentGenerationLimit = (req, res, next) => {
 };
 const waitFor = (promise, ms) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('parse timeout')), ms))]);
 const publicAssetUrl = filename => `${String(process.env.PUBLIC_BASE_URL || '').trim().replace(/\/$/, '')}/uploads/${filename}`;
-const imageAssetExists = id => /^[a-zA-Z0-9_-]{1,80}$/.test(id) && fs.readdirSync(uploadDir).some(name => name.startsWith(`${id}.`));
+const imageAssetExists = id => findImageFiles(uploadDir, id).length > 0;
 const inlineRuns = nodes => {
   const runs = [];
   const visit = (children, bold = false) => {
@@ -211,7 +212,18 @@ async function parsePdfAttachment(buffer) {
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', version: '0.1.0' }));
 const configError = (res, error) => res.status(error.status || 400).json({ error: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || 'AI 配置操作失败' } });
-const canWriteConfig = req => {
+const rejectMissingAIConfig = (res, config) => {
+  if (config.baseUrl && config.apiKey && config.model) return false;
+  const partial = Boolean(config.baseUrl || config.apiKey || config.model);
+  res.status(400).json({ error: {
+    code: partial ? 'AI_CONFIG_INCOMPLETE' : 'AI_NOT_CONFIGURED',
+    message: partial
+      ? config.source === 'personal' ? '个人 AI 配置不完整，请重新保存' : '平台 AI 配置不完整，请检查部署环境变量'
+      : '请先在 AI 设置中选择可用的 AI 服务'
+  } });
+  return true;
+};
+const isAllowedOrigin = req => {
   const origin = req.get('origin');
   if (!origin) return true;
   const forwardedHost = req.get('x-forwarded-host')?.split(',')[0].trim();
@@ -249,32 +261,11 @@ app.get('/api/config/status', async (req, res) => {
   }
 });
 app.post('/api/config/models', rateLimit(20, 'RATE_CONFIG_PER_MIN'), async (req, res) => {
-  if (!canWriteConfig(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许，请配置 ALLOWED_ORIGIN 或检查反向代理来源信息' } });
+  if (!isAllowedOrigin(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许，请配置 ALLOWED_ORIGIN 或检查反向代理来源信息' } });
   try {
     const credentials = resolveCredentials(req.body);
     const models = await fetchModels(credentials);
     res.json({ baseUrl: credentials.baseUrl, models });
-  } catch (error) { configError(res, error); }
-});
-app.post('/api/config/ai', rateLimit(20, 'RATE_CONFIG_PER_MIN'), async (req, res) => {
-  if (!canWriteConfig(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许，请配置 ALLOWED_ORIGIN 或检查反向代理来源信息' } });
-  try {
-    const credentials = resolveCredentials(req.body);
-    const model = typeof req.body?.model === 'string' ? req.body.model.trim() : '';
-    if (!model || model.length > 256) throw Object.assign(new Error('请选择有效的模型'), { code: 'INVALID_MODEL' });
-    const models = await fetchModels(credentials);
-    if (!models.includes(model)) throw Object.assign(new Error('所选模型已失效，请重新获取模型列表'), { code: 'INVALID_MODEL' });
-    await saveAIConfig({ ...credentials, model, models, source: 'custom' });
-    res.json(getAIStatus());
-  } catch (error) { configError(res, error); }
-});
-app.delete('/api/config/ai', async (req, res) => {
-  if (!canWriteConfig(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '此来源不能修改 AI 配置' } });
-  try {
-    await resetAIConfig();
-    const config = getAIConfig();
-    if (config.baseUrl && config.apiKey && !config.model) await resolveAIConfig();
-    res.json(getAIStatus());
   } catch (error) { configError(res, error); }
 });
 app.get('/api/templates', (req, res) => res.json({ version: '2.1.0', templates }));
@@ -316,7 +307,7 @@ app.post('/api/materials/parse', rateLimit(20, 'RATE_PARSE_PER_MIN'), upload.arr
 });
 
 app.post('/api/articles/edit/attachments', rateLimit(60, 'RATE_EDIT_ATTACHMENTS_PER_MIN'), upload.single('file'), async (req, res) => {
-  if (!canWriteConfig(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
+  if (!isAllowedOrigin(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
   const file = req.file;
   if (!file) return res.status(400).json({ error: { code: 'INVALID_ATTACHMENT', message: '请选择图片或文档' } });
   const name = path.basename(file.originalname).slice(0, 240);
@@ -392,14 +383,18 @@ async function cacheImage(buffer, sourceUrl) {
   const filename = `${id}.${format.extension}`;
   const normalized = await sharp(buffer).rotate().toBuffer({ resolveWithObject: true });
   if (normalized.info.size > MAX_IMAGE_BYTES) throw Object.assign(new Error('图片处理后超过 10MB'), { code: 'IMAGE_TOO_LARGE', status: 400 });
-  await fs.promises.writeFile(path.join(uploadDir, filename), normalized.data);
-  const cacheUrl = `/uploads/${filename}`;
-  const publicUrl = publicAssetUrl(filename);
-  return { id, filename, mime: format.mime, width: normalized.info.width, height: normalized.info.height, bytes: normalized.info.size, cacheUrl, url: sourceUrl && !/^https:\/\//i.test(publicUrl) ? sourceUrl : publicUrl, ...(sourceUrl ? { sourceUrl } : {}), expiresAt: new Date(Date.now() + Number(process.env.ASSET_TTL_DAYS || 7) * 86_400_000).toISOString(), pasteStatus: 'needs-manual' };
+  const uploadedAt = Date.now();
+  const directory = imageDateDirectory(uploadedAt);
+  const relativePath = `${directory}/${filename}`;
+  await fs.promises.mkdir(path.join(uploadDir, directory), { recursive: true });
+  await fs.promises.writeFile(path.join(uploadDir, relativePath), normalized.data);
+  const cacheUrl = `/uploads/${relativePath}`;
+  const publicUrl = publicAssetUrl(relativePath);
+  return { id, filename, mime: format.mime, width: normalized.info.width, height: normalized.info.height, bytes: normalized.info.size, cacheUrl, url: sourceUrl && !/^https:\/\//i.test(publicUrl) ? sourceUrl : publicUrl, ...(sourceUrl ? { sourceUrl } : {}), expiresAt: new Date(uploadedAt + imageLifetime()).toISOString(), pasteStatus: 'needs-manual' };
 }
 
 app.post('/api/assets/import', rateLimit(20, 'RATE_IMPORT_PER_MIN'), async (req, res) => {
-  if (!canWriteConfig(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '此来源不能导入图片' } });
+  if (!isAllowedOrigin(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '此来源不能导入图片' } });
   if (activeImageImports >= 2) return res.status(429).json({ error: { code: 'RATE_LIMITED', message: '正在读取其他图片，请稍后重试' } });
   const controller = new AbortController();
   res.once('close', () => { if (!res.writableEnded) controller.abort(); });
@@ -429,7 +424,7 @@ app.post('/api/assets', rateLimit(60, 'RATE_ASSETS_PER_MIN'), upload.single('fil
 app.delete('/api/assets/:id', (req, res) => {
   const id = req.params.id;
   if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id)) return res.status(400).json({ error: { code: 'INVALID_ID', message: '资源编号无效' } });
-  const matches = fs.readdirSync(uploadDir).filter(name => name.startsWith(`${id}.`));
+  const matches = findImageFiles(uploadDir, id);
   if (!matches.length) return res.status(404).json({ error: { code: 'NOT_FOUND', message: '图片资源不存在' } });
   for (const name of matches) fs.rmSync(path.join(uploadDir, name), { force: true });
   res.status(204).end();
@@ -488,23 +483,6 @@ async function requestModel({ config, system, source, topic, mode, tone, targetL
   resolvedApiStyles.set(cacheKey, 'chat');
   return modelResult(await chatResponse.json());
 }
-function mockDraft(title, source, assetIds) {
-  const fallback = [
-    `围绕“${title}”展开，先明确读者正在面对的问题，再按内容顺序整理已有信息。`,
-    '把素材中的背景、变化和重点分别梳理，读者可以顺着段落逐步理解主题。',
-    '编辑时保留原有事实与语气，尚未确认的信息不补充具体数字或来源。',
-    '发布前检查内容准确性，并根据读者需要补充可执行的下一步。'
-  ];
-  const blocks = source.trim() ? markdownBlocks(source) : [
-    { id: uid('b'), type: 'heading', level: 1, text: '先看这件事的背景' },
-    ...fallback.slice(0, 2).map(text => ({ id: uid('b'), type: 'paragraph', runs: [{ text }] })),
-    { id: uid('b'), type: 'heading', level: 1, text: '把重点整理清楚' },
-    ...fallback.slice(2).map(text => ({ id: uid('b'), type: 'paragraph', runs: [{ text }] }))
-  ];
-  for (const assetId of assetIds) blocks.push({ id: uid('b'), type: 'imageCard', assetId, caption: '' });
-  return { title, summary: `围绕${title}整理的编辑参考摘要`, blocks };
-}
-
 app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concurrentGenerationLimit, async (req, res) => {
   const { mode = 'create', topic = '', text = '', materials = [], tone = 'plain', targetLength = 1000, assetIds = [], templateId } = req.body || {};
   const validModes = ['create', 'polish'];
@@ -523,17 +501,13 @@ app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concu
   const controller = new AbortController();
   res.once('close', () => { if (!res.writableEnded) controller.abort(); });
   const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(GENERATION_TIMEOUT_MS)]);
-  let aiConfig = getAIConfig();
-  const hasAISettings = Boolean(aiConfig.baseUrl || aiConfig.apiKey || aiConfig.model);
-  if (hasAISettings) {
-    if (!aiConfig.baseUrl || !aiConfig.apiKey) return res.status(400).json({ error: { code: 'AI_CONFIG_INCOMPLETE', message: 'AI 服务配置不完整，请检查服务 URL 和 API Key' } });
-    try { aiConfig = await resolveAIConfig(); }
-    catch (error) { return res.status(error.status || 502).json({ error: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '无法获取模型列表' } }); }
-    if (!aiConfig.model) return res.status(400).json({ error: { code: 'AI_CONFIG_INCOMPLETE', message: 'AI 服务配置不完整，请选择模型' } });
-  }
-  const useAI = hasAISettings;
+  let aiConfig;
+  try { aiConfig = await resolveRequestAIConfig(req.body); }
+  catch (error) { return res.status(error.status || 502).json({ error: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '无法连接 AI 服务' } }); }
+  if (rejectMissingAIConfig(res, aiConfig)) return;
+  const useAI = true;
   let draft = null;
-  let model = 'local-mock';
+  let model = aiConfig.model;
   let retried = false;
   const usages = res.locals.modelUsages = [];
   let lastError;
@@ -563,14 +537,11 @@ app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concu
       const upstream = lastError?.status && lastError.status >= 500;
       return res.status(timeout ? 504 : 502).json({ error: { code: timeout ? 'AI_TIMEOUT' : upstream ? 'AI_UPSTREAM_ERROR' : 'AI_INVALID_OUTPUT', message: '生成暂时未完成，请重试' } });
     }
-  } else {
-    try { draft = normalizeDraft(mockDraft(title, source, assetIds), assetIds); }
-    catch { return res.status(422).json({ error: { code: 'CONTENT_STRUCTURE_INVALID', message: '素材段落过多或缺少正文，请精简内容后重试' } }); }
   }
   const candidate = {
     schemaVersion: 1, id: uid('article'), mode, title: String(draft.title || title).slice(0, 64),
     summary: draft.summary, blocks: draft.blocks, templateId: templateId || 'T01',
-    settings: { tone, targetLength, aiGenerated: useAI, mockGenerated: !useAI },
+    settings: { tone, targetLength, aiGenerated: useAI },
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
   };
   const parsed = ArticleSchema.safeParse(candidate);
@@ -580,11 +551,11 @@ app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concu
     parsed.data.blocks.push({ id: uid('b'), type: 'imageCard', assetId, caption: '' });
   }
   if (!templateId) parsed.data.templateId = recommendTemplates(parsed.data)[0]?.id || 'T01';
-  res.json({ article: parsed.data, meta: { promptVersion: useAI ? 'semantic-3' : 'mock-2', schemaVersion: 1, model, latencyMs: Date.now() - startedAt, retried, ...usageMeta(usages), ...(report ? { length: report.length, protectedMissingCount: report.missing.length } : {}) } });
+  res.json({ article: parsed.data, meta: { promptVersion: 'semantic-3', schemaVersion: 1, model, latencyMs: Date.now() - startedAt, retried, ...usageMeta(usages), ...(report ? { length: report.length, protectedMissingCount: report.missing.length } : {}) } });
 });
 
 app.post('/api/articles/design', rateLimit(10, 'RATE_DESIGN_PER_MIN'), concurrentGenerationLimit, async (req, res) => {
-  if (!canWriteConfig(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
+  if (!isAllowedOrigin(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
   const { mode, prompt = '' } = req.body || {};
   const parsed = ArticleSchema.pick({ title: true, summary: true, blocks: true }).safeParse(req.body?.article);
   if (!parsed.success || !['auto', 'prompt'].includes(mode) || typeof prompt !== 'string' || prompt.length > 1000 || (mode === 'prompt' && !prompt.trim())) return res.status(400).json({ error: { code: 'INVALID_DESIGN_INPUT', message: '请提供有效文章、设计方式和不超过1000字的风格要求' } });
@@ -597,9 +568,9 @@ app.post('/api/articles/design', rateLimit(10, 'RATE_DESIGN_PER_MIN'), concurren
   res.once('close', () => { if (!res.writableEnded) controller.abort(); });
   const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(LAYOUT_TIMEOUT_MS)]);
   let config;
-  try { config = await resolveAIConfig(); }
+  try { config = await resolveRequestAIConfig(req.body); }
   catch (error) { return res.status(error.status || 502).json({ error: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '无法连接 AI 服务' } }); }
-  if (!config.baseUrl || !config.apiKey || !config.model) return res.status(400).json({ error: { code: 'AI_NOT_CONFIGURED', message: '请先在顶部设置中配置 AI 服务' } });
+  if (rejectMissingAIConfig(res, config)) return;
   const usages = res.locals.modelUsages = [];
   let lastError;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -625,7 +596,7 @@ app.post('/api/articles/design', rateLimit(10, 'RATE_DESIGN_PER_MIN'), concurren
 });
 
 app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGenerationLimit, async (req, res) => {
-  if (!canWriteConfig(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
+  if (!isAllowedOrigin(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
   const parsed = AIEditRequestSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: { code: 'INVALID_EDIT_INPUT', message: '请提供有效文章和1–4000字的修改要求' } });
   const { article, prompt, references, messages, attachments } = parsed.data;
@@ -634,12 +605,12 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
   res.once('close', () => { if (!res.writableEnded) controller.abort(); });
   const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(AI_EDIT_TIMEOUT_MS)]);
   let config;
-  try { config = await resolveAIConfig(); }
+  try { config = await resolveRequestAIConfig(req.body); }
   catch (error) { return res.status(error.status || 502).json({ error: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '无法连接 AI 服务' } }); }
-  if (!config.baseUrl || !config.apiKey || !config.model) return res.status(400).json({ error: { code: 'AI_NOT_CONFIGURED', message: '请先在顶部设置中配置 AI 服务' } });
+  if (rejectMissingAIConfig(res, config)) return;
   const assetIds = [...new Set(article.blocks.filter(isImageBlock).map(block => block.assetId))];
   const imageDimensions = await Promise.all(assetIds.map(async assetId => {
-    const filename = fs.readdirSync(uploadDir).find(name => name.startsWith(`${assetId}.`));
+    const filename = findImageFiles(uploadDir, assetId)[0];
     try {
       const metadata = filename && await sharp(path.join(uploadDir, filename)).metadata();
       return { assetId, width: metadata?.width || null, height: metadata?.height || null };
@@ -650,7 +621,7 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
   const imageInputs = [];
   let imageInputBytes = 0;
   for (const [index, imageAssetId] of imageAssetIds.entries()) {
-    const filename = fs.readdirSync(uploadDir).find(name => name.startsWith(`${imageAssetId}.`));
+    const filename = findImageFiles(uploadDir, imageAssetId)[0];
     if (!filename) return res.status(400).json({ error: { code: 'ATTACHMENT_EXPIRED', message: '附件图片缓存已过期，请重新上传' } });
     const buffer = await fs.promises.readFile(path.join(uploadDir, filename));
     imageInputBytes += buffer.length;
@@ -708,14 +679,7 @@ app.use((req, res) => {
   res.status(404).json({ error: { code: 'NOT_FOUND', message: '接口不存在' } });
 });
 
-const cleanupExpiredAssets = () => {
-  const lifetime = Number(process.env.ASSET_TTL_DAYS || 7) * 86_400_000;
-  for (const name of fs.readdirSync(uploadDir)) {
-    const filename = path.join(uploadDir, name);
-    try { if (Date.now() - fs.statSync(filename).mtimeMs > lifetime) fs.rmSync(filename, { force: true }); } catch { /* removed by another request */ }
-  }
-};
-cleanupExpiredAssets();
-setInterval(cleanupExpiredAssets, 24 * 60 * 60 * 1000).unref();
+cleanupExpiredAssets(uploadDir);
+setInterval(() => cleanupExpiredAssets(uploadDir), 24 * 60 * 60 * 1000).unref();
 const port = Number(process.env.PORT || 8787);
 app.listen(port, () => console.log(`wechat-ai server listening on ${port}`));

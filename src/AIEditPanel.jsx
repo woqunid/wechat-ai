@@ -14,7 +14,7 @@ const attachmentImages = attachment => attachment.kind === 'image' ? [attachment
 const withAttachmentPreviews = attachment => attachment.kind === 'image'
   ? { ...attachment, previewUrl: attachment.blob ? URL.createObjectURL(attachment.blob) : attachment.cacheUrl }
   : { ...attachment, images: (attachment.images || []).map(image => ({ ...image, previewUrl: image.blob ? URL.createObjectURL(image.blob) : image.cacheUrl })) };
-export function useAIEdit({ article, setArticle, assets, disabled, onApplied, onCandidate, setToast }) {
+export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, onApplied, onCandidate, setToast }) {
   const [references, setReferences] = useState([]);
   const [messages, setMessages] = useState([]);
   const [prompt, setPrompt] = useState('');
@@ -210,7 +210,7 @@ export function useAIEdit({ article, setArticle, assets, disabled, onApplied, on
         : { kind: 'document', name: attachment.name, text: attachment.text, imageAssetIds: attachment.images.map(image => image.assetId) });
       const responsePromise = fetch('/api/articles/edit', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ article: working, prompt: instruction, references: selected.map(({ snapshot, assetId, ...reference }) => reference), messages: messages.slice(-16).map(message => AIConversationMessageSchema.parse({ ...message, text: message.text.slice(0, 4000) })), attachments: requestAttachments }),
+        body: JSON.stringify({ article: working, prompt: instruction, references: selected.map(({ snapshot, assetId, ...reference }) => reference), messages: messages.slice(-16).map(message => AIConversationMessageSchema.parse({ ...message, text: message.text.slice(0, 4000) })), attachments: requestAttachments, ...aiRequest }),
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(AI_EDIT_TIMEOUT_MS + 10000)]),
       });
       const sentReferenceIds = new Set(selected.map(reference => reference.id));

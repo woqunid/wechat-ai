@@ -17,12 +17,6 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve));
   const bootstrap = path.join(directory, 'bootstrap.mjs');
   await writeFile(bootstrap, `
-    import fs from 'node:fs';
-    const originalRead = fs.readFileSync;
-    fs.readFileSync = function(file, ...args) {
-      if (String(file).replaceAll('\\\\', '/').endsWith('/.local/ai-config.json')) return JSON.stringify({baseUrl:'http://html-test.invalid/v1',apiKey:'test-only',model:'fixture'});
-      return originalRead.call(this, file, ...args);
-    };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (url, options) => {
       if (!String(url).startsWith('http://html-test.invalid/')) return originalFetch(url, options);
@@ -44,7 +38,7 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
     };
     await import(${JSON.stringify(pathToFileURL(path.join(root, 'server/index.js')).href)});
   `);
-  const child = spawn(process.execPath, [bootstrap], { cwd: root, env: { ...process.env, PORT: String(port), AI_API_STYLE: 'responses', AI_TIMEOUT_MS: '2000', ASSET_DIR: path.join(directory, 'assets') }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [bootstrap], { cwd: root, env: { ...process.env, PORT: String(port), AI_BASE_URL: 'http://html-test.invalid/v1', AI_API_KEY: 'test-only', AI_MODEL: 'fixture', AI_API_STYLE: 'responses', AI_TIMEOUT_MS: '2000', ASSET_DIR: path.join(directory, 'assets') }, stdio: ['ignore', 'pipe', 'pipe'] });
   try {
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Test API did not start')), 8000);

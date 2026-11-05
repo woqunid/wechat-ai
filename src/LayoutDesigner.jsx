@@ -5,7 +5,7 @@ import { renderArticle } from './renderer.js';
 import { getTemplate } from './templates.js';
 import { inspectLayoutPreview } from './layout-preview.js';
 
-export function LayoutDesigner({ article, setArticle, onTrial, resetKey, disabled, setToast }) {
+export function LayoutDesigner({ article, setArticle, aiRequest, onTrial, resetKey, disabled, setToast }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState('auto');
   const [prompt, setPrompt] = useState('');
@@ -50,7 +50,7 @@ export function LayoutDesigner({ article, setArticle, onTrial, resetKey, disable
   }, [open]);
   const generate = async event => {
     event.preventDefault();
-    if (busy || (mode === 'prompt' && !prompt.trim())) return;
+    if (busy || disabled || (mode === 'prompt' && !prompt.trim())) return;
     const sourceArticle = latest.current;
     const sourceSignature = layoutSignature(sourceArticle);
     const controller = new AbortController();
@@ -61,7 +61,7 @@ export function LayoutDesigner({ article, setArticle, onTrial, resetKey, disable
     try {
       const response = await fetch('/api/articles/design', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ article: { title: sourceArticle.title, summary: sourceArticle.summary, blocks: sourceArticle.blocks }, mode, prompt: mode === 'prompt' ? prompt.trim() : '' }),
+        body: JSON.stringify({ article: { title: sourceArticle.title, summary: sourceArticle.summary, blocks: sourceArticle.blocks }, mode, prompt: mode === 'prompt' ? prompt.trim() : '', ...aiRequest }),
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(LAYOUT_TIMEOUT_MS + 10_000)]),
       });
       const data = await response.json();
@@ -97,7 +97,7 @@ export function LayoutDesigner({ article, setArticle, onTrial, resetKey, disable
         <p>{candidate.design.description}</p>
         <small>已通过手机适配检查</small>
         <div className="layout-review-actions"><button className="publish-action" onClick={apply}>应用排版</button><button className="ghost-action" onClick={cancelTrial}>取消</button></div>
-        <button className="text-link" onClick={() => { setError(''); setOpen(true); }}>重新设计</button>
+        <button className="text-link" disabled={disabled} onClick={() => { setError(''); setOpen(true); }}>重新设计</button>
       </> : <>
         <p>为文章定制专属版式</p>
         <button className="layout-design-start" disabled={disabled} onClick={() => { setError(''); setOpen(true); }}>开始设计<ArrowRight size={15} /></button>
