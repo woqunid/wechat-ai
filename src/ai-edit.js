@@ -16,6 +16,10 @@ export const AIEditRequestSchema = z.object({
   article: ArticleSchema, prompt: text(4000).refine(value => value.trim()),
   references: z.array(AIReferenceSchema).max(100).default([]),
   messages: z.array(z.object({ role: z.enum(['user', 'assistant']), text: text(4000) })).max(16).default([]),
+  attachments: z.array(z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('image'), name: text(240).min(1), assetId: id }).strict(),
+    z.object({ kind: z.literal('document'), name: text(240).min(1), text: text(200_000), imageAssetIds: z.array(id).max(10).default([]) }).strict(),
+  ])).max(5).default([]),
 });
 export const AIEditResponseSchema = z.object({
   message: text(4000).min(1),

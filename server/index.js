@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import mammoth from 'mammoth';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
+import pdfjs from 'pdf-parse/lib/pdf.js/v1.10.100/build/pdf.js';
 import sharp from 'sharp';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -30,6 +31,9 @@ const uploadDir = process.env.ASSET_DIR ? path.resolve(process.env.ASSET_DIR) : 
 fs.mkdirSync(uploadDir, { recursive: true });
 const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+const MAX_EDIT_IMAGES = 10;
+const MAX_EDIT_IMAGE_BYTES = 20 * 1024 * 1024;
+const MAX_EDIT_DOCUMENT_CHARS = 200_000;
 const oneMinute = new Map();
 let activeGenerations = 0;
 const resolvedApiStyles = new Map();
@@ -131,6 +135,77 @@ function blocksFromDocxHtml(html) {
   visit(root.children);
   const text = blocks.map(block => block.type === 'heading' ? block.text : block.type === 'list' ? block.items.map(runs => runs.map(run => run.text).join('')).join('\n') : block.runs.map(run => run.text).join('')).join('\n\n');
   return { blocks, text, ignoredImages };
+}
+
+async function extractPdfImages(page, maxImages) {
+  const pdf = pdfjs.PDFJS;
+  const list = await page.getOperatorList();
+  const images = [];
+  const seen = new Set();
+  let omittedImages = 0;
+  for (let index = 0; index < list.fnArray.length; index++) {
+    const operation = list.fnArray[index];
+    const args = list.argsArray[index] || [];
+    let image;
+    let key;
+    if ([pdf.OPS.paintImageXObject, pdf.OPS.paintJpegXObject, pdf.OPS.paintImageXObjectRepeat].includes(operation)) {
+      key = String(args[0]);
+      image = await new Promise(resolve => page.objs.get(args[0], resolve));
+    } else if (operation === pdf.OPS.paintInlineImageXObject) image = args[0];
+    if (!image?.data || !image.width || !image.height) continue;
+    const raw = Buffer.from(image.data.buffer || image.data, image.data.byteOffset || 0, image.data.byteLength || image.data.length);
+    key ||= crypto.createHash('sha256').update(raw).digest('hex');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (images.length >= maxImages) { omittedImages++; continue; }
+    const channels = raw.length / (image.width * image.height);
+    try {
+      const buffer = Number.isInteger(channels) && channels >= 1 && channels <= 4
+        ? await sharp(raw, { raw: { width: image.width, height: image.height, channels } }).png().toBuffer()
+        : await sharp(raw).png().toBuffer();
+      images.push(buffer);
+    } catch { omittedImages++; }
+  }
+  return { images, omittedImages };
+}
+
+async function parsePdfAttachment(buffer) {
+  pdfjs.PDFJS.disableFontFace = true;
+  const images = [];
+  let omittedImages = 0;
+  const originalImage = globalThis.Image;
+  if (!originalImage) globalThis.Image = class {
+    set src(value) {
+      const data = Buffer.from(String(value).split(',').at(-1), 'base64');
+      sharp(data).removeAlpha().raw().toBuffer({ resolveWithObject: true }).then(({ data: pixels, info }) => {
+        this.width = info.width;
+        this.height = info.height;
+        this.data = pixels;
+        this.onload?.();
+      }).catch(() => this.onerror?.());
+    }
+  };
+  try {
+    const parsed = await waitFor(pdfParse(buffer, {
+      max: 200,
+      pagerender: async page => {
+        const text = await page.getTextContent({ normalizeWhitespace: false, disableCombineTextItems: false });
+        try {
+          const extracted = await extractPdfImages(page, MAX_EDIT_IMAGES - images.length);
+          images.push(...extracted.images);
+          omittedImages += extracted.omittedImages;
+        } catch {}
+        let lastY, result = '';
+        for (const item of text.items) {
+          result += lastY === item.transform[5] || !lastY ? item.str : `\n${item.str}`;
+          lastY = item.transform[5];
+        }
+        return result;
+      },
+    }), 15_000);
+    if (parsed.numpages > 200) throw new Error('page limit');
+    return { text: parsed.text, images, omittedImages };
+  } finally { if (!originalImage) delete globalThis.Image; }
 }
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', version: '0.1.0' }));
@@ -239,6 +314,73 @@ app.post('/api/materials/parse', rateLimit(20, 'RATE_PARSE_PER_MIN'), upload.arr
   res.json({ files });
 });
 
+app.post('/api/articles/edit/attachments', rateLimit(60, 'RATE_EDIT_ATTACHMENTS_PER_MIN'), upload.single('file'), async (req, res) => {
+  if (!canWriteConfig(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
+  const file = req.file;
+  if (!file) return res.status(400).json({ error: { code: 'INVALID_ATTACHMENT', message: '请选择图片或文档' } });
+  const name = path.basename(file.originalname).slice(0, 240);
+  const extension = path.extname(name).toLowerCase();
+  if (['.jpg', '.jpeg', '.png', '.webp'].includes(extension)) {
+    if (file.size > 10 * 1024 * 1024) return res.status(413).json({ error: { code: 'FILE_TOO_LARGE', message: '图片不能超过10 MB' } });
+    try {
+      const asset = await cacheImage(file.buffer);
+      return res.json({ attachment: { kind: 'image', name, assetId: asset.id, cacheUrl: asset.cacheUrl, mime: asset.mime, bytes: asset.bytes } });
+    } catch (error) {
+      return res.status(400).json({ error: { code: error.code || 'INVALID_IMAGE', message: error.message || '图片无法处理' } });
+    }
+  }
+  if (!['.pdf', '.docx', '.txt', '.md'].includes(extension)) return res.status(400).json({ error: { code: 'UNSUPPORTED_ATTACHMENT', message: '仅支持 JPG、PNG、WebP、PDF、DOCX、TXT 和 MD' } });
+
+  let text = '';
+  let imageBuffers = [];
+  let omittedImages = 0;
+  try {
+    if (extension === '.txt' || extension === '.md') {
+      text = new TextDecoder('utf-8').decode(file.buffer);
+      if (text.includes('\uFFFD')) text = new TextDecoder('gbk').decode(file.buffer);
+    } else if (extension === '.docx' && file.buffer[0] === 0x50 && file.buffer[1] === 0x4b) {
+      let totalImageBytes = 0;
+      const converted = await waitFor(mammoth.convertToHtml({ buffer: file.buffer }, {
+        convertImage: mammoth.images.imgElement(async image => {
+          const imageBuffer = await image.read();
+          if (imageBuffers.length >= MAX_EDIT_IMAGES || totalImageBytes + imageBuffer.length > MAX_EDIT_IMAGE_BYTES) {
+            omittedImages++;
+            return { src: '' };
+          }
+          totalImageBytes += imageBuffer.length;
+          imageBuffers.push(imageBuffer);
+          return { src: `attachment-image:${imageBuffers.length}` };
+        }),
+      }), 15_000);
+      text = blocksFromDocxHtml(converted.value).text;
+    } else if (extension === '.pdf' && file.buffer.subarray(0, 5).toString() === '%PDF-') {
+      const parsed = await parsePdfAttachment(file.buffer);
+      text = parsed.text;
+      imageBuffers = parsed.images;
+      omittedImages = parsed.omittedImages;
+    } else {
+      return res.status(400).json({ error: { code: 'UNREADABLE_DOCUMENT', message: '文档无法读取' } });
+    }
+    const extractedTextLength = text.replace(/\s/g, '').length;
+    if (!text.trim() && !imageBuffers.length) return res.status(422).json({ error: { code: 'UNREADABLE_DOCUMENT', message: '文档中没有可用文字或图片' } });
+    if (extension === '.pdf' && extractedTextLength < 20) return res.status(422).json({ error: { code: 'UNREADABLE_DOCUMENT', message: '未提取到足够的文字，不支持扫描版 PDF 或图片文字识别' } });
+    if (text.length > MAX_EDIT_DOCUMENT_CHARS) return res.status(413).json({ error: { code: 'DOCUMENT_TOO_LARGE', message: '文档文字超过20万字，请拆分后上传' } });
+    const images = [];
+    let imageBytes = 0;
+    for (const [index, imageBuffer] of imageBuffers.entries()) {
+      if (imageBytes + imageBuffer.length > MAX_EDIT_IMAGE_BYTES) { omittedImages++; continue; }
+      try {
+        const asset = await cacheImage(imageBuffer);
+        imageBytes += asset.bytes;
+        images.push({ assetId: asset.id, name: `${name} 图片 ${index + 1}`, cacheUrl: asset.cacheUrl, mime: asset.mime, bytes: asset.bytes });
+      } catch { omittedImages++; }
+    }
+    return res.json({ attachment: { kind: 'document', name, text, charCount: text.length, images, ...(omittedImages ? { warning: `有${omittedImages}张内嵌图片无法提取或超过附件上限` } : {}) } });
+  } catch {
+    return res.status(422).json({ error: { code: 'UNREADABLE_DOCUMENT', message: '文档无法读取，请确认文件完整；扫描版 PDF 不支持识别' } });
+  }
+});
+
 async function cacheImage(buffer, sourceUrl) {
   if (!buffer.length || buffer.length > MAX_IMAGE_BYTES) throw Object.assign(new Error('图片为空或超过 10MB'), { code: 'IMAGE_TOO_LARGE', status: 400 });
   const metadata = await sharp(buffer, { failOn: 'error' }).metadata();
@@ -293,28 +435,41 @@ app.delete('/api/assets/:id', (req, res) => {
 });
 
 const modelResult = data => ({ text: data.output_text || data.choices?.[0]?.message?.content || data.output?.flatMap(item => item.content || []).find(item => item.type === 'output_text')?.text || '', usage: normalizeUsage(data.usage) });
-async function requestModel({ config, system, source, topic, mode, tone, targetLength, assetIds, template, signal, previousError, revision, inputData }) {
+const isUnsupportedVisionRequest = error => {
+  const detail = `${error?.message || ''} ${error?.upstreamMessage || ''}`;
+  return /(?:image|vision|multimodal|input_image|image_url).{0,100}(?:not supported|unsupported|not support|unavailable|disabled)|(?:not supported|unsupported|not support|unavailable|disabled).{0,100}(?:image|vision|multimodal|input_image|image_url)/i.test(detail);
+};
+async function requestModel({ config, system, source, topic, mode, tone, targetLength, assetIds, template, signal, previousError, revision, inputData, imageInputs = [] }) {
   const base = config.baseUrl;
   const style = process.env.AI_API_STYLE || 'auto';
   const cacheKey = `${base}\0${crypto.createHash('sha256').update(config.apiKey).digest('hex')}\0${config.model}`;
   const resolvedApiStyle = resolvedApiStyles.get(cacheKey);
   const templateContentGuide = template ? { preferredBlocks: template.fit.preferredBlocks, headingLevels: [1, 2], missingContent: 'omit', priority: 'below-writing-rules' } : undefined;
   const input = JSON.stringify(inputData || { task: mode === 'polish' ? '润色文章，保留事实与重要细节及叙事顺序' : '基于主题和素材创作文章', mode, topic, source, imageAssetIds: assetIds, tone, targetLength, templateContentGuide, revision, schemaVersion: 1, previousValidationError: previousError || undefined });
-  const responsesBody = { model: config.model, input: [{ role: 'system', content: [{ type: 'input_text', text: system }] }, { role: 'user', content: [{ type: 'input_text', text: input }] }], text: { format: { type: 'json_object' } } };
-  const chatBody = { model: config.model, temperature: 0.5, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content: input }] };
+  const responsesUserContent = [{ type: 'input_text', text: input }, ...imageInputs.flatMap(image => [
+    { type: 'input_text', text: `附件图片：${image.name}` },
+    { type: 'input_image', image_url: `data:${image.mime};base64,${image.buffer.toString('base64')}` },
+  ])];
+  const chatUserContent = imageInputs.length ? [{ type: 'text', text: input }, ...imageInputs.flatMap(image => [
+    { type: 'text', text: `附件图片：${image.name}` },
+    { type: 'image_url', image_url: { url: `data:${image.mime};base64,${image.buffer.toString('base64')}` } },
+  ])] : input;
+  const responsesBody = { model: config.model, input: [{ role: 'system', content: [{ type: 'input_text', text: system }] }, { role: 'user', content: responsesUserContent }], text: { format: { type: 'json_object' } } };
+  const chatBody = { model: config.model, temperature: 0.5, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content: chatUserContent }] };
   const request = async (kind, body) => {
     const timeout = AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 90_000));
     return fetch(`${base}/${kind === 'responses' ? 'responses' : 'chat/completions'}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` }, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
   };
+  const upstreamFailure = async response => Object.assign(new Error(`upstream ${response.status}`), { status: response.status, upstreamMessage: (await response.text()).slice(0, 2000) });
   if (style === 'responses' || style === 'chat') {
     const kind = style;
     const response = await request(kind, kind === 'responses' ? responsesBody : chatBody);
-    if (!response.ok) throw Object.assign(new Error(`upstream ${response.status}`), { status: response.status });
+    if (!response.ok) throw await upstreamFailure(response);
     return modelResult(await response.json());
   }
   if (style === 'auto' && resolvedApiStyle === 'chat') {
     const response = await request('chat', chatBody);
-    if (!response.ok) throw Object.assign(new Error(`upstream ${response.status}`), { status: response.status });
+    if (!response.ok) throw await upstreamFailure(response);
     return modelResult(await response.json());
   }
   const response = await request('responses', responsesBody);
@@ -323,7 +478,7 @@ async function requestModel({ config, system, source, topic, mode, tone, targetL
   const unsupported = [400, 404, 405, 422].includes(response.status) && (/unsupported|not found|unknown|not support/i.test(bodyText) || response.status === 404 || response.status === 405);
   if (!unsupported) throw Object.assign(new Error(`upstream ${response.status}`), { status: response.status });
   const chatResponse = await request('chat', chatBody);
-  if (!chatResponse.ok) throw Object.assign(new Error(`upstream ${chatResponse.status}`), { status: chatResponse.status });
+  if (!chatResponse.ok) throw await upstreamFailure(chatResponse);
   resolvedApiStyles.set(cacheKey, 'chat');
   return modelResult(await chatResponse.json());
 }
@@ -470,7 +625,7 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
   if (!canWriteConfig(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
   const parsed = AIEditRequestSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: { code: 'INVALID_EDIT_INPUT', message: '请提供有效文章和1–4000字的修改要求' } });
-  const { article, prompt, references, messages } = parsed.data;
+  const { article, prompt, references, messages, attachments } = parsed.data;
   if (new Set(article.blocks.map(block => block.id)).size !== article.blocks.length) return res.status(400).json({ error: { code: 'INVALID_CONTENT_REFS', message: '文章内容编号重复，请恢复草稿后重试' } });
   const controller = new AbortController();
   res.once('close', () => { if (!res.writableEnded) controller.abort(); });
@@ -487,15 +642,29 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
       return { assetId, width: metadata?.width || null, height: metadata?.height || null };
     } catch { return { assetId, width: null, height: null }; }
   }));
-  const input = { template: templates.find(template => template.id === article.templateId), article: { mode: article.mode, title: article.title, summary: article.summary, blocks: article.blocks, templateId: article.templateId, layoutDesign: article.layoutDesign, tone: article.settings.tone }, imageDimensions, conversation: messages, prompt, references };
-  if (JSON.stringify(input).length > 450000) return res.status(400).json({ error: { code: 'CONTENT_TOO_LONG', message: '全文及引用内容过长，请减少引用后重试；正文不会被截断提交' } });
+  const imageAssetIds = [...new Set(attachments.flatMap(attachment => attachment.kind === 'image' ? [attachment.assetId] : attachment.imageAssetIds))];
+  if (imageAssetIds.length > MAX_EDIT_IMAGES) return res.status(400).json({ error: { code: 'TOO_MANY_ATTACHMENT_IMAGES', message: `最多同时使用${MAX_EDIT_IMAGES}张附件图片` } });
+  const imageInputs = [];
+  let imageInputBytes = 0;
+  for (const [index, imageAssetId] of imageAssetIds.entries()) {
+    const filename = fs.readdirSync(uploadDir).find(name => name.startsWith(`${imageAssetId}.`));
+    if (!filename) return res.status(400).json({ error: { code: 'ATTACHMENT_EXPIRED', message: '附件图片缓存已过期，请重新上传' } });
+    const buffer = await fs.promises.readFile(path.join(uploadDir, filename));
+    imageInputBytes += buffer.length;
+    if (imageInputBytes > MAX_EDIT_IMAGE_BYTES) return res.status(413).json({ error: { code: 'ATTACHMENT_TOO_LARGE', message: '附件图片总大小不能超过20 MB' } });
+    const mime = ({ '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' })[path.extname(filename).toLowerCase()];
+    if (!mime) return res.status(400).json({ error: { code: 'INVALID_ATTACHMENT_IMAGE', message: '附件图片格式无效，请重新上传' } });
+    imageInputs.push({ name: attachments.flatMap(attachment => attachment.kind === 'image' ? [{ assetId: attachment.assetId, name: attachment.name }] : attachment.imageAssetIds.map((assetId, imageIndex) => ({ assetId, name: `${attachment.name} 图片 ${imageIndex + 1}` }))).find(item => item.assetId === imageAssetId)?.name || `附件图片 ${index + 1}`, mime, buffer });
+  }
+  const input = { template: templates.find(template => template.id === article.templateId), article: { mode: article.mode, title: article.title, summary: article.summary, blocks: article.blocks, templateId: article.templateId, layoutDesign: article.layoutDesign, tone: article.settings.tone }, imageDimensions, ...(attachments.length ? { attachments } : {}), conversation: messages, prompt, references };
+  if (JSON.stringify(input).length > 450000) return res.status(400).json({ error: { code: 'CONTENT_TOO_LONG', message: '文章、附件文字或引用内容过长，请移除部分附件或减少引用后重试；正文不会被截断提交' } });
   const usages = res.locals.modelUsages = [];
   let lastError;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (signal.aborted) break;
     usages.push(normalizeUsage());
     try {
-      const output = await requestModel({ config, system: editInstructions, signal, inputData: { ...input, previousValidationError: lastError?.message.slice(0, 1200) } });
+      const output = await requestModel({ config, system: editInstructions, signal, inputData: { ...input, previousValidationError: lastError?.message.slice(0, 1200) }, imageInputs });
       usages[attempt] = output.usage;
       const result = AIEditResponseSchema.parse(JSON.parse(output.text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/, '$1')));
       const candidate = buildAIEdit(article, result.operations);
@@ -509,6 +678,7 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
     }
   }
   if (controller.signal.aborted) return;
+  if (imageInputs.length && isUnsupportedVisionRequest(lastError)) return res.status(422).json({ error: { code: 'VISION_UNSUPPORTED', message: '当前模型不支持多模态识图' } });
   const timeout = signal.aborted || ['TimeoutError', 'AbortError'].includes(lastError?.name);
   return res.status(timeout ? 504 : 502).json({ error: { code: timeout ? 'AI_TIMEOUT' : 'AI_EDIT_FAILED', message: timeout ? '修改方案生成超时，原稿已保留，请重试' : '修改方案未通过内容或版式检查，原稿已保留，请重试' } });
 });

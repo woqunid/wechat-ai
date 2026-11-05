@@ -1605,9 +1605,24 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .ai-edit-composer { flex-shrink: 0; padding: 10px; border: 1px solid var(--border-strong); border-radius: var(--r-lg); background: white; box-shadow: var(--shadow-soft); }
 .ai-edit-composer:focus-within { border-color: var(--primary); }
 .ai-edit-composer textarea { display: block; width: 100%; min-height: 64px; max-height: 150px; resize: vertical; border: 0; background: transparent; padding: 6px 1px; font-size: 12px; line-height: 1.8; outline: none; }
-.ai-edit-composer-footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 7px; }
-.ai-edit-composer-footer > span { font-size: 10px; color: var(--text-secondary); }
+.ai-edit-composer-footer { display: grid; grid-template-columns: 32px minmax(0, 1fr) 32px; align-items: center; gap: 8px; margin-top: 7px; }
+.ai-edit-composer-footer > span { text-align: center; font-size: 10px; color: var(--text-secondary); }
 .ai-edit-composer-footer small { display: block; margin-top: 3px; font-size: 9px; color: var(--text-tertiary); }
+.ai-edit-file-input { display: none; }
+.ai-edit-attachments { display: flex; gap: 6px; max-height: 112px; overflow-x: auto; padding: 1px 1px 7px; }
+.ai-edit-attachment { position: relative; display: flex; align-items: center; gap: 7px; flex: 0 0 190px; min-width: 0; min-height: 48px; padding: 6px 24px 6px 6px; border: 1px solid var(--border-subtle); border-radius: 5px; background: var(--bg-subtle); }
+.ai-edit-attachment-thumb { display: block; flex: 0 0 36px; width: 36px; height: 36px; object-fit: cover; border-radius: 3px; }
+.ai-edit-attachment-icon { display: grid; flex: 0 0 30px; width: 30px; height: 32px; place-items: center; border: 1px solid var(--border-subtle); border-radius: 4px; color: var(--text-secondary); background: white; }
+.ai-edit-attachment-meta { min-width: 0; flex: 1; }
+.ai-edit-attachment-meta strong { display: block; overflow: hidden; font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.ai-edit-attachment-meta small { display: block; margin-top: 3px; color: var(--text-secondary); font-size: 9px; }
+.ai-edit-attachment-images { display: flex; align-items: center; gap: 2px; }
+.ai-edit-attachment-images img { width: 20px; height: 24px; object-fit: cover; border-radius: 2px; }
+.ai-edit-attachment-images small { color: var(--text-secondary); font-size: 9px; }
+.ai-edit-upload { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 5px; color: var(--text-secondary); }
+.ai-edit-upload:hover:not(:disabled) { color: var(--primary); background: var(--bg-subtle); }
+.ai-edit-upload:disabled { opacity: .45; cursor: not-allowed; }
+.ai-edit-upload-progress { display: flex; align-items: center; gap: 5px; margin-top: 5px; color: var(--text-secondary); font-size: 9px; }
 .ai-edit-send { width: 32px; height: 32px; flex-shrink: 0; display: grid; place-items: center; background: var(--primary); color: white; border-radius: 50%; }
 .ai-edit-send.stop { background: var(--text-main); }
 .ai-edit-references { display: flex; gap: 7px; overflow-x: auto; padding: 2px 1px 8px; max-height: 135px; }
@@ -2871,8 +2886,14 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
 .ai-edit-composer:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-glow); }
 .ai-edit-composer textarea { min-height: 55px; max-height: 120px; padding: 2px 1px; font-size: 11px; line-height: 1.7; }
 .ai-edit-composer textarea::placeholder { color: var(--text-tertiary); }
-.ai-edit-composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 5px; margin-top: 5px; }
+.ai-edit-composer-footer { display: grid; grid-template-columns: 28px minmax(0,1fr) 28px; align-items: center; gap: 5px; margin-top: 5px; }
 .ai-edit-composer-footer > span { color: var(--text-tertiary); font-size: 9px; }
+.ai-edit-attachments { max-height: 92px; }
+.ai-edit-attachment { flex-basis: 170px; min-height: 42px; padding: 5px 22px 5px 5px; }
+.ai-edit-attachment-thumb { flex-basis: 30px; width: 30px; height: 30px; }
+.ai-edit-attachment-icon { flex-basis: 26px; width: 26px; height: 28px; }
+.ai-edit-upload { width: 28px; height: 28px; }
+.ai-edit-upload-progress { margin-top: 4px; font-size: 9px; }
 .ai-edit-send { display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0; border-radius: 6px; color: white; background: var(--text-main); }
 .ai-edit-send:hover:not(:disabled) { background: var(--primary); }
 .ai-edit-references { display: flex; gap: 6px; max-height: 78px; overflow-x: auto; padding: 0 0 7px; }

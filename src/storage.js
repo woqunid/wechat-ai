@@ -1,11 +1,11 @@
 const DB = 'weave-local';
 
 const openDb = () => new Promise((resolve, reject) => {
-  const request = indexedDB.open(DB, 2);
+  const request = indexedDB.open(DB, 3);
   request.onupgradeneeded = () => {
     const db = request.result;
     if (!db.objectStoreNames.contains('assets')) db.createObjectStore('assets', { keyPath: 'id' });
-    for (const name of ['drafts', 'inputs', 'snapshots']) {
+    for (const name of ['drafts', 'inputs', 'snapshots', 'aiEditAttachments']) {
       if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' });
     }
   };
@@ -42,8 +42,38 @@ export const clearSnapshot = () => transact('snapshots', 'clear');
 export const clearDrafts = async () => {
   await transact('drafts', 'clear');
   await transact('snapshots', 'clear');
+  await transact('aiEditAttachments', 'clear');
 };
 export const clearInputs = () => transact('inputs', 'clear');
+
+const cachedAttachment = ({ previewUrl, images, ...attachment }) => ({
+  ...attachment,
+  ...(images ? { images: images.map(({ previewUrl: imagePreviewUrl, ...image }) => image) } : {}),
+});
+
+export async function saveAIEditAttachments(articleId, attachments) {
+  const db = await openDb();
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction('aiEditAttachments', 'readwrite');
+      transaction.objectStore('aiEditAttachments').put({ id: articleId, attachments: attachments.map(cachedAttachment) });
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error || new Error('附件缓存失败'));
+    });
+  } finally { db.close(); }
+}
+
+export async function loadAIEditAttachments(articleId) {
+  const db = await openDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction('aiEditAttachments').objectStore('aiEditAttachments').get(articleId);
+      request.onsuccess = () => resolve(request.result?.attachments || []);
+      request.onerror = () => reject(request.error);
+    });
+  } finally { db.close(); }
+}
 
 export async function saveAsset(asset, blob) {
   const db = await openDb();
