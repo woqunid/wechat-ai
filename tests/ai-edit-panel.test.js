@@ -23,7 +23,7 @@ after(async () => { await server?.close(); });
 
 test('初始对话显示全文上下文，保留输入与发送入口', () => {
   const html = render({});
-  assert.ok(html.includes('全文已作为上下文'));
+  assert.ok(html.includes('全文上下文'));
   assert.ok(html.includes('引用用于提示关注点'));
   assert.ok(html.includes('aria-label="AI修改要求"'));
   assert.ok(button(html, '发送修改要求'));
@@ -40,7 +40,7 @@ test('文字和图片卡片均提供独立×，失效引用保持展示并阻止
   assert.equal(button(html, '发送修改要求').attribs.disabled, undefined);
   const invalid = { ...text, snapshot: 'outdated' };
   const stale = render({ references: [invalid, image], invalidReferences: [invalid] });
-  assert.ok(stale.includes('已失效 · 点击×移除'));
+  assert.ok(stale.includes('已失效'));
   assert.ok(button(stale, '移除引用：引用文字'));
   assert.ok(Object.hasOwn(button(stale, '发送修改要求').attribs, 'disabled'));
 });
@@ -48,7 +48,7 @@ test('文字和图片卡片均提供独立×，失效引用保持展示并阻止
 test('候选展示程序计算的前后差异和确认入口，失效时禁用应用', () => {
   const values = { candidate: {}, changes: [{ key: 'block:a', label: '修改第1段', before: '原文', after: '候选文字' }], messages: [{ id: 'message', role: 'assistant', text: '提出方案', status: 'pending' }] };
   const html = render(values);
-  assert.ok(html.includes('尚未写入正文'));
+  assert.ok(html.includes('未应用'));
   assert.ok(html.includes('修改前'));
   assert.ok(html.includes('候选文字'));
   assert.equal(button(html, '应用本次修改').attribs.disabled, undefined);

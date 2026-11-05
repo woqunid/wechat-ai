@@ -3,6 +3,9 @@ import { createRoot } from "react-dom/client";
 import {
   ArrowLeft,
   ArrowRight,
+  Check,
+  ChevronDown,
+  ChevronUp,
   Copy,
   FileText,
   ImagePlus,
@@ -11,6 +14,7 @@ import {
   RefreshCw,
   Search,
   Settings2,
+  Sparkles,
   Upload,
   X,
 } from "lucide-react";
@@ -46,7 +50,6 @@ import "./styles.css";
 
 const API = "";
 const LayoutDesigner = React.lazy(() => import('./LayoutDesigner').then(module => ({ default: module.LayoutDesigner })));
-const sample = `城市正在重新定义工作方式。技术、组织与个人选择彼此交织，新的效率机会也带来了新的判断成本。\n\n真正有价值的变化，通常从一个具体问题开始：我们如何把时间留给更重要的事？`;
 const blank = () => ({
   topic: "",
   text: "",
@@ -98,6 +101,8 @@ function App() {
   const [selected, setSelected] = useState("T06");
   const [assets, setAssets] = useState(new Map());
   const [loading, setLoading] = useState(false);
+  const [uploads, setUploads] = useState([]);
+  const uploading = useRef(false);
   const [toast, setToast] = useState("");
   const [modal, setModal] = useState(null);
   const requestAbort = useRef(null);
@@ -368,19 +373,28 @@ function App() {
     }
   };
   const addFiles = async (list) => {
+    if (uploading.current || !list?.length) return;
+    uploading.current = true;
     const allowedDocs = ["docx", "pdf", "txt", "md"];
     const allowedImages = ["jpg", "jpeg", "png", "webp"];
+    const jobs = [...list].map(file => ({ id: uid('upload'), file, status: 'pending' }));
+    setUploads(current => [...current, ...jobs]);
     let docCount = input.files.length;
     let imageCount = input.images.length;
-    for (const file of [...list]) {
+    for (const job of jobs) {
+      const { file } = job;
+      const finish = error => setUploads(current => error
+        ? current.map(item => item.id === job.id ? { ...item, status: 'error', error } : item)
+        : current.filter(item => item.id !== job.id));
+      setUploads(current => current.map(item => item.id === job.id ? { ...item, status: 'uploading' } : item));
       const ext = file.name.toLowerCase().split(".").pop();
       if (allowedImages.includes(ext)) {
         if (file.size > 10 * 1024 * 1024) {
-          setToast("图片不能超过 10MB");
+          finish("图片不能超过 10MB");
           continue;
         }
         if (imageCount >= 10) {
-          setToast("最多添加 10 张图片");
+          finish("最多添加 10 张图片");
           continue;
         }
         const fd = new FormData();
@@ -405,16 +419,17 @@ function App() {
             images: [...v.images, { id: d.asset.id, name: file.name }],
           }));
           imageCount++;
+          finish();
         } catch (e) {
-          setToast(e.message);
+          finish(e.message || "上传失败");
         }
       } else if (allowedDocs.includes(ext)) {
         if (file.size > 20 * 1024 * 1024) {
-          setToast(`${file.name} 超过 20MB`);
+          finish("文档不能超过 20MB");
           continue;
         }
         if (docCount >= 5) {
-          setToast("最多添加 5 个文档");
+          finish("最多添加 5 个文档");
           continue;
         }
         const fd = new FormData();
@@ -443,18 +458,13 @@ function App() {
           }));
           if (parsed.warnings?.length) setToast(parsed.warnings.join("；"));
           docCount++;
+          finish();
         } catch (e) {
-          setInput((v) => ({
-            ...v,
-            files: [
-              ...v.files,
-              { name: file.name, text: "", ok: false, error: e.message },
-            ],
-          }));
-          setToast(`${file.name}：${e.message}`);
+          finish(e.message || "解析失败");
         }
-      } else setToast("请选择 DOCX、PDF、TXT、MD 或常见图片格式");
+      } else finish("不支持此格式");
     }
+    uploading.current = false;
   };
   const copy = async (force = false) => {
     if (!article) return;
@@ -501,6 +511,8 @@ function App() {
         cancelGeneration={cancelGeneration}
         generate={generate}
         addFiles={addFiles}
+        uploads={uploads}
+        dismissUpload={id => setUploads(current => current.filter(item => item.id !== id))}
         fileRef={fileRef}
         assets={assets}
         removeImage={removeImage}
@@ -616,6 +628,16 @@ function App() {
     />
   );
 }
+function Toast({ message, onClose }) {
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    const timer = setTimeout(() => close.current(), 6000);
+    return () => clearTimeout(timer);
+  }, [message]);
+  return <div className="toast" role="status"><span>{message}</span><button aria-label="关闭提示" onClick={onClose}><X size={15}/></button></div>;
+}
+
 function Create({
   input,
   setInput,
@@ -626,6 +648,8 @@ function Create({
   generate,
   addFiles,
   fileRef,
+  uploads,
+  dismissUpload,
   assets,
   removeImage,
   reuploadAsset,
@@ -633,6 +657,10 @@ function Create({
   toast,
   setToast,
 }) {
+  const [dragging, setDragging] = useState(false);
+  const [previewFile, setPreviewFile] = useState(null);
+  const [previewImage, setPreviewImage] = useState(null);
+  const isUploading = uploads.some(item => item.status !== 'error');
   const [serviceOpen, setServiceOpen] = useState(false);
   const [aiStatus, setAiStatus] = useState(null);
   const aiConfigured =
@@ -682,310 +710,57 @@ function Create({
   return (
     <main className="create-shell">
       <header className="brandbar">
-        <div className="wordmark">
-          <span className="mark">W</span>
-          <div>
-            <strong>Weave</strong>
-            <small>公众号内容工作台</small>
-          </div>
-        </div>
-        <div className="create-header-actions">
-          <button
-            className="privacy-settings-link"
-            onClick={() => setServiceOpen(true)}
-          >
-            <Settings2 size={15} />
-            <span>AI 服务</span>
-          </button>
-        </div>
+        <div className="wordmark"><span className="mark">W</span><strong>Weave</strong><span className="brand-divider"/><small>内容工作台</small></div>
+        <button className="privacy-settings-link" onClick={() => setServiceOpen(true)}><span className={`connection-dot${aiConfigured ? ' connected' : ''}`}/><Settings2 size={15}/><span>AI 设置</span></button>
       </header>
       <section className="hero">
-        <div>
-          <p className="eyebrow">公众号内容</p>
-          <h1>新建文章</h1>
-        </div>
-        <div className="hero-index">
-          <div className="hero-step active">
-            <span className="hero-step-num">1</span>
-            <span>素材与创作</span>
-          </div>
-          <span className="hero-step-divider"></span>
-          <div className="hero-step">
-            <span className="hero-step-num">2</span>
-            <span>版式与精修</span>
-          </div>
-          <span className="hero-step-divider"></span>
-          <div className="hero-step">
-            <span className="hero-step-num">3</span>
-            <span>核对与发布</span>
-          </div>
-        </div>
+        <div><p className="eyebrow">WORKSPACE</p><h1>新建文章<span>.</span></h1></div>
+        <div className="hero-index" aria-label="创作流程"><span className="hero-step active">01 素材</span><ArrowRight size={13}/><span className="hero-step">02 编辑</span><ArrowRight size={13}/><span className="hero-step">03 导出</span></div>
       </section>
       <section className="create-grid">
         <div className="input-column">
+          <div className="section-caption"><span>文章素材</span><span>自动保存</span></div>
           <div className="field-block">
-            <label>主题</label>
-            <input
-              maxLength={64}
-              value={input.topic}
-              onChange={(e) => setInput({ ...input, topic: e.target.value })}
-              placeholder="例如：AI 如何改变小团队的工作方式"
-            />
-            <div className="field-meta">
-              <span>{input.topic.trim().length}/64</span>
-              <span>
-                {inputError && input.mode === "create" && textCount <= 30000
-                  ? inputError
-                  : ""}
-              </span>
-            </div>
+            <label htmlFor="article-topic">主题<small>{input.mode === 'create' ? '或直接添加素材' : '选填'}</small></label>
+            <input id="article-topic" maxLength={64} value={input.topic} onChange={event => setInput({ ...input, topic: event.target.value })} placeholder="想写点什么？"/>
+            {input.topic.trim() && <div className="field-meta"><span>{input.topic.trim().length}/64</span></div>}
           </div>
-          <div className="field-block">
-            <label>正文与素材</label>
-            <textarea
-              value={input.text}
-              onChange={(e) => setInput({ ...input, text: e.target.value })}
-              placeholder="粘贴原文、采访记录或零散笔记…"
-            />
-            <div className="field-meta">
-              <span className={textCount > 30000 ? "error" : ""}>
-                {textCount.toLocaleString()} / 30,000
-                {textCount > 30000 ? " · 已超出" : ""}
-              </span>
-              <button
-                className="text-link"
-                onClick={() => setInput({ ...input, text: sample })}
-              >
-                填入示例
-              </button>
-            </div>
-            {inputError && input.mode !== "create" && (
-              <div className="field-validation">{inputError}</div>
-            )}
+          <div className="field-block material-field">
+            <label htmlFor="article-material">{input.mode === 'raw' || input.mode === 'polish' ? '原文' : '素材'}</label>
+            <div className="material-editor"><textarea id="article-material" value={input.text} disabled={loading} onChange={event => setInput({ ...input, text: event.target.value })} placeholder="粘贴文字、笔记，或在下方添加文件…"/><div className="material-footer"><span className={textCount > 30000 ? 'error' : ''}>{textCount.toLocaleString()} / 30,000 字</span>{input.text && <button className="text-link" disabled={loading} onClick={() => setInput({ ...input, text: '' })}>清空</button>}</div></div>
+            {inputError && (input.text || input.topic || input.files.length > 0) && <div className="field-validation">{inputError}</div>}
           </div>
-          <div
-            className="upload-row"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              addFiles(e.dataTransfer.files);
-            }}
-          >
-            <button
-              className="upload-zone"
-              onClick={() => {
-                fileRef.current.accept = ".docx,.pdf,.txt,.md";
-                fileRef.current.click();
-              }}
-            >
-              <Upload size={18} />
-              <span>添加文档</span>
-              <small>DOCX · PDF · TXT · MD</small>
-            </button>
-            <button
-              className="upload-zone"
-              onClick={() => {
-                fileRef.current.accept = "image/jpeg,image/png,image/webp";
-                fileRef.current.click();
-              }}
-            >
-              <ImagePlus size={18} />
-              <span>添加图片</span>
-              <small>JPG · PNG · WEBP</small>
-            </button>
-            <input
-              ref={fileRef}
-              hidden
-              type="file"
-              multiple
-              onChange={(e) => {
-                addFiles(e.target.files);
-                e.target.value = "";
-              }}
-            />
+          <div className={`upload-row${dragging ? ' is-dragging' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (!loading) addFiles(event.dataTransfer.files); }}>
+            <button className="upload-zone" disabled={isUploading || loading} onClick={() => { fileRef.current.accept = '.docx,.pdf,.txt,.md'; fileRef.current.click(); }}><span className="upload-icon"><Upload size={18}/></span><span>添加文档<small>DOCX / PDF / TXT / MD · 20 MB</small></span><Plus size={15}/></button>
+            <button className="upload-zone" disabled={isUploading || loading} onClick={() => { fileRef.current.accept = 'image/jpeg,image/png,image/webp'; fileRef.current.click(); }}><span className="upload-icon"><ImagePlus size={18}/></span><span>添加图片<small>JPG / PNG / WEBP · 10 MB</small></span><Plus size={15}/></button>
+            <input ref={fileRef} hidden type="file" multiple onChange={event => { addFiles(event.target.files); event.target.value = ''; }}/>
           </div>
-          {(input.files.length || input.images.length) > 0 && (
-            <div className="asset-list">
-              {input.files.map((f, i) => (
-                <div className="asset-line" key={i}>
-                  <FileText size={15} />
-                  <span>{f.name}</span>
-                  <small className={f.ok ? "" : "error"}>
-                    {f.ok
-                      ? `${f.text?.length || 0} 字`
-                      : `${f.error || "解析失败"}`}
-                  </small>
-                  <button
-                    className="asset-remove"
-                    aria-label="移除文档"
-                    onClick={() =>
-                      setInput((v) => ({
-                        ...v,
-                        files: v.files.filter((_, j) => j !== i),
-                      }))
-                    }
-                  >
-                    <X size={13} />
-                  </button>
-                  {f.ok && f.preview && (
-                    <small className="asset-preview-text">
-                      {f.preview}
-                      {f.warnings?.length ? ` · ${f.warnings.join("；")}` : ""}
-                    </small>
-                  )}
-                </div>
-              ))}
-              {input.images.map((f, i) => (
-                <div className="asset-line image-asset-line" key={f.id || i}>
-                  {assets.get(f.id)?.previewUrl && (
-                    <img
-                      className="asset-thumb"
-                      src={assets.get(f.id).previewUrl}
-                      alt=""
-                    />
-                  )}
-                  <span>{f.name}</span>
-                  {assets.get(f.id)?.pasteStatus === "broken" && (
-                    <button
-                      className="text-link"
-                      onClick={() => reuploadAsset(f.id)}
-                    >
-                      重新上传
-                    </button>
-                  )}
-                  <div className="asset-controls">
-                    <button
-                      aria-label="上移图片"
-                      disabled={i === 0}
-                      onClick={() => moveImage(i, -1)}
-                    >
-                      <ArrowLeft size={12} />
-                    </button>
-                    <button
-                      aria-label="下移图片"
-                      disabled={i === input.images.length - 1}
-                      onClick={() => moveImage(i, 1)}
-                    >
-                      <ArrowRight size={12} />
-                    </button>
-                    <button
-                      className="asset-remove"
-                      aria-label="移除图片"
-                      onClick={() => removeImage(f.id)}
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          {uploads.length > 0 && <div className="upload-queue" aria-live="polite">{uploads.map(item => <div className={`upload-task${item.status === 'error' ? ' is-error' : ''}`} key={item.id}>
+            {item.status === 'error' ? <FileText size={17}/> : <RefreshCw className="spin" size={17}/>}<div><strong>{item.file.name}</strong><small>{item.status === 'error' ? item.error : item.status === 'pending' ? '等待上传' : /\.(docx|pdf|txt|md)$/i.test(item.file.name) ? '正在解析…' : '正在上传…'}</small></div>
+            {item.status === 'error' && <><button className="text-link" disabled={isUploading || loading} onClick={() => { dismissUpload(item.id); addFiles([item.file]); }}>重试</button><button className="asset-remove" aria-label="移除上传记录" onClick={() => dismissUpload(item.id)}><X size={14}/></button></>}
+          </div>)}</div>}
+          {(input.files.length > 0 || input.images.length > 0) && <section className="material-assets">
+            <div className="section-caption"><span>已添加 <b>{input.files.length + input.images.length}</b></span><small>{input.files.length > 0 ? `${input.files.length} 个文档` : ''}{input.files.length > 0 && input.images.length > 0 ? ' · ' : ''}{input.images.length > 0 ? `${input.images.length} 张图片` : ''}</small></div>
+            {input.files.length > 0 && <div className="asset-list">{input.files.map((file, index) => <div className={`document-asset${file.ok ? '' : ' is-error'}`} key={`${file.name}:${index}`}>
+              <div className="asset-line"><span className="file-icon"><FileText size={18}/></span><div className="asset-file-info"><strong title={file.name}>{file.name}</strong><small>{file.ok ? `${(file.text?.length || 0).toLocaleString()} 字 · 已解析` : file.error || '解析失败'}</small></div>{file.ok && file.preview && <button className="asset-control" aria-label={previewFile === index ? '收起文档' : '预览文档'} aria-expanded={previewFile === index} onClick={() => setPreviewFile(previewFile === index ? null : index)}>{previewFile === index ? <ChevronUp size={15}/> : <ChevronDown size={15}/>}</button>}<button className="asset-remove" aria-label={`移除文档：${file.name}`} disabled={loading} onClick={() => { setInput(value => ({ ...value, files: value.files.filter((_, i) => i !== index) })); setPreviewFile(null); }}><X size={15}/></button></div>
+              {previewFile === index && <p className="asset-preview-text">{file.preview}</p>}{file.warnings?.length > 0 && <p className="asset-warning">{file.warnings.join('；')}</p>}
+            </div>)}</div>}
+            {input.images.length > 0 && <div className="image-asset-grid">{input.images.map((file, index) => { const asset = assets.get(file.id); return <div className="image-asset-card" key={file.id || index}>
+              <button className="image-asset-preview" onClick={() => setPreviewImage(file.id)} aria-label={`预览图片：${file.name}`}><img src={asset?.previewUrl || asset?.cacheUrl || asset?.url} alt={file.name}/><span className="image-order">{String(index + 1).padStart(2, '0')}</span>{asset?.pasteStatus === 'broken' && <span className="image-broken">需重新上传</span>}</button>
+              <div className="image-asset-caption"><strong title={file.name}>{file.name}</strong><small>{asset?.width && asset?.height ? `${asset.width} × ${asset.height}` : '图片素材'}</small></div><div className="asset-controls"><button aria-label="前移图片" disabled={index === 0 || loading} onClick={() => moveImage(index, -1)}><ArrowLeft size={14}/></button><button aria-label="后移图片" disabled={index === input.images.length - 1 || loading} onClick={() => moveImage(index, 1)}><ArrowRight size={14}/></button>{asset?.pasteStatus === 'broken' && <button className="text-link" disabled={loading} onClick={() => reuploadAsset(file.id)}>重传</button>}<button className="asset-remove" aria-label={`移除图片：${file.name}`} disabled={loading} onClick={() => removeImage(file.id)}><X size={14}/></button></div>
+            </div>; })}</div>}
+          </section>}
         </div>
         <aside className="settings-column">
-          <div className="setting-section">
-            <label>创作方式</label>
-            <div className="mode-list">
-              {Object.entries(CREATION_MODES).map(([id, { label: title, hint: desc }]) => (
-                <button
-                  className={
-                    input.mode === id ? "mode-option active" : "mode-option"
-                  }
-                  key={id}
-                  onClick={() => setInput({ ...input, mode: id })}
-                >
-                  <span className="radio-dot"></span>
-                  <span>
-                    <strong>{title}</strong>
-                    <small>{desc}</small>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-          {input.mode !== "raw" && (
-            <>
-              <div className="setting-section">
-                <label>语气</label>
-                <div className="segmented">
-                  {Object.entries(WRITING_TONES).map(([id, { label }]) => (
-                    <button
-                      className={input.tone === id ? "selected" : ""}
-                      onClick={() => setInput({ ...input, tone: id })}
-                      key={id}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <p className="setting-hint">{WRITING_TONES[input.tone]?.hint}</p>
-              </div>
-              <div className="setting-section">
-                <label>目标长度</label>
-                <div className="segmented">
-                  {TARGET_LENGTHS.map((n) => (
-                    <button
-                      className={input.targetLength === n ? "selected" : ""}
-                      onClick={() => setInput({ ...input, targetLength: n })}
-                      key={n}
-                    >
-                      {n}
-                    </button>
-                  ))}
-                </div>
-                <p className="setting-hint">正文约 ±15%，不含主标题、摘要和图注。{input.mode === "polish" ? "润色优先保留原文事实和重要细节，不为凑字数删改信息。" : "不足时讲清已有信息，不编造事实或重复凑字数。"}</p>
-              </div>
-            </>
-          )}
-          {input.mode !== "raw" && aiStatus?.configurationError && (
-            <div className="ai-config-error" role="alert">
-              <span>{aiStatus.configurationError.message}</span>
-              <button type="button" onClick={() => setServiceOpen(true)}>
-                设置
-              </button>
-            </div>
-          )}
-          <button
-            className="primary-action"
-            disabled={
-              !valid ||
-              textCount > 30000 ||
-              loading ||
-              (input.mode !== "raw" && aiConfigured === null) ||
-              (input.mode !== "raw" && Boolean(aiStatus?.configurationError))
-            }
-            onClick={generate}
-          >
-            {loading ? (
-              <>
-                <RefreshCw size={17} className="spin" />
-                正在生成并检查内容
-              </>
-            ) : input.mode === "raw" ? (
-              "开始排版"
-            ) : (
-              "生成文章"
-            )}
-            {loading ? (
-              <span
-                onClick={(e) => {
-                  e.stopPropagation();
-                  cancelGeneration();
-                }}
-              >
-                取消
-              </span>
-            ) : (
-              <ArrowRight size={17} />
-            )}
-          </button>
-          {toast && (
-            <div className="inline-toast" onClick={() => setToast("")}>
-              {toast}
-              <X size={14} />
-            </div>
-          )}
+          <div className="section-caption"><span>创作设置</span><Settings2 size={14}/></div>
+          <div className="setting-section"><label>方式</label><div className="mode-list">{Object.entries(CREATION_MODES).map(([id, { label, hint }]) => <button className={input.mode === id ? 'mode-option active' : 'mode-option'} key={id} disabled={loading} aria-pressed={input.mode === id} onClick={() => setInput({ ...input, mode: id })}><span><strong>{label}</strong><small>{hint}</small></span><span className="radio-dot">{input.mode === id && <Check size={11}/>}</span></button>)}</div></div>
+          {input.mode !== 'raw' && <><div className="setting-section"><label>语气</label><div className="segmented">{Object.entries(WRITING_TONES).map(([id, { label, hint }]) => <button className={input.tone === id ? 'selected' : ''} key={id} title={hint} aria-pressed={input.tone === id} disabled={loading} onClick={() => setInput({ ...input, tone: id })}>{label}</button>)}</div></div><div className="setting-section"><label>字数<small>约 ±15%</small></label><div className="segmented">{TARGET_LENGTHS.map(length => <button className={input.targetLength === length ? 'selected' : ''} key={length} aria-pressed={input.targetLength === length} disabled={loading} onClick={() => setInput({ ...input, targetLength: length })}>{length}</button>)}</div></div></>}
+          {input.mode !== 'raw' && aiStatus?.configurationError && <div className="ai-config-error" role="alert"><span>{aiStatus.configurationError.message}</span><button onClick={() => setServiceOpen(true)}>设置</button></div>}
+          <div className="create-submit"><button className="primary-action" disabled={!valid || textCount > 30000 || loading || isUploading || (input.mode !== 'raw' && (aiConfigured === null || Boolean(aiStatus?.configurationError)))} onClick={generate}>{loading ? <><RefreshCw size={16} className="spin"/>生成中…</> : <>{input.mode === 'raw' ? <FileText size={16}/> : <Sparkles size={16}/>} {input.mode === 'raw' ? '开始排版' : input.mode === 'polish' ? '润色文章' : '生成文章'}<ArrowRight size={16}/></>}</button>{loading ? <div className="generation-feedback" role="status"><span className="activity-line"/><span>正在撰写与检查内容</span><button className="text-link" onClick={cancelGeneration}>取消</button></div> : <p className="submit-note">{isUploading ? '等待素材上传完成' : input.mode === 'raw' ? '保留原文，直接进入编辑' : aiConfigured === false ? '未连接 AI，将生成示例草稿' : '生成后可继续编辑与排版'}</p>}</div>
         </aside>
       </section>
+      {toast && <Toast message={toast} onClose={() => setToast('')}/>}
+      {previewImage && assets.get(previewImage) && <div className="modal-backdrop" onClick={() => setPreviewImage(null)}><div className="asset-lightbox" role="dialog" aria-modal="true" aria-label="图片预览" onClick={event => event.stopPropagation()}><button className="modal-close" aria-label="关闭图片预览" onClick={() => setPreviewImage(null)}><X size={20}/></button><img src={assets.get(previewImage).previewUrl || assets.get(previewImage).cacheUrl || assets.get(previewImage).url} alt="素材预览"/></div></div>}
       {modal === "storage-error" && (
         <div className="modal-backdrop">
           <section className="small-modal">
@@ -1099,7 +874,22 @@ function Edit({
   const [layoutTrial, setLayoutTrial] = useState(null);
   const [layoutReset, setLayoutReset] = useState(0);
   const [sideTab, setSideTab] = useState('templates');
+  const [workspaceView, setWorkspaceView] = useState('editor');
   const resetLayoutTrial = () => { setLayoutTrial(null); setLayoutReset(value => value + 1); };
+  const applyLayoutTrial = () => {
+    const candidate = layoutTrial;
+    if (!candidate) return;
+    if (layoutSignature(article) !== candidate.signature) {
+      resetLayoutTrial();
+      setToast('正文已变化，请重新设计');
+      return;
+    }
+    setArticle(current => layoutSignature(current) === candidate.signature
+      ? { ...clearArticleStyles(current), layoutDesign: candidate.design, updatedAt: new Date().toISOString() }
+      : current);
+    resetLayoutTrial();
+    setToast('排版已应用，可撤销');
+  };
   const openLibrary = () => {
     resetLayoutTrial();
     setLibraryOriginal(selected);
@@ -1138,6 +928,7 @@ function Edit({
   const bodyLength = TARGET_LENGTHS.includes(article.settings?.targetLength)
     ? bodyLengthStatus(article.blocks, article.settings.targetLength) : null;
   const imageInput = useRef();
+  const [imageUploads, setImageUploads] = useState(0);
   const [insertAt, setInsertAt] = useState(0);
   const [replaceBlockId, setReplaceBlockId] = useState(null);
   const [imageSource, setImageSource] = useState('local');
@@ -1201,6 +992,7 @@ function Edit({
     return target;
   };
   const locateContent = (key, source) => {
+    if (source === 'preview' && window.matchMedia('(max-width: 1100px)').matches) setWorkspaceView('editor');
     activeKeyRef.current = key;
     setActiveKey(key);
     const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
@@ -1373,6 +1165,7 @@ function Edit({
       setToast("最多添加 10 张图片");
       return;
     }
+    setImageUploads(count => count + 1);
     const fd = new FormData();
     fd.append("file", file);
     try {
@@ -1387,7 +1180,9 @@ function Edit({
       await registerImageAsset(asset);
       return placeImageAsset(asset, index, blockId, beforeId);
     } catch (e) {
-      setToast(e.message);
+      setToast(e.message || "图片上传失败");
+    } finally {
+      setImageUploads(count => count - 1);
     }
   };
   const requestRegenerate = () => setModal("regen");
@@ -1420,12 +1215,13 @@ function Edit({
         <div className="edit-brand">
           <span className="mark small">W</span>
           <strong>Weave</strong>
-          <span className="draft-status">
+          <span className="draft-status" title={saved ? `保存于 ${saved}` : undefined}>
             <i></i>
-            {saved ? `已保存 ${saved}` : "保存中"}
+            {saved ? "已保存" : "保存中"}
           </span>
         </div>
         <div className="top-actions">
+          <div className="mobile-workspace-actions" role="group" aria-label="工作区切换">{[['editor', FileText, '编辑'], ['preview', LayoutGrid, '预览'], ['tools', Sparkles, '排版与 AI']].map(([id, Icon, label]) => <button key={id} aria-label={label} title={label} aria-pressed={workspaceView === id} onClick={() => setWorkspaceView(id)}><Icon size={16}/></button>)}</div>
           <button
             className="icon-action"
             title="AI 服务设置"
@@ -1438,7 +1234,7 @@ function Edit({
           </button>
           <button className="publish-action" disabled={Boolean(layoutTrial || aiPreview)} title={layoutTrial || aiPreview ? '应用当前方案后再复制' : undefined} onClick={() => copy()}>
             <Copy size={16} />
-            复制到公众号
+            复制排版
           </button>
         </div>
       </header>
@@ -1446,51 +1242,28 @@ function Edit({
         open={serviceOpen}
         onClose={() => setServiceOpen(false)}
       />
-      <div className="edit-workspace">
+      <div className={`edit-workspace view-${workspaceView}`}>
         <aside
           className="editor-pane"
           ref={editorPane}
           onClickCapture={locateFromEditor}
           onFocusCapture={locateFromEditor}
         >
-          <div className="pane-heading">
-            <div>
-              <span className="eyebrow">编辑</span>
-              <h2>文章</h2>
-            </div>
-            <button
-              className="icon-action"
-              title="新增内容"
-              onClick={() => { setInsertAt(insertionAfterSelection()); setModal("add"); }}
-            >
-              <Plus size={18} />
-            </button>
-          </div>
           <div className="article-edit">
             {article.settings?.mockGenerated && (
-              <div className="content-origin mock-origin">本地示例 · 未执行语气和目标长度</div>
+              <div className="content-origin mock-origin">示例草稿 · 尚未连接 AI</div>
             )}
-            {(article.settings?.aiEdited || (article.settings?.aiGenerated && !article.settings?.mockGenerated)) && (
-                <div className="content-origin">
-                  {article.settings?.aiEdited ? '内容经 AI 修改，请核对事实后发布' : '内容由 AI 生成，请核对事实后发布'}
-                </div>
-              )}
             <div className="writing-status" aria-label="当前文章创作设置">
-              <span>{CREATION_MODES[article.mode]?.label}</span>
-              {article.mode === "raw" ? <span>{article.settings?.aiEdited ? '原文导入 · 已通过 AI 修改' : '保留原文 · 不使用 AI'}</span> : <>
-                <span>{WRITING_TONES[article.settings?.tone]?.label || "通俗"}</span>
-                {bodyLength && <span>目标约 {bodyLength.target} 字</span>}
-              </>}
               <span title="含标点、小标题和引用出处，不计空白、主标题、摘要及图片说明">正文 {bodyLength?.actual ?? bodyCharCount(article.blocks)} 字</span>
               <span className={article.title.length > 64 ? 'error' : ''}>标题 {article.title.length}/64</span>
-              {article.mode !== "raw" && !article.settings?.mockGenerated && bodyLength && !bodyLength.within && <small>当前超出 {bodyLength.min}–{bodyLength.max} 字参考范围，可继续编辑</small>}
+              {article.mode !== "raw" && !article.settings?.mockGenerated && bodyLength && !bodyLength.within && <small>参考范围 {bodyLength.min}–{bodyLength.max} 字</small>}
             </div>
             {article.settings?.generationWarnings?.length > 0 && <div className="writing-warnings" role="status">
-              <strong>生成时提示</strong>
+              <strong>提示</strong>
               {article.settings.generationWarnings.map((warning, index) => <p key={index}>{warning}</p>)}
             </div>}
             <div className="block-toolbar">
-              <span>{article.blocks.length} 个内容段落</span>
+              <span>{article.blocks.length} 段</span>
               <span className="history-tools">
                 <button
                   onClick={undo}
@@ -1519,6 +1292,7 @@ function Edit({
                 插入图片
               </button>
             </div>
+            {imageUploads > 0 && <div className="editor-uploading" role="status"><RefreshCw size={14} className="spin"/>上传图片中…</div>}
             <ArticleEditor
               article={article}
               setArticle={setArticle}
@@ -1544,7 +1318,7 @@ function Edit({
               }}
             >
               <Plus size={15} />
-              添加内容块
+              添加内容
             </button>
             <div className="article-end-actions">
               <button
@@ -1560,7 +1334,7 @@ function Edit({
                 重新生成
               </button>
               <button className="text-link" onClick={original}>
-                返回修改素材
+                修改素材
               </button>
               {snapshot && (
                 <button
@@ -1579,7 +1353,6 @@ function Edit({
         </aside>
         <main className="preview-pane">
           <div className="preview-toolbar">
-            <span className="preview-label">{aiPreview ? 'AI修改预览 · 未应用' : layoutTrial ? '新版式试用' : '实时预览'}<small>{aiPreview ? '虚线标记修改处，应用后即可复制' : layoutTrial ? '应用后即可复制' : '点击内容，双向定位'}</small></span>
             <div className="width-switch">
               {[320, 375, 414].map((w) => (
                 <button
@@ -1598,7 +1371,8 @@ function Edit({
               </button>
             </div>
           </div>
-          {sideTab === 'ai' && aiEditor.candidate && !aiEditor.problem && <div className="ai-edit-preview-bar"><span>{aiPreview ? '当前为候选效果，正文尚未修改' : '当前为原稿'}</span><button className="text-link" onClick={() => aiEditor.setShowCandidate(value => !value)}>{aiEditor.showCandidate ? '查看原稿' : '预览方案'}</button></div>}
+          {sideTab === 'ai' && aiEditor.candidate && !aiEditor.problem && <div className="ai-edit-preview-bar"><span>{aiPreview ? `${aiEditor.changes.length} 处改动 · 未应用` : '原稿'}</span><div><button className="text-link" onClick={() => aiEditor.setShowCandidate(value => !value)}>{aiEditor.showCandidate ? '看原稿' : '看方案'}</button><button className="preview-apply" disabled={Boolean(aiEditor.busy || aiEditor.problem)} onClick={aiEditor.apply}><Check size={13}/>应用</button></div></div>}
+          {layoutTrial && <div className="ai-edit-preview-bar layout-preview-bar"><span>{layoutTrial.design.name} · 待应用</span><div><button className="text-link" onClick={resetLayoutTrial}>取消</button><button className="preview-apply" onClick={applyLayoutTrial}><Check size={13}/>应用排版</button></div></div>}
           <div className="phone-stage">
             <div
               className={
@@ -1606,18 +1380,9 @@ function Edit({
               }
               style={{
                 width:
-                  previewWidth === 720 ? "min(722px,100%)" : previewWidth + 16,
+                  previewWidth === 720 ? "min(722px,100%)" : previewWidth + 2,
               }}
             >
-              <div className="phone-status">
-                <span>9:41</span>
-                <span>●●●　▮</span>
-              </div>
-              <div className="phone-nav">
-                <ArrowLeft size={16} />
-                <span>公众号文章</span>
-                <span>···</span>
-              </div>
               <div className="phone-account">
                 <input
                   maxLength={64}
@@ -1651,20 +1416,12 @@ function Edit({
         <aside className={`template-pane${sideTab === 'ai' ? ' ai-edit-pane' : ''}`}>
           <div className="side-panel-tabs" role="tablist" aria-label="右侧工具">
             <button id="templates-tab" role="tab" aria-selected={sideTab === 'templates'} aria-controls="templates-panel" onClick={() => setSideTab('templates')}>模板</button>
-            <button id="ai-edit-tab" role="tab" aria-selected={sideTab === 'ai'} aria-controls="ai-edit-panel" onClick={() => setSideTab('ai')}>AI修改{aiEditor.references.length > 0 && <span>{aiEditor.references.length}</span>}</button>
+            <button id="ai-edit-tab" role="tab" aria-selected={sideTab === 'ai'} aria-controls="ai-edit-panel" onClick={() => setSideTab('ai')}>AI 修改{aiEditor.references.length > 0 && <span>{aiEditor.references.length}</span>}</button>
           </div>
           <div className="side-panel-content" id="templates-panel" role="tabpanel" aria-labelledby="templates-tab" hidden={sideTab !== 'templates'}>
-          <div className="pane-heading template-heading">
-            <div>
-              <span className="eyebrow">视觉风格</span>
-              <h2>模板</h2>
-            </div>
-            <span className="template-total">{templates.length}</span>
-          </div>
-          <React.Suspense fallback={null}><LayoutDesigner key={article.id} article={article} setArticle={setArticle} onTrial={setLayoutTrial} resetKey={layoutReset} disabled={library || regenerating || Boolean(aiEditor.busy)} setToast={setToast} /></React.Suspense>
+          <React.Suspense fallback={null}><LayoutDesigner key={article.id} article={article} setArticle={setArticle} onTrial={candidate => { setLayoutTrial(candidate); if (candidate && window.matchMedia('(max-width: 1100px)').matches) setWorkspaceView('preview'); }} resetKey={layoutReset} disabled={library || regenerating || Boolean(aiEditor.busy)} setToast={setToast} /></React.Suspense>
           <div className="recommend-label">
-            <span>为这篇文章挑选</span>
-            <small>随内容实时匹配</small>
+            <span>推荐模板</span>
           </div>
           <div className="recommend-list">
             {recs.map((t) => (
@@ -1680,7 +1437,7 @@ function Edit({
                 <span className="recommend-copy">
                   <strong>{t.name}</strong>
                   <span className="template-style-text">{t.styleTags.join(" · ")}</span>
-                  <small>{t.reason}</small>
+
                 </span>
                 {selected === t.id && <span className="selected-tick">✓</span>}
               </button>
@@ -1688,20 +1445,13 @@ function Edit({
           </div>
           <button className="all-templates" onClick={openLibrary}>
             <LayoutGrid size={16} />
-            浏览全部模板
+            全部模板
             <ArrowRight size={15} />
           </button>
-          <div className="template-current">
-            <span>当前使用</span>
-            <strong>
-              {article.layoutDesign ? article.layoutDesign.name : `${template.id} · ${template.name}`}
-            </strong>
-            <p>{article.layoutDesign ? article.layoutDesign.description : template.visual}</p>
-            <small>{article.layoutDesign ? 'AI 定制排版 · 全文保留' : describeTemplateFit(article, template)}</small>
-          </div>
+          <div className="template-current"><span>当前</span><strong>{article.layoutDesign?.name || template.name}</strong></div>
           </div>
           <div className="side-panel-content ai-edit-slot" id="ai-edit-panel" role="tabpanel" aria-labelledby="ai-edit-tab" hidden={sideTab !== 'ai'}>
-            <AIEditPanel editor={aiEditor} article={article} assets={assets} disabled={library || regenerating || Boolean(layoutTrial)} onLocate={key => locateContent(key, 'editor')}/>
+            <AIEditPanel editor={aiEditor} article={article} assets={assets} disabled={library || regenerating || Boolean(layoutTrial)} onLocate={key => locateContent(key, 'editor')} onCandidate={() => { if (window.matchMedia('(max-width: 1100px)').matches) setWorkspaceView('preview'); }}/>
           </div>
         </aside>
       </div>
@@ -1710,9 +1460,9 @@ function Edit({
           <div className="library-modal" role="dialog" aria-modal="true" aria-labelledby="library-title" onClick={(e) => e.stopPropagation()}>
             <header>
               <div>
-                <span className="eyebrow">模板库</span>
+
                 <h2 id="library-title">为这篇文章选择版式</h2>
-                <p className="library-intro">每张卡片都是当前文章的排版，点击试用并查看完整效果。</p>
+                <p className="library-intro">点击模板，预览当前文章。</p>
               </div>
               <button className="icon-action" onClick={cancelLibrary} aria-label="关闭模板库并取消试用">
                 <X size={19} />
@@ -1743,12 +1493,12 @@ function Edit({
               </div>
             </div>
             <div className="library-view-switch">
-              <button className={libraryView === "templates" ? "selected" : ""} aria-pressed={libraryView === "templates"} onClick={() => setLibraryView("templates")}>模板列表 · {filtered.length}</button>
+              <button className={libraryView === "templates" ? "selected" : ""} aria-pressed={libraryView === "templates"} onClick={() => setLibraryView("templates")}>模板 · {filtered.length}</button>
               <button className={libraryView === "preview" ? "selected" : ""} aria-pressed={libraryView === "preview"} onClick={() => setLibraryView("preview")}>文章预览</button>
             </div>
             <div className={`library-workspace view-${libraryView}`}>
               <div className="library-catalog">
-                <div className="library-result-count">{filtered.length} 套版式 · 使用当前文章预览</div>
+                <div className="library-result-count">{filtered.length} 套模板</div>
                 <div className="library-grid">
                   {filtered.map((t) => (
                     <button
@@ -1772,13 +1522,13 @@ function Edit({
                     </button>
                   ))}
                   {filtered.length === 0 && (
-                    <p className="empty-result">没有匹配的模板，试试其他风格或用途。</p>
+                    <p className="empty-result">暂无匹配模板</p>
                   )}
                 </div>
               </div>
               <aside className="library-inspector">
                 <div className="library-preview-heading" aria-live="polite">
-                  <span className="eyebrow">正在试用</span>
+                  <span className="eyebrow">预览</span>
                   <strong>{template.name}<small>{template.id}</small></strong>
                   <p>{template.visual}</p>
                   <small>{describeTemplateFit(article, template)}</small>
@@ -1872,10 +1622,10 @@ function Edit({
               </>
             ) : modal === "gallery" ? (
               <>
-                <span className="eyebrow">图片素材</span>
+
                 <h2>{replaceBlockId ? "替换图片" : "插入图片"}</h2>
                 <div className="image-source-tabs" role="tablist" aria-label="图片来源">
-                  <button role="tab" aria-selected={imageSource === 'local'} onClick={() => setImageSource('local')}>本地图片</button>
+                  <button role="tab" aria-selected={imageSource === 'local'} onClick={() => setImageSource('local')}>素材库</button>
                   <button role="tab" aria-selected={imageSource === 'link'} onClick={() => setImageSource('link')}>图片链接</button>
                 </div>
                 {imageSource === 'link' ? <ImageLinkInput replacing={Boolean(replaceBlockId)} onInsert={async asset => {
@@ -1928,14 +1678,14 @@ function Edit({
                       <span>{asset.filename || asset.id}</span>
                     </button>
                   ))}
-                  {assets.size === 0 && <p>还没有可用图片</p>}
+                  {assets.size === 0 && <div className="gallery-empty"><ImagePlus size={28}/><p>添加第一张图片</p><small>支持拖入编辑器或上传文件</small></div>}
                 </div>
                 <button
                   className="text-link"
                   onClick={() => imageInput.current?.click()}
                 >
                   <ImagePlus size={15} />
-                  上传新图片
+                  上传图片
                 </button>
                 <input
                   ref={imageInput}
@@ -1967,7 +1717,7 @@ function Edit({
               </>
             ) : modal === "add" ? (
               <>
-                <span className="eyebrow">继续组织文章</span>
+
                 <h2>添加内容</h2>
                 <div className="add-options">
                   {[
@@ -2173,10 +1923,7 @@ function Edit({
         </div>
       )}
       {toast && (
-        <div className="toast" onClick={() => setToast("")}>
-          {toast}
-          <X size={14} />
-        </div>
+        <Toast message={toast} onClose={() => setToast('')}/>
       )}
     </div>
   );

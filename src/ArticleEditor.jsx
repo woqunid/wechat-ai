@@ -411,6 +411,5 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
         onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; commit(); }}
         onPointerDown={resizeImage} onDragStart={event => { const figure = event.target.closest('figure[data-block-id]'); draggingText.current = !figure; if (figure) { event.dataTransfer.setData('application/x-weave-block', figure.dataset.blockId); event.dataTransfer.effectAllowed = 'move'; } }} onDragEnd={() => { draggingText.current = false; setDrop(null); }}/>
     </div>
-    <p className="editor-help">回车换段 · Shift+回车换行 · 拖动图片可调整位置，拖动图片角落可缩放</p>
   </div>;
 }

@@ -51,10 +51,10 @@ export function ImageLinkInput({ onInsert, onDone, replacing }) {
     <form onSubmit={read}>
       <label htmlFor="image-link">图片链接</label>
       <input id="image-link" type="url" autoFocus value={value} disabled={inserting} onChange={event => { clearPreview(); setValue(event.target.value); }} placeholder="https://图床地址/图片.jpg" spellCheck={false}/>
-      <p>支持 JPG、PNG、WebP 直链，单张不超过 10MB。读取后确认插入。</p>
-      <button className="ghost-action" type="submit" disabled={busy || inserting || !value.trim()}>{busy && <RefreshCw size={14} className="spin"/>}{busy ? '正在读取图片' : '读取图片'}</button>
+      <p>支持 JPG、PNG、WebP 直链，单张不超过 10MB。读取后插入图片。</p>
+      <button className="ghost-action" type="submit" disabled={busy || inserting || !value.trim()}>{busy && <RefreshCw size={14} className="spin"/>}{busy ? '读取中…' : '读取图片'}</button>
     </form>
     {error && <p className="error" role="alert">{error}</p>}
-    {asset && <div className="image-link-preview"><img src={asset.previewUrl} alt="即将插入的图片"/><small>{asset.width} × {asset.height} · {(asset.bytes / 1024 / 1024).toFixed(2)} MB</small><button className="publish-action" disabled={inserting} onClick={insert}>{inserting ? '正在保存' : replacing ? '确认替换' : '确认插入'}</button></div>}
+    {asset && <div className="image-link-preview"><img src={asset.previewUrl} alt="即将插入的图片"/><small>{asset.width} × {asset.height} · {(asset.bytes / 1024 / 1024).toFixed(2)} MB</small><button className="publish-action" disabled={inserting} onClick={insert}>{inserting ? '保存中…' : replacing ? '替换图片' : '插入图片'}</button></div>}
   </div>;
 }

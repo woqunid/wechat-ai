@@ -136,7 +136,7 @@ export function AIServiceSettings({ open, onClose, onStatusChange }) {
       setNotice("已恢复服务端环境配置");
       onStatusChange?.(data);
     } catch (cause) {
-      setError(cause.message || "恢复环境配置失败");
+      setError(cause.message || "重置失败");
     } finally {
       setBusy("");
     }
@@ -160,13 +160,13 @@ export function AIServiceSettings({ open, onClose, onStatusChange }) {
         >
           <X size={18} />
         </button>
-        <span className="eyebrow">模型连接</span>
-        <h2 id="ai-settings-title">AI 服务</h2>
+
+        <h2 id="ai-settings-title">AI 设置</h2>
         <p className="ai-settings-intro">
-          使用 OpenAI 兼容接口。密钥只发送到本服务端，不会保存在浏览器。
+          OpenAI 兼容接口 · 密钥保存在服务端
         </p>
         <label className="ai-settings-field">
-          <span>服务 URL</span>
+          <span>接口地址</span>
           <input
             value={baseUrl}
             onChange={(event) => updateBaseUrl(event.target.value)}
@@ -179,7 +179,7 @@ export function AIServiceSettings({ open, onClose, onStatusChange }) {
           <span>
             <KeyRound size={13} /> API Key
             {status?.hasApiKey && sameUrl && (
-              <small className="key-saved">已保存，留空沿用</small>
+              <small className="key-saved">已保存</small>
             )}
           </span>
           <input
@@ -224,7 +224,7 @@ export function AIServiceSettings({ open, onClose, onStatusChange }) {
             </button>
           </div>
           <small className="ai-field-hint">
-            支持 API 根路径或完整的 /models、/responses、/chat/completions 地址
+            支持 API 根路径或完整接口地址
           </small>
         </div>
         {(error || notice) && (
@@ -245,7 +245,7 @@ export function AIServiceSettings({ open, onClose, onStatusChange }) {
               ? "读取配置中"
               : status?.aiConfigured
                 ? `当前模型：${status.model}`
-                : "未配置时使用本地示例内容"}
+                : "未连接 AI"}
           </span>
           <div className="ai-settings-actions">
             {status?.source === "custom" && (
@@ -255,7 +255,7 @@ export function AIServiceSettings({ open, onClose, onStatusChange }) {
                 disabled={loading}
                 onClick={reset}
               >
-                恢复环境配置
+                重置
               </button>
             )}
             <button
@@ -269,7 +269,7 @@ export function AIServiceSettings({ open, onClose, onStatusChange }) {
               ) : (
                 <Save size={14} />
               )}
-              保存配置
+              保存
             </button>
           </div>
         </div>

@@ -1,9 +1,9 @@
 import { blockText } from './core.js';
 
 export const CREATION_MODES = {
-  create: { label: '素材创作', hint: '根据主题和素材组织文章，可重组结构，不编造事实' },
-  polish: { label: '素材润色', hint: '保留事实、重要细节和叙事顺序，优化表达' },
-  raw: { label: '原文排版', hint: '不调用 AI，忽略主题、语气和长度，只识别原文结构' }
+  create: { label: '创作', hint: '从主题或素材生成文章' },
+  polish: { label: '润色', hint: '保留原意，优化表达' },
+  raw: { label: '排版', hint: '保留原文，无需 AI' }
 };
 export const WRITING_TONES = {
   formal: { label: '正式', hint: '客观克制、用词准确，避免口号和夸张表达' },
