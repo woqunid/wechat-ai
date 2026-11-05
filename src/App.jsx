@@ -33,6 +33,7 @@ import { uid } from "./core";
 import { bodyCharCount, bodyLengthStatus, CREATION_MODES, GENERATION_TIMEOUT_MS, TARGET_LENGTHS, WRITING_TONES } from "./creation.js";
 import { describeTemplateFit, recommendTemplates } from "./recommender";
 import { AIServiceSettings } from "./AIServiceSettings";
+import { AISettingsButton } from "./AISettingsButton";
 import { ArticleEditor } from "./ArticleEditor";
 import { reconcileHtmlArticle } from "./document-model.js";
 import { AIEditPanel, useAIEdit } from "./AIEditPanel";
@@ -810,7 +811,7 @@ function Create({
     <main className="create-shell">
       <header className="brandbar">
         <div className="wordmark"><span className="mark">W</span><strong>Weave</strong><span className="brand-divider"/><small>内容工作台</small></div>
-        <button className="privacy-settings-link" onClick={() => setServiceOpen(true)}><span className={`connection-dot${aiConfigured ? ' connected' : ''}`}/><Settings2 size={15}/><span>AI 设置</span></button>
+        <AISettingsButton configured={aiConfigured} onClick={() => setServiceOpen(true)} />
       </header>
       <section className="hero">
         <div><p className="eyebrow">WORKSPACE</p><h1>新建文章<span>.</span></h1></div>
@@ -976,6 +977,8 @@ function Edit({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [savingHistory, setSavingHistory] = useState(false);
   const [serviceOpen, setServiceOpen] = useState(false);
+  const [aiStatus, setAiStatus] = useState(null);
+  const aiConfigured = aiStatus === null ? null : Boolean(aiStatus.aiConfigured);
   const [library, setLibrary] = useState(false);
   const [libraryView, setLibraryView] = useState("templates");
   const [libraryOriginal, setLibraryOriginal] = useState(selected);
@@ -983,6 +986,16 @@ function Edit({
   const [layoutReset, setLayoutReset] = useState(0);
   const [sideTab, setSideTab] = useState('templates');
   const [toolsOpen, setToolsOpen] = useState(true);
+  useEffect(() => {
+    fetch("/api/config/status")
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok)
+          throw new Error(data.error?.message || "AI 服务状态读取失败");
+        setAiStatus(data);
+      })
+      .catch(() => setAiStatus({ aiConfigured: false }));
+  }, []);
   const resetLayoutTrial = () => { setLayoutTrial(null); setLayoutReset(value => value + 1); };
   const applyLayoutTrial = () => {
     const candidate = layoutTrial;
@@ -1264,14 +1277,8 @@ function Edit({
             <button onClick={undo} disabled={!historySize || canvasReadOnly} title="撤销 Ctrl+Z" aria-label="撤销"><Undo2 size={16}/></button>
             <button onClick={redo} disabled={!futureSize || canvasReadOnly} title="重做 Ctrl+Shift+Z" aria-label="重做"><Redo2 size={16}/></button>
           </div>
-          <button className="icon-action tools-toggle" aria-label={toolsOpen ? '收起工具面板' : '展开工具面板'} aria-controls="workspace-tools" aria-expanded={toolsOpen} title="模板与 AI" onClick={() => setToolsOpen(value => !value)}>{toolsOpen ? <PanelRightClose size={17}/> : <PanelRightOpen size={17}/>}</button>
-          <button
-            className="icon-action"
-            title="AI 服务设置"
-            onClick={() => setServiceOpen(true)}
-          >
-            <Settings2 size={16} />
-          </button>
+          <button className="icon-action tools-toggle" aria-label={toolsOpen ? '折叠工具面板' : '展开工具面板'} aria-controls="workspace-tools" aria-expanded={toolsOpen} title={toolsOpen ? '折叠工具面板' : '展开工具面板'} onClick={() => setToolsOpen(value => !value)}>{toolsOpen ? <PanelRightClose size={17}/> : <PanelRightOpen size={17}/>}</button>
+          <AISettingsButton configured={aiConfigured} onClick={() => setServiceOpen(true)} />
           <button className="ghost-action" disabled={navigating || regenerating || imageUploads > 0 || savingHistory || Boolean(aiEditor.busy)} onClick={() => setModal("clear")}>
             清空草稿
           </button>
@@ -1291,6 +1298,7 @@ function Edit({
       <AIServiceSettings
         open={serviceOpen}
         onClose={() => setServiceOpen(false)}
+        onStatusChange={setAiStatus}
       />
       <div className={`edit-workspace${toolsOpen ? ' tools-open' : ''}`}>
         <main className="canvas-pane" ref={editorPane} onClickCapture={locateFromCanvas} onFocusCapture={locateFromCanvas}>

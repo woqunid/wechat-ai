@@ -1320,6 +1320,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 @media (max-width: 600px) {
   .top-actions > .ghost-action.article-history-action { width: 32px; padding: 0; gap: 0; }
   .article-history-action > span { display: none; }
+  .top-actions > .privacy-settings-link { height: 32px; padding: 0 7px; gap: 5px; border: 0; box-shadow: none; }
+  .top-actions > .privacy-settings-link > span:last-child { display: none; }
   .layout-design-modal { padding: 26px 20px; }
   .layout-design-modal h2 { font-size: 19px; }
 }
