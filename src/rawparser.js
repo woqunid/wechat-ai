@@ -16,7 +16,7 @@ const asRuns = text => {
 
 export const plain = value => String(value)
   .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-  .replace(/^#{1,3}\s*/gm, '')
+  .replace(/^#{1,6}\s*/gm, '')
   .replace(/^\s*(?:[-*+•]\s|\d+\.\s|>\s?|---\s*$)/gm, '')
   .replace(/\*\*|__|`/g, '')
   .replace(/\s/g, '');
@@ -69,11 +69,11 @@ export function parseRaw(source) {
       if (headingText.length > 64) blocks.push({ id: uid('b'), type: 'paragraph', runs: asRuns(headingText.slice(64)) });
       continue;
     }
-    if (i === 0 && value.length <= 30 && !/[。！？；，.!?;,]$/.test(value) && !/^#{1,3}\s/.test(value)) { title = value; continue; }
-    const markdownHeading = value.match(/^(#{1,3})\s+(.*)$/);
+    if (i === 0 && value.length <= 30 && !/[。！？；，.!?;,]$/.test(value) && !/^#{1,6}\s/.test(value)) { title = value; continue; }
+    const markdownHeading = value.match(/^(#{1,6})\s+(.*)$/);
     if (markdownHeading) {
       flushParagraph(); flushList();
-      if (markdownHeading[2].length <= 40) heading(markdownHeading[2], markdownHeading[1].length === 1 ? 1 : 2);
+      if (markdownHeading[2].length <= 40) heading(markdownHeading[2], markdownHeading[1].length <= 2 ? 1 : 2);
       else blocks.push({ id: uid('b'), type: 'paragraph', runs: asRuns(markdownHeading[2]) });
       continue;
     }

@@ -3,8 +3,6 @@ import { createRoot } from "react-dom/client";
 import {
   ArrowLeft,
   ArrowRight,
-  ChevronDown,
-  ChevronUp,
   Copy,
   FileText,
   ImagePlus,
@@ -22,10 +20,12 @@ import {
 import { templates } from "./templates";
 import { getTemplate } from "./templates";
 import { renderArticle } from "./renderer";
+import { copyHtml } from "./clipboard";
 import { checkRawConsistency, parseRaw } from "./rawparser";
-import { uid, blockText } from "./core";
-import { recommendTemplates } from "./recommender";
+import { uid } from "./core";
+import { describeTemplateFit, recommendTemplates } from "./recommender";
 import { AIServiceSettings } from "./AIServiceSettings";
+import { ArticleEditor } from "./ArticleEditor";
 import {
   saveAsset,
   loadAssets,
@@ -452,25 +452,10 @@ function App() {
     }
     const rendered = renderArticle(article, template, assets);
     try {
-      if (!window.isSecureContext) {
-        setCopyFailure("nonsecure");
-        throw new Error("secure");
-      }
-      if (!navigator.clipboard?.write || !window.ClipboardItem) {
-        setCopyFailure("unsupported");
-        throw new Error("unsupported");
-      }
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          "text/html": new Blob([rendered.html], { type: "text/html" }),
-          "text/plain": new Blob([rendered.text], { type: "text/plain" }),
-        }),
-      ]);
+      await copyHtml(rendered);
       setModal("copied");
     } catch (e) {
-      if (e.name === "NotAllowedError") setCopyFailure("permission");
-      else if (!["secure", "unsupported"].includes(e.message))
-        setCopyFailure("general");
+      setCopyFailure(e.name === "NotAllowedError" ? "permission" : "general");
       setModal("copy-error");
     }
   };
@@ -550,6 +535,7 @@ function App() {
         tone: input.tone,
         targetLength: input.targetLength,
         assetIds: input.images.map((image) => image.id).filter(Boolean),
+        templateId: selected,
       }),
       signal: AbortSignal.timeout(100000),
     });
@@ -603,6 +589,7 @@ function App() {
       setSelected={setSelected}
       recs={recs}
       assets={assets}
+      setAssets={setAssets}
       updateBlock={updateBlock}
       previewWidth={previewWidth}
       setPreviewWidth={setPreviewWidth}
@@ -1033,35 +1020,40 @@ function Create({
     </main>
   );
 }
-const thumbArticle = {
-  title: "把问题说清楚",
-  summary: "一段简洁的导语，帮助读者快速进入主题。",
-  blocks: [
-    { id: "thumb-h", type: "heading", level: 1, text: "从关键变化开始" },
-    {
-      id: "thumb-p",
-      type: "paragraph",
-      runs: [{ text: "把零散素材整理为清楚、易读的内容结构。" }],
-    },
-    {
-      id: "thumb-c",
-      type: "callout",
-      runs: [{ text: "提炼重点，让读者知道下一步。" }],
-    },
-  ],
-};
-function TemplateThumb({ template, large = false }) {
-  const html = renderArticle(thumbArticle, template, new Map(), {
-    mode: "wechat",
-  }).html;
+const previewDocument = (html, interactive = false) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><style>*{box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}p{overflow-wrap:anywhere}img{max-width:100%;height:auto}${interactive ? '[data-preview-key]{cursor:pointer;scroll-margin-top:28px}[data-preview-key]:hover{outline:1px dashed #0d9488;outline-offset:3px}[data-preview-key].preview-linked{outline:2px solid #0d9488;outline-offset:3px;animation:preview-locate 1s ease-out}@keyframes preview-locate{from{box-shadow:0 0 0 7px rgba(13,148,136,.2)}to{box-shadow:0 0 0 0 rgba(13,148,136,0)}}@media(prefers-reduced-motion:reduce){[data-preview-key].preview-linked{animation:none}}' : ''}</style></head><body>${html}</body></html>`;
+
+function TemplateThumb({ article, template, assets, large = false }) {
+  const container = useRef();
+  const [scale, setScale] = useState(large ? 0.5 : 0.2);
+  const html = useMemo(() => renderArticle(
+    { ...article, blocks: article.blocks.slice(0, 12) },
+    template,
+    assets,
+    { mode: "preview" },
+  ).html, [article, template, assets]);
+  useEffect(() => {
+    const observer = new ResizeObserver(([entry]) => {
+      setScale(entry.contentRect.width / 375);
+    });
+    observer.observe(container.current);
+    return () => observer.disconnect();
+  }, []);
   return (
     <div
+      ref={container}
       className={`template-mini theme-${template.seriesId}${large ? " large" : ""}`}
       aria-label={`${template.name}预览`}
+      style={{ backgroundColor: template.tokens.page || "#ffffff" }}
     >
-      <div
+      <iframe
         className="thumb-content"
-        dangerouslySetInnerHTML={{ __html: html }}
+        title={`${template.name}文章缩略图`}
+        srcDoc={previewDocument(html)}
+        sandbox="allow-same-origin"
+        tabIndex={-1}
+        aria-hidden="true"
+        loading="lazy"
+        style={{ transform: `scale(${scale})` }}
       />
     </div>
   );
@@ -1081,6 +1073,7 @@ function Edit({
   setSelected,
   recs,
   assets,
+  setAssets,
   updateBlock,
   previewWidth,
   setPreviewWidth,
@@ -1095,9 +1088,11 @@ function Edit({
 }) {
   const [serviceOpen, setServiceOpen] = useState(false);
   const [library, setLibrary] = useState(false);
+  const [libraryView, setLibraryView] = useState("templates");
   const [libraryOriginal, setLibraryOriginal] = useState(selected);
   const openLibrary = () => {
     setLibraryOriginal(selected);
+    setLibraryView("templates");
     setLibrary(true);
   };
   const cancelLibrary = () => {
@@ -1106,6 +1101,17 @@ function Edit({
   };
   const [query, setQuery] = useState("");
   const [series, setSeries] = useState("全部");
+  useEffect(() => {
+    if (!library) return;
+    const close = (event) => {
+      if (event.key === "Escape") {
+        setSelected(libraryOriginal);
+        setLibrary(false);
+      }
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [library, libraryOriginal, setSelected]);
   const [snapshot, setSnapshot] = useState(savedSnapshot || null);
   const [regenerating, setRegenerating] = useState(false);
   const history = useRef([]);
@@ -1117,7 +1123,7 @@ function Edit({
   const [account, setAccount] = useState(
     article.settings?.accountName || "我的公众号",
   );
-  const [undoDelete, setUndoDelete] = useState(null);
+  const [summaryOpen, setSummaryOpen] = useState(Boolean(article.summary));
   const imageInput = useRef();
   const [insertAt, setInsertAt] = useState(0);
   const [replaceBlockId, setReplaceBlockId] = useState(null);
@@ -1168,31 +1174,98 @@ function Edit({
     }
   }, [article]);
   const iframe = useRef();
+  const editorPane = useRef();
+  const activeKeyRef = useRef(null);
+  const pendingPreviewKey = useRef(null);
+  const [activeKey, setActiveKey] = useState(null);
+  const highlightPreview = (doc, key) => {
+    doc?.querySelector('.preview-linked')?.classList.remove('preview-linked');
+    const target = key ? doc?.querySelector(`[data-preview-key="${CSS.escape(key)}"]`) : null;
+    target?.classList.add('preview-linked');
+    return target;
+  };
+  const locateContent = (key, source) => {
+    activeKeyRef.current = key;
+    setActiveKey(key);
+    const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+    const frame = iframe.current;
+    const target = highlightPreview(frame?.contentDocument, key);
+    if (source === 'editor') {
+      if (target) {
+        frame.contentWindow.scrollTo({ top: Math.max(0, target.getBoundingClientRect().top + frame.contentWindow.scrollY - 28), behavior });
+        pendingPreviewKey.current = null;
+        if (window.matchMedia('(max-width: 880px)').matches) {
+          window.scrollTo({ top: Math.max(0, frame.getBoundingClientRect().top + window.scrollY - 24), behavior });
+        }
+      } else pendingPreviewKey.current = key;
+    } else {
+      pendingPreviewKey.current = null;
+      if (key === 'summary') setSummaryOpen(true);
+      requestAnimationFrame(() => {
+        const pane = editorPane.current;
+        const editorTarget = pane?.querySelector(`[data-editor-key="${CSS.escape(key)}"]`);
+        if (editorTarget) {
+          const toolbarHeight = key.startsWith('block:') ? pane.querySelector('.document-toolbar')?.offsetHeight || 0 : 0;
+          const offset = Math.max(toolbarHeight + 24, (pane.clientHeight - editorTarget.offsetHeight) / 2);
+          if (pane.scrollHeight > pane.clientHeight) {
+            pane.scrollTo({ top: Math.max(0, pane.scrollTop + editorTarget.getBoundingClientRect().top - pane.getBoundingClientRect().top - offset), behavior });
+          } else {
+            window.scrollTo({ top: Math.max(0, editorTarget.getBoundingClientRect().top + window.scrollY - 24), behavior });
+          }
+        }
+      });
+    }
+  };
+  const locateFromEditor = (event) => {
+    const key = event.target.closest('[data-editor-key]')?.dataset.editorKey;
+    if (key) locateContent(key, 'editor');
+  };
   const preview = useMemo(
     () =>
       renderArticle(
         { ...article, settings: { ...article.settings, accountName: account } },
         template,
         assets,
-        { mode: "preview" },
+        { mode: "preview", interactive: true },
       ).html,
     [article, template, assets, account],
   );
   useEffect(() => {
+    let removeClick;
     const t = setTimeout(() => {
       if (iframe.current) {
         const frame = iframe.current;
         const previousScroll = frame.contentWindow?.scrollY || 0;
         const doc = frame.contentDocument;
+        if (!doc) return;
+        const previousTarget = activeKeyRef.current
+          ? doc.querySelector(`[data-preview-key="${CSS.escape(activeKeyRef.current)}"]`)
+          : null;
+        const previousOffset = previousTarget?.getBoundingClientRect().top;
         doc.open();
         doc.write(
-          `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"/><style>*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}p{overflow-wrap:anywhere}img{max-width:100%;height:auto}</style></head><body>${preview}</body></html>`,
+          previewDocument(preview, true),
         );
         doc.close();
-        frame.contentWindow?.scrollTo(0, previousScroll);
+        const target = highlightPreview(doc, activeKeyRef.current);
+        const targetTop = target ? target.getBoundingClientRect().top + frame.contentWindow.scrollY : 0;
+        const top = target && pendingPreviewKey.current === activeKeyRef.current
+          ? targetTop - 28
+          : target && previousOffset !== undefined ? targetTop - previousOffset : previousScroll;
+        frame.contentWindow?.scrollTo(0, Math.max(0, top));
+        pendingPreviewKey.current = null;
+        const click = (event) => {
+          const key = event.target.closest('[data-preview-key]')?.dataset.previewKey;
+          if (key) locateContent(key, 'preview');
+        };
+        doc.addEventListener('click', click);
+        removeClick = () => doc.removeEventListener('click', click);
       }
     }, 150);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      removeClick?.();
+    };
   }, [preview]);
   const chooseTemplate = (id) => {
     setSelected(id);
@@ -1203,83 +1276,8 @@ function Edit({
         updatedAt: new Date().toISOString(),
       }));
   };
-  const changeType = (b, type) => {
-    const text = content(b) || " ";
-    const id = b.id;
-    if (
-      (type === "heading1" || type === "heading2") &&
-      b.runs?.some((run) => run.bold)
-    )
-      setToast("标题不支持行内加粗，已保留文字");
-    if (type === "image" || type === "imageCard") {
-      const assetId = b.assetId || [...assets.keys()][0];
-      if (!assetId) {
-        setToast("请先上传图片");
-        return;
-      }
-      setArticle((a) => ({
-        ...a,
-        blocks: a.blocks.map((x) =>
-          x.id === id
-            ? { id, type, assetId, caption: b.caption || "图片说明" }
-            : x,
-        ),
-      }));
-      return;
-    }
-    const next =
-      type === "heading1"
-        ? { id, type: "heading", level: 1, text }
-        : type === "heading2"
-          ? { id, type: "heading", level: 2, text }
-          : type === "quote"
-            ? { id, type, runs: [{ text }] }
-            : type === "callout"
-              ? { id, type, runs: [{ text }] }
-              : type === "divider"
-                ? { id, type }
-                : type === "list"
-                  ? { id, type, ordered: false, items: [[{ text }]] }
-                  : { id, type: "paragraph", runs: [{ text }] };
-    setArticle((a) => ({
-      ...a,
-      blocks: a.blocks.map((x) => (x.id === id ? next : x)),
-    }));
-  };
-  const changeText = (b, value) => {
-    if (b.type === "heading") updateBlock(b.id, { text: value });
-    else if (["paragraph", "callout", "quote"].includes(b.type))
-      updateBlock(b.id, { runs: [{ ...b.runs[0], text: value }] });
-    else if (b.type === "list")
-      updateBlock(b.id, {
-        items: value
-          .split("\n")
-          .map((item) => item.trim())
-          .filter(Boolean)
-          .map((item) => [{ text: item }]),
-      });
-    else if (b.type === "image" || b.type === "imageCard")
-      updateBlock(b.id, { caption: value });
-  };
-  const content = (b) =>
-    b.type === "heading"
-      ? b.text
-      : ["paragraph", "callout", "quote"].includes(b.type)
-        ? b.runs.map((r) => r.text).join("")
-        : b.type === "list"
-          ? b.items.map((x) => x.map((r) => r.text).join("")).join("\n")
-          : b.caption || "";
-  const addParagraphAfter = (index) =>
-    setArticle((a) => {
-      const blocks = [...a.blocks];
-      blocks.splice(index + 1, 0, {
-        id: uid("b"),
-        type: "paragraph",
-        runs: [{ text: "" }],
-      });
-      return { ...a, blocks };
-    });
   const addBlock = (type) => {
+    if (article.blocks.length >= 120) { setToast("段落数量已达上限"); return; }
     const id = uid("b");
     const next =
       type === "heading"
@@ -1288,41 +1286,37 @@ function Edit({
           ? { id, type }
           : type === "quote"
             ? { id, type, runs: [{ text: "引用内容" }] }
+            : type === "list"
+              ? { id, type, ordered: false, items: [[{ text: "新的条目" }]] }
             : { id, type, runs: [{ text: "写下新的内容" }] };
     setArticle((a) => {
       const blocks = [...a.blocks];
       blocks.splice(Math.min(insertAt, blocks.length), 0, next);
       return { ...a, blocks };
     });
+    locateContent(`block:${id}`, 'preview');
+    locateContent(`block:${id}`, 'editor');
   };
-  const move = (i, delta) =>
-    setArticle((a) => {
-      const blocks = [...a.blocks];
-      const n = i + delta;
-      if (n < 0 || n >= blocks.length) return a;
-      [blocks[i], blocks[n]] = [blocks[n], blocks[i]];
-      return { ...a, blocks };
-    });
-  const remove = (i) => {
-    const b = article.blocks[i];
-    setArticle((a) => ({ ...a, blocks: a.blocks.filter((_, j) => j !== i) }));
-    setUndoDelete({ block: b, index: i });
-    setTimeout(() => setUndoDelete(null), 5000);
+  const insertionAfterSelection = () => {
+    const id = activeKeyRef.current?.startsWith('block:') ? activeKeyRef.current.slice(6) : null;
+    const index = article.blocks.findIndex(block => block.id === id);
+    return index < 0 ? article.blocks.length : index + 1;
   };
   const filtered = templates.filter(
     (t) =>
       (series === "全部" || t.series === series) &&
-      (!query ||
-        `${t.name} ${t.series} ${t.styleTags.join(" ")}`
-          .toLowerCase()
-          .includes(query.toLowerCase())),
+      query.trim().toLowerCase().split(/\s+/).every(term =>
+        `${t.id} ${t.name} ${t.series} ${t.visual} ${t.fit.description || ""} ${t.styleTags.join(" ")}`
+          .toLowerCase().includes(term)),
   );
   const uploadImage = async (
     file,
     index = article.blocks.length,
     blockId = null,
+    beforeId = undefined,
   ) => {
     if (!file) return;
+    if (!blockId && article.blocks.length >= 120) { setToast("段落数量已达上限，请先合并部分内容"); return; }
     if (
       !blockId &&
       article.blocks.filter(
@@ -1344,43 +1338,29 @@ function Edit({
         previewUrl: URL.createObjectURL(file),
         blob: file,
       };
-      assets.set(d.asset.id, asset);
+      setAssets(current => new Map(current).set(asset.id, asset));
       await saveAsset(asset, file);
+      const insertedId = blockId || uid("b");
       setArticle((a) => {
+        if (!a || a.id !== article.id) return a;
         const blocks = [...a.blocks];
         if (blockId) {
-          const old = blocks.find((block) => block.id === blockId)?.assetId;
-          const stillUsed = blocks.some(
-            (block) =>
-              block.id !== blockId &&
-              (block.type === "image" || block.type === "imageCard") &&
-              block.assetId === old,
-          );
           const updated = blocks.map((block) =>
             block.id === blockId ? { ...block, assetId: d.asset.id } : block,
           );
-          if (old && old !== d.asset.id && !stillUsed) {
-            fetch(`/api/assets/${encodeURIComponent(old)}`, {
-              method: "DELETE",
-            });
-            deleteAsset(old).catch(() => {});
-            setAssets((current) => {
-              const next = new Map(current);
-              next.delete(old);
-              return next;
-            });
-          }
           setReplaceBlockId(null);
           return { ...a, blocks: updated };
         }
-        blocks.splice(Math.min(index, blocks.length), 0, {
-          id: uid("b"),
+        const anchoredIndex = beforeId === null ? blocks.length : blocks.findIndex(block => block.id === beforeId);
+        blocks.splice(anchoredIndex >= 0 ? anchoredIndex : Math.min(index, blocks.length), 0, {
+          id: insertedId,
           type: "imageCard",
           assetId: d.asset.id,
           caption: file.name,
         });
         return { ...a, blocks };
       });
+      return insertedId;
     } catch (e) {
       setToast(e.message);
     }
@@ -1431,7 +1411,7 @@ function Edit({
           <button className="ghost-action" onClick={() => setModal("clear")}>
             清空草稿
           </button>
-          <button className="publish-action" onClick={copy}>
+          <button className="publish-action" onClick={() => copy()}>
             <Copy size={16} />
             复制到公众号
           </button>
@@ -1442,7 +1422,12 @@ function Edit({
         onClose={() => setServiceOpen(false)}
       />
       <div className="edit-workspace">
-        <aside className="editor-pane">
+        <aside
+          className="editor-pane"
+          ref={editorPane}
+          onClickCapture={locateFromEditor}
+          onFocusCapture={locateFromEditor}
+        >
           <div className="pane-heading">
             <div>
               <span className="eyebrow">编辑</span>
@@ -1451,7 +1436,7 @@ function Edit({
             <button
               className="icon-action"
               title="新增内容"
-              onClick={() => setModal("add")}
+              onClick={() => { setInsertAt(insertionAfterSelection()); setModal("add"); }}
             >
               <Plus size={18} />
             </button>
@@ -1459,7 +1444,8 @@ function Edit({
           <div className="article-edit">
             <label>文章标题</label>
             <textarea
-              className="title-edit"
+              className={`title-edit${activeKey === 'title' ? ' is-linked' : ''}`}
+              data-editor-key="title"
               maxLength={80}
               value={article.title}
               onChange={(e) =>
@@ -1472,14 +1458,9 @@ function Edit({
               </span>
               <button
                 className="text-link"
-                onClick={() =>
-                  setArticle((a) => ({
-                    ...a,
-                    summary: a.summary ? "" : "为读者补充一段简短导语。",
-                  }))
-                }
+                onClick={() => setSummaryOpen(value => !value)}
               >
-                {article.summary ? "编辑摘要" : "添加摘要"}
+                {summaryOpen ? "收起摘要" : article.summary ? "编辑摘要" : "添加摘要"}
               </button>
             </div>
             {article.settings?.mockGenerated && (
@@ -1491,10 +1472,12 @@ function Edit({
                   内容由 AI 生成，请核对事实后发布
                 </div>
               )}
-            {article.summary !== undefined && article.summary !== "" && (
+            {summaryOpen && (
               <textarea
-                className="summary-edit"
-                value={article.summary}
+                className={`summary-edit${activeKey === 'summary' ? ' is-linked' : ''}`}
+                data-editor-key="summary"
+                value={article.summary || ""}
+                maxLength={120}
                 placeholder="摘要"
                 onChange={(e) =>
                   setArticle((a) => ({ ...a, summary: e.target.value }))
@@ -1522,7 +1505,7 @@ function Edit({
               <button
                 className="insert-image"
                 onClick={() => {
-                  setInsertAt(article.blocks.length);
+                  setInsertAt(insertionAfterSelection());
                   setReplaceBlockId(null);
                   setModal("gallery");
                 }}
@@ -1531,163 +1514,21 @@ function Edit({
                 插入图片
               </button>
             </div>
-            <div className="block-list">
-              {article.blocks.map((b, i) => (
-                <section className="edit-block" key={b.id}>
-                  <div className="block-type">
-                    <select
-                      aria-label="内容类型"
-                      value={
-                        b.type === "heading" ? `heading${b.level}` : b.type
-                      }
-                      onChange={(e) => changeType(b, e.target.value)}
-                    >
-                      <option value="paragraph">正文</option>
-                      <option value="heading1">一级标题</option>
-                      <option value="heading2">二级标题</option>
-                      <option value="callout">提示框</option>
-                      <option value="quote">引用</option>
-                      <option value="list">列表</option>
-                      <option value="image">图片</option>
-                      <option value="imageCard">图文卡片</option>
-                      <option value="divider">分隔线</option>
-                    </select>
-                    <div>
-                      <button
-                        title="上移"
-                        disabled={i === 0}
-                        onClick={() => move(i, -1)}
-                      >
-                        <ChevronUp size={14} />
-                      </button>
-                      <button
-                        title="下移"
-                        disabled={i === article.blocks.length - 1}
-                        onClick={() => move(i, 1)}
-                      >
-                        <ChevronDown size={14} />
-                      </button>
-                      <button
-                        title="在此处插入内容"
-                        onClick={() => {
-                          setInsertAt(i + 1);
-                          setModal("add");
-                        }}
-                      >
-                        <Plus size={13} />
-                      </button>
-                      <button
-                        title="在此处插入图片"
-                        onClick={() => {
-                          setInsertAt(i + 1);
-                          setReplaceBlockId(null);
-                          setModal("gallery");
-                        }}
-                      >
-                        <ImagePlus size={13} />
-                      </button>
-                      <button title="删除" onClick={() => remove(i)}>
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </div>
-                  {b.type === "divider" ? (
-                    <div className="divider-preview">分隔线</div>
-                  ) : b.type === "image" || b.type === "imageCard" ? (
-                    <div className="image-edit-row">
-                      {assets.get(b.assetId)?.previewUrl && (
-                        <img src={assets.get(b.assetId).previewUrl} alt="" />
-                      )}
-                      <textarea
-                        value={b.caption || ""}
-                        placeholder="图片说明"
-                        onChange={(e) =>
-                          updateBlock(b.id, { caption: e.target.value })
-                        }
-                      />
-                      <button
-                        title="替换图片"
-                        onClick={() => {
-                          setReplaceBlockId(b.id);
-                          setInsertAt(i);
-                          setModal("gallery");
-                        }}
-                      >
-                        <RefreshCw size={14} />
-                      </button>
-                      <button title="删除图片" onClick={() => remove(i)}>
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ) : (
-                    <textarea
-                      className={b.type === "heading" ? "heading-edit" : ""}
-                      value={content(b)}
-                      onChange={(e) => changeText(b, e.target.value)}
-                      onKeyDown={(e) => {
-                        const value = content(b);
-                        if (
-                          e.key === "Enter" &&
-                          !e.shiftKey &&
-                          e.currentTarget.selectionStart === value.length &&
-                          e.currentTarget.selectionEnd === value.length
-                        ) {
-                          e.preventDefault();
-                          addParagraphAfter(i);
-                        }
-                      }}
-                      placeholder="编辑内容"
-                    />
-                  )}
-                  {b.type === "quote" && (
-                    <input
-                      className="quote-cite-edit"
-                      value={b.cite || ""}
-                      placeholder="来源"
-                      onChange={(e) =>
-                        updateBlock(b.id, { cite: e.target.value })
-                      }
-                    />
-                  )}
-                  {["paragraph", "callout", "quote"].includes(b.type) && (
-                    <div className="run-tools">
-                      <button
-                        onClick={() =>
-                          updateBlock(b.id, {
-                            runs: b.runs.map((r) => ({ ...r, bold: !r.bold })),
-                          })
-                        }
-                      >
-                        <strong>B</strong>
-                      </button>
-                      {["primary", "accent", "red", "orange", "green"].map(
-                        (c) => (
-                          <button
-                            key={c}
-                            title={
-                              {
-                                primary: "模板主色",
-                                accent: "强调色",
-                                red: "红色",
-                                orange: "橙色",
-                                green: "绿色",
-                              }[c]
-                            }
-                            onClick={() =>
-                              updateBlock(b.id, {
-                                runs: b.runs.map((r) => ({ ...r, color: c })),
-                              })
-                            }
-                          >
-                            <i className={`swatch ${c}`}></i>
-                          </button>
-                        ),
-                      )}
-                    </div>
-                  )}
-                </section>
-              ))}
-            </div>
+            <ArticleEditor
+              article={article}
+              setArticle={setArticle}
+              template={template}
+              assets={assets}
+              activeKey={activeKey}
+              onSelect={key => locateContent(key, 'editor')}
+              onUpload={uploadImage}
+              onGallery={(index, blockId = null) => {
+                setInsertAt(index);
+                setReplaceBlockId(blockId);
+                setModal('gallery');
+              }}
+              setToast={setToast}
+            />
             <button
               className="add-block"
               onClick={() => {
@@ -1729,31 +1570,11 @@ function Edit({
                 </button>
               )}
             </div>
-            {undoDelete && (
-              <div className="undo-line">
-                <span>内容块已删除</span>
-                <button
-                  onClick={() => {
-                    setArticle((a) => ({
-                      ...a,
-                      blocks: [
-                        ...a.blocks.slice(0, undoDelete.index),
-                        undoDelete.block,
-                        ...a.blocks.slice(undoDelete.index),
-                      ],
-                    }));
-                    setUndoDelete(null);
-                  }}
-                >
-                  撤销
-                </button>
-              </div>
-            )}
           </div>
         </aside>
         <main className="preview-pane">
           <div className="preview-toolbar">
-            <span>实时预览</span>
+            <span className="preview-label">实时预览<small>点击内容，双向定位</small></span>
             <div className="width-switch">
               {[320, 375, 414].map((w) => (
                 <button
@@ -1779,7 +1600,7 @@ function Edit({
               }
               style={{
                 width:
-                  previewWidth === 720 ? "min(720px,100%)" : previewWidth + 28,
+                  previewWidth === 720 ? "min(722px,100%)" : previewWidth + 16,
               }}
             >
               <div className="phone-status">
@@ -1816,7 +1637,7 @@ function Edit({
                 ref={iframe}
                 title="文章实时预览"
                 sandbox="allow-same-origin"
-                style={{ width: previewWidth, height: "calc(100vh - 236px)" }}
+                style={{ width: previewWidth }}
               />
             </div>
           </div>
@@ -1827,26 +1648,26 @@ function Edit({
               <span className="eyebrow">视觉风格</span>
               <h2>模板</h2>
             </div>
-            <span className="template-total">40</span>
+            <span className="template-total">{templates.length}</span>
           </div>
           <div className="recommend-label">
             <span>为这篇文章挑选</span>
-            <button onClick={() => setToast("已根据文章内容重新匹配模板")}>
-              重新推荐
-            </button>
+            <small>随内容实时匹配</small>
           </div>
           <div className="recommend-list">
-            {recs.map((t, i) => (
+            {recs.map((t) => (
               <button
                 key={t.id}
                 onClick={() => chooseTemplate(t.id)}
+                aria-pressed={selected === t.id}
                 className={
                   selected === t.id ? "recommend-item active" : "recommend-item"
                 }
               >
-                <TemplateThumb template={t} />
+                <TemplateThumb article={article} template={t} assets={assets} />
                 <span className="recommend-copy">
                   <strong>{t.name}</strong>
+                  <span className="template-style-text">{t.styleTags.join(" · ")}</span>
                   <small>{t.reason}</small>
                 </span>
                 {selected === t.id && <span className="selected-tick">✓</span>}
@@ -1863,18 +1684,21 @@ function Edit({
             <strong>
               {template.id} · {template.name}
             </strong>
+            <p>{template.visual}</p>
+            <small>{describeTemplateFit(article, template)}</small>
           </div>
         </aside>
       </div>
       {library && (
-        <div className="modal-backdrop" onClick={cancelLibrary}>
-          <div className="library-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop library-backdrop" onClick={cancelLibrary}>
+          <div className="library-modal" role="dialog" aria-modal="true" aria-labelledby="library-title" onClick={(e) => e.stopPropagation()}>
             <header>
               <div>
                 <span className="eyebrow">模板库</span>
-                <h2>找到合适的阅读节奏</h2>
+                <h2 id="library-title">为这篇文章选择版式</h2>
+                <p className="library-intro">每张卡片都是当前文章的排版，点击试用并查看完整效果。</p>
               </div>
-              <button className="icon-action" onClick={cancelLibrary}>
+              <button className="icon-action" onClick={cancelLibrary} aria-label="关闭模板库并取消试用">
                 <X size={19} />
               </button>
             </header>
@@ -1884,56 +1708,76 @@ function Edit({
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="搜索模板或风格"
+                  placeholder="搜索名称、编号、风格或用途"
+                  aria-label="搜索模板"
+                  autoFocus
                 />
               </div>
               <div className="series-tabs">
-                {[
-                  "全部",
-                  "极简阅读",
-                  "科技资讯",
-                  "商务报告",
-                  "教育科普",
-                  "生活方式",
-                  "活动通知",
-                  "新闻媒体",
-                  "品牌宣传",
-                ].map((s) => (
+                {["全部", ...new Set(templates.map(t => t.series))].map((s) => (
                   <button
                     key={s}
                     className={series === s ? "selected" : ""}
                     onClick={() => setSeries(s)}
+                    aria-pressed={series === s}
                   >
                     {s}
                   </button>
                 ))}
               </div>
             </div>
-            <div className="library-grid">
-              {filtered.map((t) => (
-                <button
-                  key={t.id}
-                  className={
-                    selected === t.id ? "library-card active" : "library-card"
-                  }
-                  onClick={() => chooseTemplate(t.id)}
-                >
-                  <TemplateThumb template={t} large />
-                  <strong>{t.name}</strong>
-                  <small>
-                    {recs.some((recommended) => recommended.id === t.id)
-                      ? "推荐 · "
-                      : ""}
-                    {t.series}
-                  </small>
-                </button>
-              ))}
-              {filtered.length === 0 && (
-                <p className="empty-result">没有匹配的模板</p>
-              )}
+            <div className="library-view-switch">
+              <button className={libraryView === "templates" ? "selected" : ""} aria-pressed={libraryView === "templates"} onClick={() => setLibraryView("templates")}>模板列表 · {filtered.length}</button>
+              <button className={libraryView === "preview" ? "selected" : ""} aria-pressed={libraryView === "preview"} onClick={() => setLibraryView("preview")}>文章预览</button>
+            </div>
+            <div className={`library-workspace view-${libraryView}`}>
+              <div className="library-catalog">
+                <div className="library-result-count">{filtered.length} 套版式 · 使用当前文章预览</div>
+                <div className="library-grid">
+                  {filtered.map((t) => (
+                    <button
+                      key={t.id}
+                      className={selected === t.id ? "library-card active" : "library-card"}
+                      aria-pressed={selected === t.id}
+                      onClick={() => {
+                        chooseTemplate(t.id);
+                        setLibraryView("preview");
+                      }}
+                    >
+                      <TemplateThumb article={article} template={t} assets={assets} large />
+                      <span className="library-card-title">
+                        <strong>{t.name}</strong>
+                        <small>{t.id}</small>
+                      </span>
+                      <span className="template-tags">{t.styleTags.map(tag => <span key={tag}>{tag}</span>)}</span>
+                      <small className="library-card-purpose">{t.fit.description || t.series}</small>
+                      <small className="library-card-fit">{describeTemplateFit(article, t)}</small>
+                      {recs.some(recommended => recommended.id === t.id) && <span className="library-recommended">适合当前文章</span>}
+                    </button>
+                  ))}
+                  {filtered.length === 0 && (
+                    <p className="empty-result">没有匹配的模板，试试其他风格或用途。</p>
+                  )}
+                </div>
+              </div>
+              <aside className="library-inspector">
+                <div className="library-preview-heading" aria-live="polite">
+                  <span className="eyebrow">正在试用</span>
+                  <strong>{template.name}<small>{template.id}</small></strong>
+                  <p>{template.visual}</p>
+                  <small>{describeTemplateFit(article, template)}</small>
+                </div>
+                <div className="library-live-preview">
+                  <iframe
+                    title={`${template.name}完整文章预览`}
+                    srcDoc={previewDocument(preview)}
+                    sandbox="allow-same-origin"
+                  />
+                </div>
+              </aside>
             </div>
             <footer>
-              <span>已选 {getTemplate(selected).name}</span>
+              <span className="library-selection">已选 <strong>{template.name}</strong></span>
               <button className="ghost-action" onClick={cancelLibrary}>
                 取消
               </button>
@@ -2163,11 +2007,11 @@ function Edit({
             ) : modal === "copied" ? (
               <>
                 <span className="eyebrow success-eyebrow">已复制</span>
-                <h2>富文本已复制</h2>
-                <p>请在公众号后台粘贴，并检查图片。</p>
+                <h2>HTML 排版已复制</h2>
+                <p>请在 135 编辑器或公众号后台粘贴，并检查版式与图片。</p>
                 <ol>
-                  <li>打开公众号图文编辑器</li>
-                  <li>在正文区域粘贴内容</li>
+                  <li>打开 135 编辑器或公众号图文编辑器</li>
+                  <li>在正文区域按 Ctrl+V 粘贴内容</li>
                   <li>检查版式与图片后保存</li>
                 </ol>
                 <div className="image-checks">
@@ -2261,18 +2105,12 @@ function Edit({
                 <h2>
                   {copyFailure === "permission"
                     ? "剪贴板权限被拒绝"
-                    : copyFailure === "unsupported"
-                      ? "浏览器不支持富文本复制"
-                      : copyFailure === "nonsecure"
-                        ? "当前页面需要 HTTPS"
-                        : "当前浏览器未能写入富文本"}
+                    : "HTML 排版未能复制"}
                 </h2>
                 <p>
                   {copyFailure === "permission"
-                    ? "允许本页访问剪贴板后再试，或复制纯文本。"
-                    : copyFailure === "nonsecure"
-                      ? "请在 HTTPS 页面打开；也可以复制纯文本。"
-                      : "请使用 Chrome 或 Edge 桌面版；也可以复制纯文本。"}
+                    ? "请允许本页访问剪贴板后重新复制。"
+                    : "请重新复制；如果仍然失败，请使用 Chrome 或 Edge 桌面版重试。"}
                 </p>
                 <div className="modal-buttons">
                   <button
@@ -2283,22 +2121,11 @@ function Edit({
                   </button>
                   <button
                     className="publish-action"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(
-                          renderArticle(article, template, assets).text,
-                        );
-                        setToast("纯文本已复制，不保留排版");
-                        setModal(null);
-                      } catch {
-                        setToast("纯文本复制失败");
-                      }
-                    }}
+                    onClick={() => copy(true)}
                   >
-                    复制纯文本
+                    重新复制 HTML
                   </button>
                 </div>
-                <small>纯文本不保留排版</small>
               </>
             ) : null}
           </div>

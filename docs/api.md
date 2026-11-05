@@ -9,13 +9,20 @@
 | POST | `/api/config/models` | `{baseUrl,apiKey?}`，验证服务凭证并发现排序、去重后的模型列表 |
 | POST | `/api/config/ai` | `{baseUrl,apiKey?,model}`，重新验证模型后保存服务端配置 |
 | DELETE | `/api/config/ai` | 删除页面保存的配置并恢复环境变量配置 |
-| GET | `/api/templates` | 40 套模板元数据（公众号真实回归完成前状态为 `draft`） |
+| GET | `/api/templates` | v2.1.0，40 套模板元数据、视觉配置与内容适配信息（公众号真实回归完成前状态为 `draft`） |
 | POST | `/api/materials/parse` | `multipart/form-data`，字段 `files`，最多 5 份 DOCX/PDF/TXT/MD |
 | POST | `/api/assets` | `multipart/form-data`，字段 `file`，图片最多 10 MB |
 | DELETE | `/api/assets/:id` | 删除图片资源 |
 | POST | `/api/articles/generate` | create/polish 模式生成结构化文章；raw 模式由共享解析器在前端完成 |
+| POST | `/api/articles/rewrite` | 仅修改所选文字，支持润色、缩短与扩写，响应为待用户预览的修改结果 |
 
-`generate` 请求字段：`mode`、`topic`、`text`、`materials[]`、`assetIds[]`、`tone`、`targetLength`。AI 服务配置齐全时按 `AI_API_STYLE` 调用 OpenAI 兼容 Responses 或 Chat Completions 接口；`auto` 默认先尝试 Responses，不支持时回退 Chat Completions。未配置时响应使用带 `mockGenerated` 标记的本地示例内容。响应带 `warnings` 和 `meta`（提示词/Schema 版本、模型、耗时、重试状态）。
+`generate` 请求字段：`mode`、`topic`、`text`、`materials[]`、`assetIds[]`、`tone`、`targetLength`，可选 `templateId`（T01–T40，重新生成时保留选中模板）。未指定模板时，根据规范化后的内容推荐初始模板。AI 服务配置齐全时按 `AI_API_STYLE` 调用 OpenAI 兼容 Responses 或 Chat Completions 接口；`auto` 默认先尝试 Responses，不支持时回退 Chat Completions。未配置时响应使用带 `mockGenerated` 标记的本地示例内容。响应带 `warnings` 和 `meta`（提示词/Schema 版本、模型、耗时、重试状态）。
+
+`semantic-2` 提示词仅要求语义内容块。服务端兼容 JSON 代码围栏、Markdown 正文、文字型段落和列表条目，保留加粗语义、去除 AI 视觉字段，整理标题层级与长段落；图片必须引用请求提供的 ID。未知内容类型、重复/无效图片、超长标题和空正文会触发一次重试，仍失败返回 `AI_INVALID_OUTPUT`，不会接纳未通过校验的草稿。原文排版不走此规范化过程，保留原有的文字一致性检查。
+
+`rewrite` 请求为 `{text,action}`，其中 `text` 是 1–6000 字选区，`action` 为 `polish`、`shorten` 或 `expand`。只向模型提交选区文字，不提交整篇文章。响应 `{text,meta:{model,action}}`，返回文字最多 12000 字；未配置 AI 时返回 `AI_NOT_CONFIGURED`，不使用本地假结果。客户端先展示可编辑结果，再替换原选区；原选区被修改、插入内容或删除时拒绝覆盖。取消会中断请求并保留原文。
+
+草稿内容块可选 `style` 保存 `fontSize`（12–40）、`align`（left/center/right/justify）、`lineHeight`（1.2–3）、`paragraphSpacing`（0–64px）、`indent`（0–4em）、`imageWidth`（20–100%）。文字 run 可选 `bold`、`underline`、`color`（原有语义颜色或六位十六进制颜色）及 `highlight`（六位十六进制颜色）。标题块可选 `runs` 保存局部格式，同时维护纯文字 `text`；旧草稿不需要迁移。手动样式在预览与复制中优先于模板默认值，AI 生成仍只提供语义内容。
 
 页面设置中的 API 密钥只在提交配置时发送到服务端，状态接口不会返回密钥；更换 URL 后需填写新密钥，同一 URL 可留空沿用已保存密钥。自定义配置保存在 `.local/ai-config.json`，优先于环境变量；删除自定义配置后恢复环境变量。配置写入只接受同源或 `ALLOWED_ORIGIN` 中的来源。模型获取或保存失败不会覆盖当前配置。完全未配置时生成接口使用本地示例；部分配置或自动发现模型失败时返回具体配置错误。
 

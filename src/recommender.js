@@ -12,6 +12,55 @@ const groups = {
 };
 const seriesFor = { A: ['general', '生活', '商务'], B: ['科技'], C: ['商务'], D: ['教育'], E: ['生活'], F: ['活动'], G: ['新闻'], H: ['品牌'] };
 const adjacent = { 科技: '商务', 商务: '科技', 教育: '生活', 生活: '教育', 活动: '品牌', 品牌: '活动', 新闻: '商务' };
-export function extractFeatures(article) { const text = `${article.title} ${article.summary} ${article.blocks.map(blockText).join(' ')}`.toLowerCase(); const score = Object.entries(groups).map(([series, words]) => [series, words.reduce((n, w) => n + (text.includes(w) ? 1 : 0), 0)]).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])); const category = score[0][1] === 0 ? 'general' : ({ B: '科技', C: '商务', D: '教育', E: '生活', F: '活动', G: '新闻', H: '品牌' }[score[0][0]] || 'general'); const chars = article.blocks.reduce((n, b) => n + blockText(b).length, 0); return { category, lengthBucket: chars < 800 ? 'short' : chars <= 1800 ? 'medium' : 'long', imageCount: article.blocks.filter(b => b.type === 'image' || b.type === 'imageCard').length, headingCount: article.blocks.filter(b => b.type === 'heading').length, hasList: article.blocks.some(b => b.type === 'list'), hasQuote: article.blocks.some(b => b.type === 'quote') }; }
+export function extractFeatures(article) {
+  const title = (article.title || '').toLowerCase();
+  const text = `${article.summary || ''} ${article.blocks.map(blockText).join(' ')}`.toLowerCase();
+  const score = Object.entries(groups).map(([series, words]) => [series, words.reduce((n, word) => n + (title.includes(word) ? 3 : 0) + (text.includes(word) ? 1 : 0), 0)]).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const category = score[0][1] === 0 ? 'general' : { B: '科技', C: '商务', D: '教育', E: '生活', F: '活动', G: '新闻', H: '品牌' }[score[0][0]];
+  const chars = article.blocks.reduce((n, block) => n + blockText(block).length, 0);
+  const types = new Set(article.blocks.map(block => block.type));
+  const primaryLevel = article.blocks.some(block => block.type === 'heading' && block.level === 1) ? 1 : 2;
+  return {
+    category, chars, lengthBucket: chars < 800 ? 'short' : chars <= 1800 ? 'medium' : 'long',
+    imageCount: article.blocks.filter(block => block.type === 'image' || block.type === 'imageCard').length,
+    headingCount: article.blocks.filter(block => block.type === 'heading' && block.level === primaryLevel).length,
+    hasList: types.has('list'), hasQuote: types.has('quote'), hasCallout: types.has('callout'),
+    hasSummary: Boolean(article.summary?.trim()), types,
+  };
+}
 const clamp = x => Math.max(0, Math.min(1, x));
-export function recommendTemplates(article, all = templates) { const f = extractFeatures(article); const categoryBySeries = { A: ['general', '生活', '商务'], B: ['科技'], C: ['商务'], D: ['教育'], E: ['生活'], F: ['活动'], G: ['新闻'], H: ['品牌'] }; const scored = all.map(t => { const categories = categoryBySeries[t.seriesId] || []; let categoryMatch = f.category === 'general' ? .5 : categories.includes(f.category) ? 1 : categories.includes(adjacent[f.category]) ? .5 : .2; const lengthFit = t.fit.lengths.includes(f.lengthBucket) ? 1 : .4; const imageFit = f.imageCount === 0 ? 1 - t.fit.imageAffinity / 3 : f.imageCount >= 4 ? t.fit.imageAffinity / 3 : .7; const target = Math.min(3, Math.round(f.headingCount / 2)); const headingFit = clamp(1 - Math.abs(target - t.fit.headingAffinity) / 3); const score = .45 * categoryMatch + .20 * lengthFit + .20 * imageFit + .15 * headingFit; return { ...t, score, features: f } }); const perSeries = new Map(); for (const t of scored) { const prev = perSeries.get(t.seriesId); if (!prev || t.score > prev.score || (t.score === prev.score && t.id < prev.id)) perSeries.set(t.seriesId, t) } return [...perSeries.values()].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id)).slice(0, 3).map(t => ({ ...t, reason: `内容偏${f.category}、${f.lengthBucket === 'short' ? '短篇' : f.lengthBucket === 'medium' ? '中篇' : '长篇'}，含${f.imageCount}张图，适合${t.styleTags[0]}风格` })); }
+
+export function describeTemplateFit(article, template) {
+  const f = extractFeatures(article);
+  const parts = [`${f.chars} 字${{ short: '短篇', medium: '中篇', long: '长文' }[f.lengthBucket]}`];
+  if (f.headingCount) parts.push(`${f.headingCount} 节连续阅读`);
+  else parts.push('无小标题，按段落排版');
+  if (f.hasList) parts.push({ checklist: '清单突出要点', steps: '分步清单', tiles: '色块清单', ruled: '条目分隔' }[template.layout.listStyle] || '列表排版');
+  else if (f.hasQuote) parts.push(template.layout.quoteStyle === 'pull' ? '大字引文' : '独立引文');
+  parts.push(f.imageCount ? `${f.imageCount} 张图按原序呈现` : '纯文字也适用');
+  return parts.join(' · ');
+}
+
+export function recommendTemplates(article, all = templates) {
+  const f = extractFeatures(article);
+  const scored = all.map(template => {
+    const categories = seriesFor[template.seriesId] || [];
+    const categoryFit = f.category === 'general' ? (template.seriesId === 'A' ? 1 : 0.45) : categories.includes(f.category) ? 1 : categories.includes(adjacent[f.category]) ? 0.6 : 0.25;
+    const lengthFit = template.fit.lengths.includes(f.lengthBucket) ? 1 : 0.45;
+    const imageFit = 1 - Math.abs(Math.min(3, f.imageCount) - template.fit.imageAffinity) / 4;
+    const headingFit = clamp(1 - Math.abs(Math.min(3, f.headingCount) - template.fit.headingAffinity) / 4);
+    const preferred = template.fit.preferredBlocks || [];
+    const semanticFit = preferred.length ? preferred.filter(type => f.types.has(type) || (type === 'image' && f.types.has('imageCard'))).length / preferred.length : 0.5;
+    const score = 0.40 * categoryFit + 0.16 * lengthFit + 0.12 * imageFit + 0.12 * headingFit + 0.20 * semanticFit;
+    return { ...template, score, features: f };
+  });
+  const perSeries = new Map();
+  for (const template of scored) {
+    const previous = perSeries.get(template.seriesId);
+    if (!previous || template.score > previous.score || (template.score === previous.score && template.id < previous.id)) perSeries.set(template.seriesId, template);
+  }
+  return [...perSeries.values()].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id)).slice(0, 3).map(template => ({
+    ...template,
+    reason: `${template.fit.description || template.series} · ${describeTemplateFit(article, template)}`,
+  }));
+}

@@ -1,121 +1,176 @@
 [
   {
     "id": "T01",
-    "name": "留白阅读",
-    "series": "极简阅读",
+    "name": "墨色专栏",
+    "series": "人文杂志",
     "seriesId": "A",
     "layout": {
       "sectionMark": "hairline",
-      "rhythm": "airy",
       "cardStyle": "plain",
       "calloutStyle": "soft-fill",
-      "titleLayout": "left-large"
+      "headerStyle": "essay",
+      "summaryStyle": "rule",
+      "quoteStyle": "editorial",
+      "listStyle": "ruled",
+      "dividerStyle": "double",
+      "headingFont": "serif",
+      "bodyFont": "sans",
+      "headerLabel": "READING / ESSAY",
+      "emphasisStyle": "underline",
+      "showContents": false,
+      "footerStyle": "line",
+      "pageStyle": "edge",
+      "openingStyle": "dropcap"
     },
     "tokens": {
-      "primary": "#333333",
+      "primary": "#252D31",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 24,
-      "accent": "#707070",
-      "letterSpacing": 0.5,
-      "lineHeight": 2.0,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 48,
-      "tint": "#F5F5F5",
-      "radius": 4
+      "text": "#29312F",
+      "paraGap": 18,
+      "accent": "#9c553b",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#EEECE5",
+      "radius": 2,
+      "page": "#FAF9F6",
+      "border": "#c9cac9",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
       "lengths": [
-        "short",
+        "medium",
         "long"
       ],
-      "imageAffinity": 0
+      "imageAffinity": 0,
+      "preferredBlocks": [
+        "quote",
+        "paragraph"
+      ],
+      "description": "观点、故事与阅读长文"
     },
     "industries": [
       "极简阅读"
     ],
     "styleTags": [
-      "left-large",
-      "hairline",
-      "soft-fill"
+      "杂志",
+      "墨色",
+      "专栏"
     ],
-    "visual": "深灰/白，无装饰正文、细线章节分隔",
+    "visual": "墨色刊头与朱赭细线，首字放大、连续专栏正文",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T02",
-    "name": "居中杂志",
-    "series": "极简阅读",
+    "name": "大地杂志",
+    "series": "人文杂志",
     "seriesId": "A",
     "layout": {
       "sectionMark": "none",
-      "rhythm": "airy",
-      "cardStyle": "bordered",
+      "cardStyle": "folio",
       "calloutStyle": "thin-frame",
-      "titleLayout": "center"
+      "headerStyle": "magazine",
+      "summaryStyle": "center",
+      "quoteStyle": "pull",
+      "listStyle": "tiles",
+      "dividerStyle": "diamonds",
+      "headingFont": "serif",
+      "bodyFont": "sans",
+      "headerLabel": "THE EARTH JOURNAL",
+      "emphasisStyle": "fill",
+      "showContents": false,
+      "footerStyle": "ornament",
+      "pageStyle": "sheet",
+      "openingStyle": "lead"
     },
     "tokens": {
-      "primary": "#8a7254",
+      "primary": "#73513B",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 24,
-      "accent": "#4A4038",
-      "letterSpacing": 0.5,
-      "lineHeight": 2.0,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 48,
-      "tint": "#F7F2E7",
-      "radius": 4
+      "text": "#29312F",
+      "paraGap": 22,
+      "accent": "#A1422F",
+      "letterSpacing": 0.3,
+      "lineHeight": 2,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 36,
+      "tint": "#F0E5D4",
+      "radius": 12,
+      "page": "#FAF6EE",
+      "border": "#dbd0c5",
+      "pagePadding": 14,
+      "titleSize": 30
     },
     "fit": {
       "headingAffinity": 1,
       "lengths": [
-        "short",
+        "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "quote",
+        "paragraph"
+      ],
+      "description": "观点、故事与阅读长文"
     },
     "industries": [
       "极简阅读"
     ],
     "styleTags": [
-      "center",
-      "none",
-      "thin-frame"
+      "杂志",
+      "大地色",
+      "文艺"
     ],
-    "visual": "居中主标题，窄幅导语，细框引用卡",
+    "visual": "大地色封面、居中导语与连续章节，画册式图注",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T03",
-    "name": "书页长文",
-    "series": "极简阅读",
+    "name": "复古书页",
+    "series": "人文杂志",
     "seriesId": "A",
     "layout": {
       "sectionMark": "num-prefix",
-      "rhythm": "normal",
       "cardStyle": "compact",
       "calloutStyle": "soft-fill",
-      "titleLayout": "underline"
+      "headerStyle": "book",
+      "summaryStyle": "note",
+      "quoteStyle": "frame",
+      "listStyle": "ruled",
+      "dividerStyle": "double",
+      "headingFont": "serif",
+      "bodyFont": "serif",
+      "headerLabel": "CHAPTER & VERSE",
+      "emphasisStyle": "color",
+      "showContents": true,
+      "footerStyle": "colophon",
+      "pageStyle": "paper",
+      "openingStyle": "indent"
     },
     "tokens": {
-      "primary": "#2F5D50",
+      "primary": "#365747",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#786a40",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#F4ECD2",
-      "radius": 4
+      "accent": "#8D5035",
+      "letterSpacing": 0.6,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#EDE3CD",
+      "radius": 2,
+      "page": "#F8F2E6",
+      "border": "#cbcec1",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 3,
@@ -123,45 +178,65 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 0
+      "imageAffinity": 0,
+      "preferredBlocks": [
+        "quote",
+        "paragraph"
+      ],
+      "description": "观点、故事与阅读长文"
     },
     "industries": [
       "极简阅读"
     ],
     "styleTags": [
-      "underline",
-      "num-prefix",
-      "soft-fill"
+      "复古",
+      "纸页",
+      "长文"
     ],
-    "visual": "章节编号置前，纸张色背景块，紧凑图注",
+    "visual": "双线书页、宋体缩进正文与章前编号，复古书籍节奏",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T04",
-    "name": "黑白专栏",
-    "series": "极简阅读",
+    "name": "黑白先锋",
+    "series": "人文杂志",
     "seriesId": "A",
     "layout": {
       "sectionMark": "dot",
-      "rhythm": "tight",
-      "cardStyle": "bordered",
+      "cardStyle": "film",
       "calloutStyle": "thin-frame",
-      "titleLayout": "bar"
+      "headerStyle": "manifesto",
+      "summaryStyle": "dark",
+      "quoteStyle": "editorial",
+      "listStyle": "tiles",
+      "dividerStyle": "line",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "BLACK / WHITE",
+      "emphasisStyle": "underline",
+      "showContents": false,
+      "footerStyle": "blocks",
+      "pageStyle": "edge",
+      "openingStyle": "rule"
     },
     "tokens": {
-      "primary": "#000000",
+      "primary": "#181818",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 12,
-      "accent": "#666666",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.65,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 28,
-      "tint": "#F2F2F2",
-      "radius": 0
+      "text": "#29312F",
+      "paraGap": 15,
+      "accent": "#BC382E",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.8,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 26,
+      "tint": "#F0F0ED",
+      "radius": 2,
+      "page": "#FFFFFF",
+      "border": "#cacaca",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -169,45 +244,65 @@
         "short",
         "medium"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "quote",
+        "paragraph"
+      ],
+      "description": "观点、故事与阅读长文"
     },
     "industries": [
       "极简阅读"
     ],
     "styleTags": [
-      "bar",
-      "dot",
-      "thin-frame"
+      "黑白",
+      "先锋",
+      "强对比"
     ],
-    "visual": "黑色标题条，极细黑边框，黑白图文卡",
+    "visual": "黑底白字宣言刊头、红色方标与直角章节，黑白胶片图框",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T05",
-    "name": "清单解析",
-    "series": "极简阅读",
+    "name": "效率清单",
+    "series": "人文杂志",
     "seriesId": "A",
     "layout": {
       "sectionMark": "num-square",
-      "rhythm": "tight",
       "cardStyle": "info",
       "calloutStyle": "soft-fill",
-      "titleLayout": "split"
+      "headerStyle": "checklist",
+      "summaryStyle": "inset",
+      "quoteStyle": "soft",
+      "listStyle": "checklist",
+      "dividerStyle": "dots",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "CHECK & DO",
+      "emphasisStyle": "fill",
+      "showContents": false,
+      "footerStyle": "check",
+      "pageStyle": "none",
+      "openingStyle": "note"
     },
     "tokens": {
-      "primary": "#597a96",
+      "primary": "#2B5872",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 12,
-      "accent": "#34495E",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.65,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 28,
-      "tint": "#EAF0F5",
-      "radius": 4
+      "text": "#29312F",
+      "paraGap": 15,
+      "accent": "#a1522b",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.8,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 26,
+      "tint": "#E6EFF2",
+      "radius": 12,
+      "page": "#F4F7F8",
+      "border": "#c6d2d9",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 3,
@@ -215,19 +310,24 @@
         "short",
         "medium"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "list",
+        "heading"
+      ],
+      "description": "观点、故事与阅读长文"
     },
     "industries": [
       "极简阅读"
     ],
     "styleTags": [
-      "split",
-      "num-square",
-      "soft-fill"
+      "清单",
+      "卡片",
+      "方法"
     ],
-    "visual": "数字型小标题，分段色块，紧凑要点卡",
+    "visual": "清单式刊头、分层清单与勾选要点，信息分区图卡",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T06",
@@ -236,24 +336,39 @@
     "seriesId": "B",
     "layout": {
       "sectionMark": "side-line",
-      "rhythm": "normal",
       "cardStyle": "bordered",
       "calloutStyle": "soft-fill",
-      "titleLayout": "left-large"
+      "headerStyle": "circuit",
+      "summaryStyle": "inset",
+      "quoteStyle": "frame",
+      "listStyle": "steps",
+      "dividerStyle": "line",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "TECH / NOTES",
+      "emphasisStyle": "color",
+      "showContents": false,
+      "footerStyle": "signal",
+      "pageStyle": "rail",
+      "openingStyle": "lead"
     },
     "tokens": {
-      "primary": "#1E6FD9",
+      "primary": "#1557B0",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#0B4AA2",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#EAF3FF",
-      "radius": 0
+      "accent": "#AC4629",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#E8F0FC",
+      "radius": 2,
+      "page": "#F5F8FD",
+      "border": "#c1d3eb",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -261,19 +376,24 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "list",
+        "heading"
+      ],
+      "description": "科技解读与产品观察"
     },
     "industries": [
       "科技资讯"
     ],
     "styleTags": [
-      "left-large",
-      "side-line",
-      "soft-fill"
+      "科技",
+      "电路",
+      "理性"
     ],
-    "visual": "蓝色侧线标题，浅蓝提示块，直角卡",
+    "visual": "蓝色电路端点刊头、侧线章节与编号图框，理性技术笔记",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T07",
@@ -282,24 +402,39 @@
     "seriesId": "B",
     "layout": {
       "sectionMark": "tag",
-      "rhythm": "normal",
-      "cardStyle": "bordered",
+      "cardStyle": "folio",
       "calloutStyle": "thin-frame",
-      "titleLayout": "band"
+      "headerStyle": "observatory",
+      "summaryStyle": "rule",
+      "quoteStyle": "pull",
+      "listStyle": "ruled",
+      "dividerStyle": "double",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "DEEP SIGNAL",
+      "emphasisStyle": "underline",
+      "showContents": false,
+      "footerStyle": "bands",
+      "pageStyle": "none",
+      "openingStyle": "rule"
     },
     "tokens": {
-      "primary": "#14305A",
+      "primary": "#15324D",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#107489",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#E6EEF7",
-      "radius": 0
+      "accent": "#855e1c",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#DFE9F0",
+      "radius": 12,
+      "page": "#F0F4F7",
+      "border": "#bec7d0",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -307,45 +442,65 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "heading",
+        "callout"
+      ],
+      "description": "科技解读与产品观察"
     },
     "industries": [
       "科技资讯"
     ],
     "styleTags": [
-      "band",
-      "tag",
-      "thin-frame"
+      "科技",
+      "深蓝",
+      "观察"
     ],
-    "visual": "深色章节头，亮色标签，窄边图文框",
+    "visual": "深蓝观测封面、细金分隔与浅深章节，观察报告版式",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T08",
-    "name": "未来简报",
+    "name": "未来档案",
     "series": "科技资讯",
     "seriesId": "B",
     "layout": {
       "sectionMark": "hairline",
-      "rhythm": "tight",
       "cardStyle": "info",
       "calloutStyle": "dashed-frame",
-      "titleLayout": "tag"
+      "headerStyle": "archive",
+      "summaryStyle": "note",
+      "quoteStyle": "editorial",
+      "listStyle": "tiles",
+      "dividerStyle": "dots",
+      "headingFont": "mono",
+      "bodyFont": "sans",
+      "headerLabel": "FUTURE / FILE",
+      "emphasisStyle": "fill",
+      "showContents": false,
+      "footerStyle": "file",
+      "pageStyle": "paper",
+      "openingStyle": "note"
     },
     "tokens": {
-      "primary": "#0c8476",
+      "primary": "#096B62",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 12,
-      "accent": "#2B2F33",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.65,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 28,
-      "tint": "#E8F6F4",
-      "radius": 4
+      "text": "#29312F",
+      "paraGap": 15,
+      "accent": "#7E492B",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.8,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 26,
+      "tint": "#DFEEE7",
+      "radius": 2,
+      "page": "#F1F7F4",
+      "border": "#bcd7d2",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -353,19 +508,24 @@
         "short",
         "medium"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "heading",
+        "callout"
+      ],
+      "description": "科技解读与产品观察"
     },
     "industries": [
       "科技资讯"
     ],
     "styleTags": [
-      "tag",
-      "hairline",
-      "dashed-frame"
+      "档案",
+      "薄荷",
+      "模块"
     ],
-    "visual": "顶部编号标签，横向分隔线，模块化信息卡",
+    "visual": "档案夹刊头、虚线登记框与等宽标题，模块化资料卡",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T09",
@@ -374,24 +534,39 @@
     "seriesId": "B",
     "layout": {
       "sectionMark": "big-num",
-      "rhythm": "normal",
       "cardStyle": "bordered",
       "calloutStyle": "solid-fill",
-      "titleLayout": "stacked"
+      "headerStyle": "radar",
+      "summaryStyle": "dark",
+      "quoteStyle": "frame",
+      "listStyle": "steps",
+      "dividerStyle": "double",
+      "headingFont": "mono",
+      "bodyFont": "sans",
+      "headerLabel": "DATA / RADAR",
+      "emphasisStyle": "color",
+      "showContents": true,
+      "footerStyle": "signal",
+      "pageStyle": "edge",
+      "openingStyle": "lead"
     },
     "tokens": {
-      "primary": "#3B3FB6",
+      "primary": "#234D72",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#676c7b",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#ECEDF8",
-      "radius": 0
+      "accent": "#aa472e",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#E5ECF4",
+      "radius": 12,
+      "page": "#F5F7FA",
+      "border": "#c5d0db",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 3,
@@ -399,19 +574,24 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "list",
+        "heading"
+      ],
+      "description": "科技解读与产品观察"
     },
     "industries": [
       "科技资讯"
     ],
     "styleTags": [
-      "stacked",
-      "big-num",
-      "solid-fill"
+      "数据",
+      "仪表",
+      "编号"
     ],
-    "visual": "数据式编号，重点数字底色，矩形边框",
+    "visual": "雷达符号刊头、醒目章节数字与分步清单，海蓝仪表节奏",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T10",
@@ -420,70 +600,105 @@
     "seriesId": "B",
     "layout": {
       "sectionMark": "none",
-      "rhythm": "airy",
       "cardStyle": "image-first",
       "calloutStyle": "side-bar",
-      "titleLayout": "split"
+      "headerStyle": "product",
+      "summaryStyle": "rule",
+      "quoteStyle": "pull",
+      "listStyle": "checklist",
+      "dividerStyle": "diamonds",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "PRODUCT / LOG",
+      "emphasisStyle": "underline",
+      "showContents": false,
+      "footerStyle": "tab",
+      "pageStyle": "sheet",
+      "openingStyle": "note"
     },
     "tokens": {
-      "primary": "#15819c",
+      "primary": "#216A72",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 24,
-      "accent": "#0E6E87",
-      "letterSpacing": 0.5,
-      "lineHeight": 2.0,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 48,
-      "tint": "#F1F8FA",
-      "radius": 4
+      "text": "#29312F",
+      "paraGap": 22,
+      "accent": "#9E4E33",
+      "letterSpacing": 0.3,
+      "lineHeight": 2,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 36,
+      "tint": "#EAF2EF",
+      "radius": 2,
+      "page": "#FCFAF5",
+      "border": "#cad9d7",
+      "pagePadding": 14,
+      "titleSize": 30
     },
     "fit": {
       "headingAffinity": 1,
       "lengths": [
-        "short",
+        "medium",
         "long"
       ],
-      "imageAffinity": 3
+      "imageAffinity": 3,
+      "preferredBlocks": [
+        "list",
+        "heading"
+      ],
+      "description": "科技解读与产品观察"
     },
     "industries": [
       "科技资讯"
     ],
     "styleTags": [
-      "split",
-      "none",
-      "side-bar"
+      "产品",
+      "手记",
+      "图文"
     ],
-    "visual": "小标签导语，图片优先卡，轻边线正文",
+    "visual": "标签页刊头、开篇便签与产品大图，轻量日志布局",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T11",
-    "name": "商务深绿",
+    "name": "松绿商务",
     "series": "商务报告",
     "seriesId": "C",
     "layout": {
       "sectionMark": "side-line",
-      "rhythm": "normal",
       "cardStyle": "rounded",
       "calloutStyle": "rounded-fill",
-      "titleLayout": "band"
+      "headerStyle": "business",
+      "summaryStyle": "dark",
+      "quoteStyle": "frame",
+      "listStyle": "tiles",
+      "dividerStyle": "double",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "BUSINESS REVIEW",
+      "emphasisStyle": "fill",
+      "showContents": false,
+      "footerStyle": "bands",
+      "pageStyle": "folio",
+      "openingStyle": "lead"
     },
     "tokens": {
-      "primary": "#1F5A3C",
+      "primary": "#224D39",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#357a55",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#F5F1E4",
-      "radius": 8
+      "accent": "#89612a",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#E8EDDF",
+      "radius": 12,
+      "page": "#F6F5EE",
+      "border": "#c5cec4",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -491,19 +706,24 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "heading",
+        "list"
+      ],
+      "description": "经营分析与工作报告"
     },
     "industries": [
       "商务报告"
     ],
     "styleTags": [
-      "band",
-      "side-line",
-      "rounded-fill"
+      "商务",
+      "松绿",
+      "报告"
     ],
-    "visual": "深绿标题底条，竖线重点，圆角信息卡",
+    "visual": "松绿商务刊头、金色细节与分区报告，圆角证据图卡",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T12",
@@ -512,24 +732,39 @@
     "seriesId": "C",
     "layout": {
       "sectionMark": "index-row",
-      "rhythm": "normal",
       "cardStyle": "info",
       "calloutStyle": "soft-fill",
-      "titleLayout": "underline"
+      "headerStyle": "monthly",
+      "summaryStyle": "inset",
+      "quoteStyle": "editorial",
+      "listStyle": "ruled",
+      "dividerStyle": "line",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "MONTHLY REVIEW",
+      "emphasisStyle": "color",
+      "showContents": true,
+      "footerStyle": "file",
+      "pageStyle": "none",
+      "openingStyle": "rule"
     },
     "tokens": {
-      "primary": "#4C6A85",
+      "primary": "#3C5975",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 18,
-      "accent": "#2E4256",
-      "letterSpacing": 0.5,
+      "text": "#29312F",
+      "paraGap": 15,
+      "accent": "#9C4C31",
+      "letterSpacing": 0.3,
       "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#EDF1F5",
-      "radius": 4
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 26,
+      "tint": "#E4EAF0",
+      "radius": 2,
+      "page": "#F3F5F8",
+      "border": "#c9d1da",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 3,
@@ -537,19 +772,24 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "heading",
+        "list"
+      ],
+      "description": "经营分析与工作报告"
     },
     "industries": [
       "商务报告"
     ],
     "styleTags": [
-      "underline",
-      "index-row",
-      "soft-fill"
+      "月报",
+      "索引",
+      "蓝灰"
     ],
-    "visual": "横向章节索引，灰蓝背景卡，清晰分隔",
+    "visual": "横栏月报刊头、章节索引与侧线正文，分层信息卡",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T13",
@@ -558,70 +798,105 @@
     "seriesId": "C",
     "layout": {
       "sectionMark": "big-num",
-      "rhythm": "airy",
       "cardStyle": "bordered",
       "calloutStyle": "double-frame",
-      "titleLayout": "frame"
+      "headerStyle": "insight",
+      "summaryStyle": "rule",
+      "quoteStyle": "pull",
+      "listStyle": "steps",
+      "dividerStyle": "diamonds",
+      "headingFont": "serif",
+      "bodyFont": "sans",
+      "headerLabel": "MANAGEMENT / INSIGHTS",
+      "emphasisStyle": "underline",
+      "showContents": false,
+      "footerStyle": "ornament",
+      "pageStyle": "paper",
+      "openingStyle": "dropcap"
     },
     "tokens": {
-      "primary": "#3A3A3A",
+      "primary": "#36332E",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 24,
-      "accent": "#8a6731",
-      "letterSpacing": 0.5,
-      "lineHeight": 2.0,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 48,
-      "tint": "#F4EFE6",
-      "radius": 0
+      "text": "#29312F",
+      "paraGap": 22,
+      "accent": "#875d25",
+      "letterSpacing": 0.3,
+      "lineHeight": 2,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 36,
+      "tint": "#EEE5D5",
+      "radius": 2,
+      "page": "#FBF8F1",
+      "border": "#cecbc4",
+      "pagePadding": 14,
+      "titleSize": 30
     },
     "fit": {
       "headingAffinity": 3,
       "lengths": [
-        "short",
+        "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "list",
+        "heading"
+      ],
+      "description": "经营分析与工作报告"
     },
     "industries": [
       "商务报告"
     ],
     "styleTags": [
-      "frame",
-      "big-num",
-      "double-frame"
+      "洞察",
+      "框线",
+      "香槟"
     ],
-    "visual": "大号章节编号，双层线框，结论强调块",
+    "visual": "香槟双框刊头、大号章节编号与洞察引语，细框报告",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T14",
-    "name": "品牌公报",
+    "name": "企业公报",
     "series": "商务报告",
     "seriesId": "C",
     "layout": {
       "sectionMark": "short-line",
-      "rhythm": "normal",
       "cardStyle": "info",
       "calloutStyle": "thin-frame",
-      "titleLayout": "masthead"
+      "headerStyle": "bulletin",
+      "summaryStyle": "inset",
+      "quoteStyle": "frame",
+      "listStyle": "ruled",
+      "dividerStyle": "double",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "COMPANY BULLETIN",
+      "emphasisStyle": "fill",
+      "showContents": false,
+      "footerStyle": "colophon",
+      "pageStyle": "edge",
+      "openingStyle": "lead"
     },
     "tokens": {
-      "primary": "#1B2E57",
+      "primary": "#233953",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#5C6B8A",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#F0F2F5",
-      "radius": 0
+      "accent": "#9C4B3C",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#EAF0F5",
+      "radius": 2,
+      "page": "#FFFFFF",
+      "border": "#ccd1d7",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -629,19 +904,24 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "heading",
+        "list"
+      ],
+      "description": "经营分析与工作报告"
     },
     "industries": [
       "商务报告"
     ],
     "styleTags": [
-      "masthead",
-      "short-line",
-      "thin-frame"
+      "公报",
+      "刊头",
+      "正式"
     ],
-    "visual": "顶部刊头框，短标题线，规范信息卡",
+    "visual": "正式公报刊头、居中主标题与短线分节，规范图文信息区",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T15",
@@ -650,44 +930,64 @@
     "seriesId": "C",
     "layout": {
       "sectionMark": "question",
-      "rhythm": "airy",
       "cardStyle": "plain",
       "calloutStyle": "soft-fill",
-      "titleLayout": "left-large"
+      "headerStyle": "strategy",
+      "summaryStyle": "note",
+      "quoteStyle": "editorial",
+      "listStyle": "checklist",
+      "dividerStyle": "dots",
+      "headingFont": "serif",
+      "bodyFont": "sans",
+      "headerLabel": "STRATEGY / NOTES",
+      "emphasisStyle": "color",
+      "showContents": false,
+      "footerStyle": "tab",
+      "pageStyle": "sheet",
+      "openingStyle": "note"
     },
     "tokens": {
-      "primary": "#2B2B2B",
+      "primary": "#333D3D",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 24,
-      "accent": "#ae5719",
-      "letterSpacing": 0.5,
-      "lineHeight": 2.0,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 48,
-      "tint": "#FBF1E8",
-      "radius": 4
+      "text": "#29312F",
+      "paraGap": 18,
+      "accent": "#A24C2C",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#F1E4D4",
+      "radius": 2,
+      "page": "#FAF5EC",
+      "border": "#cccbc4",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
       "lengths": [
-        "short",
+        "medium",
         "long"
       ],
-      "imageAffinity": 0
+      "imageAffinity": 0,
+      "preferredBlocks": [
+        "list",
+        "heading"
+      ],
+      "description": "经营分析与工作报告"
     },
     "industries": [
       "商务报告"
     ],
     "styleTags": [
-      "left-large",
-      "question",
-      "soft-fill"
+      "策略",
+      "笔记",
+      "暖纸"
     ],
-    "visual": "提问式章节标题，浅底重点块，留白长文",
+    "visual": "策略笔记页签、暖纸便签与问句章节，留白推演版式",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T16",
@@ -696,24 +996,39 @@
     "seriesId": "D",
     "layout": {
       "sectionMark": "num-square",
-      "rhythm": "normal",
       "cardStyle": "rounded",
       "calloutStyle": "rounded-fill",
-      "titleLayout": "left-large"
+      "headerStyle": "campus",
+      "summaryStyle": "inset",
+      "quoteStyle": "soft",
+      "listStyle": "steps",
+      "dividerStyle": "dots",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "CAMPUS JOURNAL",
+      "emphasisStyle": "underline",
+      "showContents": false,
+      "footerStyle": "check",
+      "pageStyle": "none",
+      "openingStyle": "lead"
     },
     "tokens": {
-      "primary": "#1b7cb7",
+      "primary": "#235C87",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#0F5F90",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#E8F4FB",
-      "radius": 8
+      "accent": "#9B591E",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#E7F0F8",
+      "radius": 12,
+      "page": "#F7FAFD",
+      "border": "#c6d6e2",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 3,
@@ -721,45 +1036,65 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "list",
+        "heading"
+      ],
+      "description": "知识拆解与学习指南"
     },
     "industries": [
       "教育科普"
     ],
     "styleTags": [
-      "left-large",
-      "num-square",
-      "rounded-fill"
+      "校园",
+      "蓝黄",
+      "知识"
     ],
-    "visual": "分节序号方块，浅蓝说明卡，柔和边框",
+    "visual": "校园徽章刊头、蓝黄章节标题与步骤清单，柔角知识图卡",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T17",
-    "name": "知识拆解",
+    "name": "知识拼图",
     "series": "教育科普",
     "seriesId": "D",
     "layout": {
       "sectionMark": "tag",
-      "rhythm": "normal",
-      "cardStyle": "image-first",
+      "cardStyle": "info",
       "calloutStyle": "solid-fill",
-      "titleLayout": "tag"
+      "headerStyle": "puzzle",
+      "summaryStyle": "note",
+      "quoteStyle": "frame",
+      "listStyle": "tiles",
+      "dividerStyle": "diamonds",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "KNOWLEDGE / LAB",
+      "emphasisStyle": "fill",
+      "showContents": false,
+      "footerStyle": "blocks",
+      "pageStyle": "none",
+      "openingStyle": "note"
     },
     "tokens": {
-      "primary": "#2F7D5B",
+      "primary": "#245C57",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#1D5740",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#F6F1E1",
-      "radius": 4
+      "accent": "#A55032",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#E9F0DE",
+      "radius": 12,
+      "page": "#FCFAF3",
+      "border": "#cad6cf",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -767,19 +1102,24 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 3
+      "imageAffinity": 3,
+      "preferredBlocks": [
+        "list",
+        "callout"
+      ],
+      "description": "知识拆解与学习指南"
     },
     "industries": [
       "教育科普"
     ],
     "styleTags": [
-      "tag",
-      "tag",
-      "solid-fill"
+      "知识",
+      "拼图",
+      "卡片"
     ],
-    "visual": "概念标签，定义色块，知识图片卡",
+    "visual": "拼图色块刊头、知识模块与彩签重点，结构化知识卡",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T18",
@@ -788,24 +1128,39 @@
     "seriesId": "D",
     "layout": {
       "sectionMark": "side-line",
-      "rhythm": "tight",
       "cardStyle": "plain",
       "calloutStyle": "side-bar",
-      "titleLayout": "underline"
+      "headerStyle": "lecture",
+      "summaryStyle": "rule",
+      "quoteStyle": "editorial",
+      "listStyle": "ruled",
+      "dividerStyle": "double",
+      "headingFont": "serif",
+      "bodyFont": "serif",
+      "headerLabel": "CLASSROOM NOTES",
+      "emphasisStyle": "color",
+      "showContents": true,
+      "footerStyle": "colophon",
+      "pageStyle": "paper",
+      "openingStyle": "indent"
     },
     "tokens": {
-      "primary": "#1D3A70",
+      "primary": "#425E49",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 12,
-      "accent": "#3B5FA8",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.65,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 28,
-      "tint": "#FBF7EC",
-      "radius": 0
+      "text": "#29312F",
+      "paraGap": 18,
+      "accent": "#8C5131",
+      "letterSpacing": 0.6,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#EEEDD9",
+      "radius": 2,
+      "page": "#FAF7E9",
+      "border": "#d0d4c4",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -813,45 +1168,65 @@
         "short",
         "medium"
       ],
-      "imageAffinity": 0
+      "imageAffinity": 0,
+      "preferredBlocks": [
+        "list",
+        "callout"
+      ],
+      "description": "知识拆解与学习指南"
     },
     "industries": [
       "教育科普"
     ],
     "styleTags": [
-      "underline",
-      "side-line",
-      "side-bar"
+      "讲义",
+      "书卷",
+      "复古"
     ],
-    "visual": "直线标题，左框知识点，规则段距",
+    "visual": "讲义页眉、宋体缩进与侧线批注，书卷式课堂阅读",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T19",
-    "name": "问答科普",
+    "name": "问答实验室",
     "series": "教育科普",
     "seriesId": "D",
     "layout": {
       "sectionMark": "question",
-      "rhythm": "normal",
-      "cardStyle": "bordered",
+      "cardStyle": "flow",
       "calloutStyle": "soft-fill",
-      "titleLayout": "split"
+      "headerStyle": "qa",
+      "summaryStyle": "inset",
+      "quoteStyle": "soft",
+      "listStyle": "steps",
+      "dividerStyle": "dots",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "QUESTION & ANSWER",
+      "emphasisStyle": "underline",
+      "showContents": false,
+      "footerStyle": "signal",
+      "pageStyle": "none",
+      "openingStyle": "lead"
     },
     "tokens": {
-      "primary": "#4b834a",
+      "primary": "#165C80",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#333333",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#F0F7EC",
-      "radius": 4
+      "accent": "#A34B33",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#E3EEF1",
+      "radius": 12,
+      "page": "#F3F8FA",
+      "border": "#c0d4de",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -859,137 +1234,65 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "list",
+        "heading"
+      ],
+      "description": "知识拆解与学习指南"
     },
     "industries": [
       "教育科普"
     ],
     "styleTags": [
-      "split",
-      "question",
-      "soft-fill"
+      "问答",
+      "科普",
+      "实验"
     ],
-    "visual": "问题型小标题，回答背景块，卡片分段",
+    "visual": "问答字标刊头、问题编号章节与答案卡，步骤图解",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T20",
-    "name": "成长记录",
+    "name": "成长手账",
     "series": "教育科普",
     "seriesId": "D",
     "layout": {
       "sectionMark": "dot",
-      "rhythm": "airy",
-      "cardStyle": "story",
+      "cardStyle": "polaroid",
       "calloutStyle": "rounded-fill",
-      "titleLayout": "pill"
+      "headerStyle": "growth",
+      "summaryStyle": "note",
+      "quoteStyle": "pull",
+      "listStyle": "checklist",
+      "dividerStyle": "diamonds",
+      "headingFont": "serif",
+      "bodyFont": "sans",
+      "headerLabel": "GROWING / NOTES",
+      "emphasisStyle": "fill",
+      "showContents": false,
+      "footerStyle": "tab",
+      "pageStyle": "sheet",
+      "openingStyle": "note"
     },
     "tokens": {
-      "primary": "#a16b20",
+      "primary": "#8A4D40",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 24,
-      "accent": "#a46200",
-      "letterSpacing": 0.5,
-      "lineHeight": 2.0,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 48,
-      "tint": "#FFF6E6",
-      "radius": 12
-    },
-    "fit": {
-      "headingAffinity": 2,
-      "lengths": [
-        "short",
-        "long"
-      ],
-      "imageAffinity": 3
-    },
-    "industries": [
-      "教育科普"
-    ],
-    "styleTags": [
-      "pill",
-      "dot",
-      "rounded-fill"
-    ],
-    "visual": "温和圆角标题，照片故事卡，柔色注释",
-    "status": "draft",
-    "version": "1.0.0"
-  },
-  {
-    "id": "T21",
-    "name": "温柔日常",
-    "series": "生活方式",
-    "seriesId": "E",
-    "layout": {
-      "sectionMark": "none",
-      "rhythm": "airy",
-      "cardStyle": "rounded",
-      "calloutStyle": "rounded-fill",
-      "titleLayout": "split"
-    },
-    "tokens": {
-      "primary": "#907055",
-      "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 24,
-      "accent": "#7A5A3F",
-      "letterSpacing": 0.5,
-      "lineHeight": 2.0,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 48,
-      "tint": "#F8F1E7",
-      "radius": 8
-    },
-    "fit": {
-      "headingAffinity": 1,
-      "lengths": [
-        "short",
-        "long"
-      ],
-      "imageAffinity": 2
-    },
-    "industries": [
-      "生活方式"
-    ],
-    "styleTags": [
-      "split",
-      "none",
-      "rounded-fill"
-    ],
-    "visual": "细字标题，圆角米色卡，舒缓留白",
-    "status": "draft",
-    "version": "1.0.0"
-  },
-  {
-    "id": "T22",
-    "name": "都市品味",
-    "series": "生活方式",
-    "seriesId": "E",
-    "layout": {
-      "sectionMark": "hairline",
-      "rhythm": "normal",
-      "cardStyle": "bordered",
-      "calloutStyle": "thin-frame",
-      "titleLayout": "left-large"
-    },
-    "tokens": {
-      "primary": "#1A1A1A",
-      "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 18,
-      "accent": "#836a40",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
+      "text": "#29312F",
+      "paraGap": 22,
+      "accent": "#4F6950",
+      "letterSpacing": 0.3,
+      "lineHeight": 2,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
       "sectionGap": 36,
-      "tint": "#F6F0E0",
-      "radius": 0
+      "tint": "#F5E9DB",
+      "radius": 2,
+      "page": "#FFF9F2",
+      "border": "#e4d1c9",
+      "pagePadding": 14,
+      "titleSize": 30
     },
     "fit": {
       "headingAffinity": 2,
@@ -997,45 +1300,197 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 3,
+      "preferredBlocks": [
+        "list",
+        "heading"
+      ],
+      "description": "知识拆解与学习指南"
+    },
+    "industries": [
+      "教育科普"
+    ],
+    "styleTags": [
+      "手账",
+      "温暖",
+      "成长"
+    ],
+    "visual": "手账装订刊头、暖色便签与成长段落，拍立得式图卡",
+    "status": "draft",
+    "version": "2.1.0"
+  },
+  {
+    "id": "T21",
+    "name": "奶油日常",
+    "series": "生活方式",
+    "seriesId": "E",
+    "layout": {
+      "sectionMark": "none",
+      "cardStyle": "rounded",
+      "calloutStyle": "rounded-fill",
+      "headerStyle": "daily",
+      "summaryStyle": "center",
+      "quoteStyle": "soft",
+      "listStyle": "tiles",
+      "dividerStyle": "dots",
+      "headingFont": "serif",
+      "bodyFont": "sans",
+      "headerLabel": "DAILY MOMENTS",
+      "emphasisStyle": "color",
+      "showContents": false,
+      "footerStyle": "ornament",
+      "pageStyle": "none",
+      "openingStyle": "lead"
+    },
+    "tokens": {
+      "primary": "#8C4E3C",
+      "bodySize": 16,
+      "text": "#29312F",
+      "paraGap": 22,
+      "accent": "#526c4e",
+      "letterSpacing": 0.3,
+      "lineHeight": 2,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 36,
+      "tint": "#F4E8D9",
+      "radius": 12,
+      "page": "#FFF9F2",
+      "border": "#e5d2c8",
+      "pagePadding": 14,
+      "titleSize": 30
+    },
+    "fit": {
+      "headingAffinity": 1,
+      "lengths": [
+        "medium",
+        "long"
+      ],
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "quote",
+        "image"
+      ],
+      "description": "生活记录与情绪随笔"
     },
     "industries": [
       "生活方式"
     ],
     "styleTags": [
-      "left-large",
-      "hairline",
-      "thin-frame"
+      "奶油",
+      "治愈",
+      "生活"
     ],
-    "visual": "大字号杂志标题，窄线分割，图片说明框",
+    "visual": "奶油信笺刊头、居中导读与柔和分区，生活画册图卡",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
+  },
+  {
+    "id": "T22",
+    "name": "都会画报",
+    "series": "生活方式",
+    "seriesId": "E",
+    "layout": {
+      "sectionMark": "hairline",
+      "cardStyle": "film",
+      "calloutStyle": "thin-frame",
+      "headerStyle": "city",
+      "summaryStyle": "rule",
+      "quoteStyle": "pull",
+      "listStyle": "ruled",
+      "dividerStyle": "double",
+      "headingFont": "serif",
+      "bodyFont": "sans",
+      "headerLabel": "CITY / JOURNAL",
+      "emphasisStyle": "underline",
+      "showContents": false,
+      "footerStyle": "blocks",
+      "pageStyle": "edge",
+      "openingStyle": "dropcap"
+    },
+    "tokens": {
+      "primary": "#262D31",
+      "bodySize": 16,
+      "text": "#29312F",
+      "paraGap": 22,
+      "accent": "#A2472D",
+      "letterSpacing": 0.3,
+      "lineHeight": 2,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 36,
+      "tint": "#EBE8E1",
+      "radius": 2,
+      "page": "#FAF7F2",
+      "border": "#c9c9c6",
+      "pagePadding": 14,
+      "titleSize": 30
+    },
+    "fit": {
+      "headingAffinity": 2,
+      "lengths": [
+        "medium",
+        "long"
+      ],
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "quote",
+        "image"
+      ],
+      "description": "生活记录与情绪随笔"
+    },
+    "industries": [
+      "生活方式"
+    ],
+    "styleTags": [
+      "都会",
+      "画报",
+      "质感"
+    ],
+    "visual": "都会画报刊头、黑白块面对比与红棕细线，胶片式图片",
+    "status": "draft",
+    "version": "2.1.0"
   },
   {
     "id": "T23",
-    "name": "自然手账",
+    "name": "森林手账",
     "series": "生活方式",
     "seriesId": "E",
     "layout": {
       "sectionMark": "step",
-      "rhythm": "normal",
-      "cardStyle": "bordered",
+      "cardStyle": "polaroid",
       "calloutStyle": "soft-fill",
-      "titleLayout": "stacked"
+      "headerStyle": "forest",
+      "summaryStyle": "note",
+      "quoteStyle": "frame",
+      "listStyle": "checklist",
+      "dividerStyle": "diamonds",
+      "headingFont": "serif",
+      "bodyFont": "sans",
+      "headerLabel": "FOREST / NOTES",
+      "emphasisStyle": "fill",
+      "showContents": false,
+      "footerStyle": "leaf",
+      "pageStyle": "sheet",
+      "openingStyle": "note"
     },
     "tokens": {
-      "primary": "#667c63",
+      "primary": "#35563C",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#577254",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#F1EFE3",
-      "radius": 0
+      "accent": "#8E582D",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#E5E8D6",
+      "radius": 2,
+      "page": "#F4F4E9",
+      "border": "#c8d0c1",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 3,
@@ -1043,19 +1498,24 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "list",
+        "heading"
+      ],
+      "description": "生活记录与情绪随笔"
     },
     "industries": [
       "生活方式"
     ],
     "styleTags": [
-      "stacked",
-      "step",
-      "soft-fill"
+      "自然",
+      "森系",
+      "手账"
     ],
-    "visual": "手账式序号，浅绿底卡，朴素边框",
+    "visual": "森林记事章、虚线装订与绿色步骤，标本式拍立得图卡",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T24",
@@ -1064,24 +1524,39 @@
     "seriesId": "E",
     "layout": {
       "sectionMark": "short-line",
-      "rhythm": "normal",
       "cardStyle": "rounded",
       "calloutStyle": "rounded-fill",
-      "titleLayout": "band"
+      "headerStyle": "oxygen",
+      "summaryStyle": "inset",
+      "quoteStyle": "soft",
+      "listStyle": "tiles",
+      "dividerStyle": "dots",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "BREATHE & LIVE",
+      "emphasisStyle": "color",
+      "showContents": false,
+      "footerStyle": "leaf",
+      "pageStyle": "none",
+      "openingStyle": "lead"
     },
     "tokens": {
-      "primary": "#2b846f",
+      "primary": "#246B59",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#1e7e68",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#EAF8F4",
-      "radius": 8
+      "accent": "#95572F",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#E2EFE2",
+      "radius": 12,
+      "page": "#F3F8F2",
+      "border": "#c3d8cf",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -1089,91 +1564,131 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "quote",
+        "image"
+      ],
+      "description": "生活记录与情绪随笔"
     },
     "industries": [
       "生活方式"
     ],
     "styleTags": [
-      "band",
-      "short-line",
-      "rounded-fill"
+      "轻氧",
+      "清新",
+      "圆角"
     ],
-    "visual": "蓝绿分节条，白底圆角图卡，轻装饰",
+    "visual": "呼吸圆环刊头、绿色胶囊标签与轻氧章节，清爽圆角图卡",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T25",
-    "name": "暖色故事",
+    "name": "落日来信",
     "series": "生活方式",
     "seriesId": "E",
     "layout": {
       "sectionMark": "side-line",
-      "rhythm": "airy",
       "cardStyle": "story",
       "calloutStyle": "side-bar",
-      "titleLayout": "center"
+      "headerStyle": "letter",
+      "summaryStyle": "center",
+      "quoteStyle": "pull",
+      "listStyle": "ruled",
+      "dividerStyle": "diamonds",
+      "headingFont": "serif",
+      "bodyFont": "serif",
+      "headerLabel": "LETTERS AT SUNSET",
+      "emphasisStyle": "underline",
+      "showContents": false,
+      "footerStyle": "letter",
+      "pageStyle": "folio",
+      "openingStyle": "indent"
     },
     "tokens": {
-      "primary": "#ae622c",
+      "primary": "#944733",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 24,
-      "accent": "#A8541A",
-      "letterSpacing": 0.5,
-      "lineHeight": 2.0,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 48,
-      "tint": "#FFF8EC",
-      "radius": 8
+      "text": "#29312F",
+      "paraGap": 22,
+      "accent": "#65513D",
+      "letterSpacing": 0.6,
+      "lineHeight": 2,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 36,
+      "tint": "#F3E1CC",
+      "radius": 2,
+      "page": "#FCF4E9",
+      "border": "#e4ccbf",
+      "pagePadding": 14,
+      "titleSize": 30
     },
     "fit": {
       "headingAffinity": 2,
       "lengths": [
-        "short",
+        "medium",
         "long"
       ],
-      "imageAffinity": 3
+      "imageAffinity": 3,
+      "preferredBlocks": [
+        "quote",
+        "image"
+      ],
+      "description": "生活记录与情绪随笔"
     },
     "industries": [
       "生活方式"
     ],
     "styleTags": [
-      "center",
-      "side-line",
-      "side-bar"
+      "来信",
+      "落日",
+      "故事"
     ],
-    "visual": "居中引言，暖色侧线，故事图片卡",
+    "visual": "落日信封刊头、宋体来信正文与居中引语，叙事图文收尾",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T26",
-    "name": "活动公告",
+    "name": "城市票券",
     "series": "活动通知",
     "seriesId": "F",
     "layout": {
       "sectionMark": "none",
-      "rhythm": "normal",
       "cardStyle": "info",
       "calloutStyle": "solid-fill",
-      "titleLayout": "frame"
+      "headerStyle": "city-ticket",
+      "summaryStyle": "dark",
+      "quoteStyle": "frame",
+      "listStyle": "steps",
+      "dividerStyle": "double",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "CITY / GATHERING",
+      "emphasisStyle": "fill",
+      "showContents": false,
+      "footerStyle": "ticket",
+      "pageStyle": "paper",
+      "openingStyle": "rule"
     },
     "tokens": {
-      "primary": "#D32F2F",
+      "primary": "#9D392E",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 18,
-      "accent": "#8E1B1B",
-      "letterSpacing": 0.5,
+      "text": "#29312F",
+      "paraGap": 15,
+      "accent": "#3A5B65",
+      "letterSpacing": 0.3,
       "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#FFF1F1",
-      "radius": 0
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 26,
+      "tint": "#F2E5D0",
+      "radius": 2,
+      "page": "#FFF8EE",
+      "border": "#e8ccc2",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 1,
@@ -1181,91 +1696,131 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "list",
+        "heading"
+      ],
+      "description": "活动邀请与报名通知"
     },
     "industries": [
       "活动通知"
     ],
     "styleTags": [
-      "frame",
-      "none",
-      "solid-fill"
+      "活动",
+      "票券",
+      "复古"
     ],
-    "visual": "醒目标题框，时间地点信息块，内容分节",
+    "visual": "城市票券刊头、齿孔分隔与直角活动框，时间地点式信息层级",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T27",
-    "name": "清爽邀请",
+    "name": "花园邀请",
     "series": "活动通知",
     "seriesId": "F",
     "layout": {
       "sectionMark": "dot",
-      "rhythm": "airy",
-      "cardStyle": "flow",
+      "cardStyle": "folio",
       "calloutStyle": "soft-fill",
-      "titleLayout": "center"
+      "headerStyle": "garden",
+      "summaryStyle": "center",
+      "quoteStyle": "pull",
+      "listStyle": "tiles",
+      "dividerStyle": "diamonds",
+      "headingFont": "serif",
+      "bodyFont": "sans",
+      "headerLabel": "GARDEN INVITATION",
+      "emphasisStyle": "color",
+      "showContents": false,
+      "footerStyle": "ornament",
+      "pageStyle": "folio",
+      "openingStyle": "lead"
     },
     "tokens": {
-      "primary": "#397bac",
+      "primary": "#3C6651",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 24,
-      "accent": "#2a73ae",
-      "letterSpacing": 0.5,
-      "lineHeight": 2.0,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 48,
-      "tint": "#F0F3F6",
-      "radius": 8
+      "text": "#29312F",
+      "paraGap": 22,
+      "accent": "#9B513C",
+      "letterSpacing": 0.3,
+      "lineHeight": 2,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 36,
+      "tint": "#E9EDD9",
+      "radius": 12,
+      "page": "#FBF8ED",
+      "border": "#cfd6c9",
+      "pagePadding": 14,
+      "titleSize": 30
     },
     "fit": {
       "headingAffinity": 2,
       "lengths": [
-        "short",
+        "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "list",
+        "callout"
+      ],
+      "description": "活动邀请与报名通知"
     },
     "industries": [
       "活动通知"
     ],
     "styleTags": [
-      "center",
-      "dot",
-      "soft-fill"
+      "邀请",
+      "花园",
+      "清雅"
     ],
-    "visual": "居中邀请标题，柔色背景，流程卡",
+    "visual": "花园邀请框、植物色细线与柔和分区，画册式邀请图文",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T28",
-    "name": "课程招生",
+    "name": "课程计划",
     "series": "活动通知",
     "seriesId": "F",
     "layout": {
       "sectionMark": "num-prefix",
-      "rhythm": "tight",
-      "cardStyle": "info",
+      "cardStyle": "flow",
       "calloutStyle": "solid-fill",
-      "titleLayout": "band"
+      "headerStyle": "course",
+      "summaryStyle": "inset",
+      "quoteStyle": "soft",
+      "listStyle": "steps",
+      "dividerStyle": "line",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "COURSE / PLANNER",
+      "emphasisStyle": "underline",
+      "showContents": true,
+      "footerStyle": "check",
+      "pageStyle": "none",
+      "openingStyle": "note"
     },
     "tokens": {
-      "primary": "#1F5FD0",
+      "primary": "#214B73",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 12,
-      "accent": "#0F3C8A",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.65,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 28,
-      "tint": "#EEF3FC",
-      "radius": 0
+      "text": "#29312F",
+      "paraGap": 15,
+      "accent": "#A45128",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.8,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 26,
+      "tint": "#E5EDF7",
+      "radius": 12,
+      "page": "#F6F8FC",
+      "border": "#c5d0dc",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 3,
@@ -1273,45 +1828,65 @@
         "short",
         "medium"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "list",
+        "heading"
+      ],
+      "description": "活动邀请与报名通知"
     },
     "industries": [
       "活动通知"
     ],
     "styleTags": [
-      "band",
-      "num-prefix",
-      "solid-fill"
+      "课程",
+      "计划",
+      "蓝橙"
     ],
-    "visual": "信息条标题，报名信息底框，列表段落",
+    "visual": "课程页签刊头、编号学习章节与内容索引，步骤图文路径",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T29",
-    "name": "节日特刊",
+    "name": "朱砂雅集",
     "series": "活动通知",
     "seriesId": "F",
     "layout": {
       "sectionMark": "short-line",
-      "rhythm": "normal",
-      "cardStyle": "rounded",
+      "cardStyle": "folio",
       "calloutStyle": "double-frame",
-      "titleLayout": "masthead"
+      "headerStyle": "oriental",
+      "summaryStyle": "center",
+      "quoteStyle": "frame",
+      "listStyle": "ruled",
+      "dividerStyle": "diamonds",
+      "headingFont": "serif",
+      "bodyFont": "serif",
+      "headerLabel": "东方雅集",
+      "emphasisStyle": "fill",
+      "showContents": false,
+      "footerStyle": "seal",
+      "pageStyle": "folio",
+      "openingStyle": "indent"
     },
     "tokens": {
-      "primary": "#C8102E",
+      "primary": "#A33429",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#856b32",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#FFF0E0",
-      "radius": 4
+      "accent": "#7B5A2A",
+      "letterSpacing": 0.6,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#EFE0C4",
+      "radius": 2,
+      "page": "#FBF2E1",
+      "border": "#e7c6b7",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -1319,45 +1894,65 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "list",
+        "callout"
+      ],
+      "description": "活动邀请与报名通知"
     },
     "industries": [
       "活动通知"
     ],
     "styleTags": [
-      "masthead",
-      "short-line",
-      "double-frame"
+      "国风",
+      "朱砂",
+      "节日"
     ],
-    "visual": "装饰边框标题，节庆红底块，暖色图卡",
+    "visual": "朱砂印章刊头、米纸宋体与金色章线，国风画册图注",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T30",
-    "name": "社群招募",
+    "name": "社群派对",
     "series": "活动通知",
     "seriesId": "F",
     "layout": {
       "sectionMark": "tag",
-      "rhythm": "normal",
       "cardStyle": "bordered",
       "calloutStyle": "rounded-fill",
-      "titleLayout": "tag"
+      "headerStyle": "party",
+      "summaryStyle": "note",
+      "quoteStyle": "soft",
+      "listStyle": "checklist",
+      "dividerStyle": "dots",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "MEET & CONNECT",
+      "emphasisStyle": "color",
+      "showContents": false,
+      "footerStyle": "ticket",
+      "pageStyle": "none",
+      "openingStyle": "lead"
     },
     "tokens": {
-      "primary": "#5B5BD6",
+      "primary": "#9F442F",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#775db5",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#F1EEFB",
-      "radius": 4
+      "accent": "#2F635A",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#F5E4C5",
+      "radius": 12,
+      "page": "#FFF8E8",
+      "border": "#e9cfbd",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -1365,19 +1960,24 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "list",
+        "heading"
+      ],
+      "description": "活动邀请与报名通知"
     },
     "industries": [
       "活动通知"
     ],
     "styleTags": [
-      "tag",
-      "tag",
-      "rounded-fill"
+      "社群",
+      "派对",
+      "活力"
     ],
-    "visual": "标签式标题，优势卡片，结尾行动框",
+    "visual": "撞色派对刊头、票券分隔与柔和章节标题，醒目参与信息卡",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T31",
@@ -1386,24 +1986,39 @@
     "seriesId": "G",
     "layout": {
       "sectionMark": "hairline",
-      "rhythm": "tight",
       "cardStyle": "compact",
       "calloutStyle": "thin-frame",
-      "titleLayout": "left-large"
+      "headerStyle": "newsflash",
+      "summaryStyle": "rule",
+      "quoteStyle": "editorial",
+      "listStyle": "ruled",
+      "dividerStyle": "line",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "NEWS / UPDATE",
+      "emphasisStyle": "underline",
+      "showContents": false,
+      "footerStyle": "line",
+      "pageStyle": "edge",
+      "openingStyle": "rule"
     },
     "tokens": {
-      "primary": "#1A1A1A",
+      "primary": "#B02D2B",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 12,
-      "accent": "#B3202A",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.65,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 28,
-      "tint": "#F3F3F3",
-      "radius": 0
+      "text": "#29312F",
+      "paraGap": 15,
+      "accent": "#3C5065",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.8,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 26,
+      "tint": "#F2ECE9",
+      "radius": 2,
+      "page": "#FFFFFF",
+      "border": "#edcfce",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -1411,45 +2026,65 @@
         "short",
         "medium"
       ],
-      "imageAffinity": 0
+      "imageAffinity": 0,
+      "preferredBlocks": [
+        "heading",
+        "quote"
+      ],
+      "description": "新闻报道与人物专题"
     },
     "industries": [
       "新闻媒体"
     ],
     "styleTags": [
-      "left-large",
-      "hairline",
-      "thin-frame"
+      "新闻",
+      "红黑",
+      "速读"
     ],
-    "visual": "头条字阶，窄线分隔，规整图注",
+    "visual": "红黑快讯刊头、紧凑导语与清晰线条，快速新闻图注",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T32",
-    "name": "专题报道",
+    "name": "深度专题",
     "series": "新闻媒体",
     "seriesId": "G",
     "layout": {
       "sectionMark": "side-line",
-      "rhythm": "normal",
       "cardStyle": "plain",
       "calloutStyle": "double-frame",
-      "titleLayout": "masthead"
+      "headerStyle": "feature",
+      "summaryStyle": "inset",
+      "quoteStyle": "pull",
+      "listStyle": "ruled",
+      "dividerStyle": "double",
+      "headingFont": "serif",
+      "bodyFont": "sans",
+      "headerLabel": "IN / DEPTH",
+      "emphasisStyle": "fill",
+      "showContents": false,
+      "footerStyle": "colophon",
+      "pageStyle": "folio",
+      "openingStyle": "dropcap"
     },
     "tokens": {
-      "primary": "#1B3A6B",
+      "primary": "#2C3741",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#5d6f8e",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#F0F2F5",
-      "radius": 0
+      "accent": "#A44B32",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#EAE7DE",
+      "radius": 2,
+      "page": "#F8F5EE",
+      "border": "#c9c9c6",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -1457,19 +2092,24 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 0
+      "imageAffinity": 0,
+      "preferredBlocks": [
+        "heading",
+        "quote"
+      ],
+      "description": "新闻报道与人物专题"
     },
     "industries": [
       "新闻媒体"
     ],
     "styleTags": [
-      "masthead",
-      "side-line",
-      "double-frame"
+      "专题",
+      "深度",
+      "杂志"
     ],
-    "visual": "专题眉题，双边框导语，分节长文",
+    "visual": "深度专题刊头、宋体首字与侧线正文，长文引语层级",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T33",
@@ -1478,24 +2118,39 @@
     "seriesId": "G",
     "layout": {
       "sectionMark": "big-num",
-      "rhythm": "tight",
       "cardStyle": "info",
       "calloutStyle": "solid-fill",
-      "titleLayout": "tag"
+      "headerStyle": "quick",
+      "summaryStyle": "dark",
+      "quoteStyle": "frame",
+      "listStyle": "tiles",
+      "dividerStyle": "dots",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "QUICK / READ",
+      "emphasisStyle": "color",
+      "showContents": false,
+      "footerStyle": "blocks",
+      "pageStyle": "none",
+      "openingStyle": "lead"
     },
     "tokens": {
-      "primary": "#ce4b25",
+      "primary": "#AB3828",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 12,
-      "accent": "#333333",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.65,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 28,
-      "tint": "#F5F5F5",
-      "radius": 0
+      "text": "#29312F",
+      "paraGap": 15,
+      "accent": "#375E6D",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.8,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 26,
+      "tint": "#F3E7D3",
+      "radius": 12,
+      "page": "#FFFAF0",
+      "border": "#eccdc2",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 3,
@@ -1503,19 +2158,24 @@
         "short",
         "medium"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "heading",
+        "quote"
+      ],
+      "description": "新闻报道与人物专题"
     },
     "industries": [
       "新闻媒体"
     ],
     "styleTags": [
-      "tag",
-      "big-num",
-      "solid-fill"
+      "热点",
+      "卡片",
+      "橘红"
     ],
-    "visual": "栏目标识，数字标题，重点摘要色块",
+    "visual": "橘红速读刊头、大号数字章节与速读重点，热点分块呈现",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T34",
@@ -1524,44 +2184,64 @@
     "seriesId": "G",
     "layout": {
       "sectionMark": "tag",
-      "rhythm": "airy",
       "cardStyle": "story",
       "calloutStyle": "thin-frame",
-      "titleLayout": "frame"
+      "headerStyle": "interview",
+      "summaryStyle": "center",
+      "quoteStyle": "pull",
+      "listStyle": "ruled",
+      "dividerStyle": "diamonds",
+      "headingFont": "serif",
+      "bodyFont": "sans",
+      "headerLabel": "PEOPLE & STORIES",
+      "emphasisStyle": "underline",
+      "showContents": false,
+      "footerStyle": "quote",
+      "pageStyle": "sheet",
+      "openingStyle": "lead"
     },
     "tokens": {
-      "primary": "#7B1E2B",
+      "primary": "#55493E",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 24,
-      "accent": "#A8556A",
-      "letterSpacing": 0.5,
-      "lineHeight": 2.0,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 48,
-      "tint": "#FAF3E8",
-      "radius": 4
+      "text": "#29312F",
+      "paraGap": 22,
+      "accent": "#885b39",
+      "letterSpacing": 0.3,
+      "lineHeight": 2,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 36,
+      "tint": "#EEE5D8",
+      "radius": 2,
+      "page": "#FAF6EF",
+      "border": "#d4cec6",
+      "pagePadding": 14,
+      "titleSize": 30
     },
     "fit": {
       "headingAffinity": 2,
       "lengths": [
-        "short",
+        "medium",
         "long"
       ],
-      "imageAffinity": 3
+      "imageAffinity": 3,
+      "preferredBlocks": [
+        "heading",
+        "quote"
+      ],
+      "description": "新闻报道与人物专题"
     },
     "industries": [
       "新闻媒体"
     ],
     "styleTags": [
-      "frame",
-      "tag",
-      "thin-frame"
+      "人物",
+      "访谈",
+      "人文"
     ],
-    "visual": "引语大框，姓名标签，照片介绍卡",
+    "visual": "引号式人物刊头、宋体访谈标题与大引语，叙事照片说明",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T35",
@@ -1570,24 +2250,39 @@
     "seriesId": "G",
     "layout": {
       "sectionMark": "index-row",
-      "rhythm": "normal",
       "cardStyle": "compact",
       "calloutStyle": "soft-fill",
-      "titleLayout": "underline"
+      "headerStyle": "weekly",
+      "summaryStyle": "inset",
+      "quoteStyle": "editorial",
+      "listStyle": "ruled",
+      "dividerStyle": "double",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "INDUSTRY WEEKLY",
+      "emphasisStyle": "fill",
+      "showContents": true,
+      "footerStyle": "file",
+      "pageStyle": "edge",
+      "openingStyle": "rule"
     },
     "tokens": {
-      "primary": "#2D5B45",
+      "primary": "#2D455D",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 18,
-      "accent": "#617079",
-      "letterSpacing": 0.5,
+      "text": "#29312F",
+      "paraGap": 15,
+      "accent": "#8e5a29",
+      "letterSpacing": 0.3,
       "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#EEF1F2",
-      "radius": 0
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 26,
+      "tint": "#E4E9ED",
+      "radius": 12,
+      "page": "#F3F5F6",
+      "border": "#c5cdd3",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 3,
@@ -1595,19 +2290,24 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 0
+      "imageAffinity": 0,
+      "preferredBlocks": [
+        "heading",
+        "quote"
+      ],
+      "description": "新闻报道与人物专题"
     },
     "industries": [
       "新闻媒体"
     ],
     "styleTags": [
-      "underline",
-      "index-row",
-      "soft-fill"
+      "周刊",
+      "行业",
+      "索引"
     ],
-    "visual": "期刊式头部，分栏感单列，简洁卡片",
+    "visual": "报刊横栏刊头、完整内容索引与连续章节，周刊图文节奏",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T36",
@@ -1616,24 +2316,39 @@
     "seriesId": "H",
     "layout": {
       "sectionMark": "short-line",
-      "rhythm": "normal",
       "cardStyle": "image-first",
       "calloutStyle": "soft-fill",
-      "titleLayout": "band"
+      "headerStyle": "brand-blue",
+      "summaryStyle": "rule",
+      "quoteStyle": "frame",
+      "listStyle": "tiles",
+      "dividerStyle": "line",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "BRAND / EDITION",
+      "emphasisStyle": "color",
+      "showContents": false,
+      "footerStyle": "bands",
+      "pageStyle": "none",
+      "openingStyle": "lead"
     },
     "tokens": {
-      "primary": "#2457C5",
+      "primary": "#173F64",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#123A8F",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#EEF3FD",
-      "radius": 0
+      "accent": "#87612c",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#E4ECF4",
+      "radius": 2,
+      "page": "#F5F7FA",
+      "border": "#c2cdd8",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -1641,91 +2356,132 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 3
+      "imageAffinity": 3,
+      "preferredBlocks": [
+        "image",
+        "callout"
+      ],
+      "description": "品牌故事与产品服务"
     },
     "industries": [
       "品牌宣传"
     ],
     "styleTags": [
-      "band",
-      "short-line",
-      "soft-fill"
+      "品牌",
+      "蓝调",
+      "画册"
     ],
-    "visual": "品牌色顶栏，章节短线，产品图卡",
+    "visual": "深蓝画册封面、金色分节与大图留白，品牌展示布局",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T37",
-    "name": "高级黑金",
+    "name": "黑金典藏",
     "series": "品牌宣传",
     "seriesId": "H",
     "layout": {
       "sectionMark": "none",
-      "rhythm": "airy",
-      "cardStyle": "bordered",
+      "cardStyle": "folio",
       "calloutStyle": "gold-frame",
-      "titleLayout": "masthead"
+      "headerStyle": "black-gold",
+      "summaryStyle": "inset",
+      "quoteStyle": "pull",
+      "listStyle": "ruled",
+      "dividerStyle": "diamonds",
+      "headingFont": "serif",
+      "bodyFont": "sans",
+      "headerLabel": "THE COLLECTION",
+      "emphasisStyle": "underline",
+      "showContents": false,
+      "footerStyle": "seal",
+      "pageStyle": "paper",
+      "openingStyle": "lead"
     },
     "tokens": {
-      "primary": "#111111",
+      "primary": "#232322",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 24,
-      "accent": "#836931",
-      "letterSpacing": 0.5,
-      "lineHeight": 2.0,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 48,
-      "tint": "#F7F1E3",
-      "radius": 0
+      "text": "#29312F",
+      "paraGap": 22,
+      "accent": "#81602c",
+      "letterSpacing": 0.3,
+      "lineHeight": 2,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 36,
+      "tint": "#EEE6D7",
+      "radius": 2,
+      "page": "#FBF8F0",
+      "border": "#c9c7c1",
+      "pagePadding": 14,
+      "titleSize": 30,
+      "highlight": "#E4C88F"
     },
     "fit": {
       "headingAffinity": 1,
       "lengths": [
-        "short",
+        "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "image",
+        "callout"
+      ],
+      "description": "品牌故事与产品服务"
     },
     "industries": [
       "品牌宣传"
     ],
     "styleTags": [
-      "masthead",
-      "none",
-      "gold-frame"
+      "黑金",
+      "典藏",
+      "奢雅"
     ],
-    "visual": "黑底刊头，金色细框，结论卡",
+    "visual": "黑金典藏封面、金色双线与珍藏图注，完整奢雅画册",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T38",
-    "name": "清新品牌",
+    "name": "薄荷品牌",
     "series": "品牌宣传",
     "seriesId": "H",
     "layout": {
       "sectionMark": "tag",
-      "rhythm": "normal",
       "cardStyle": "rounded",
       "calloutStyle": "rounded-fill",
-      "titleLayout": "pill"
+      "headerStyle": "mint",
+      "summaryStyle": "inset",
+      "quoteStyle": "soft",
+      "listStyle": "tiles",
+      "dividerStyle": "dots",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "FRESH / BRAND",
+      "emphasisStyle": "fill",
+      "showContents": false,
+      "footerStyle": "leaf",
+      "pageStyle": "none",
+      "openingStyle": "note"
     },
     "tokens": {
-      "primary": "#1e846e",
+      "primary": "#286655",
       "bodySize": 16,
-      "text": "#263238",
+      "text": "#29312F",
       "paraGap": 18,
-      "accent": "#946655",
-      "letterSpacing": 0.5,
-      "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#FBF8EE",
-      "radius": 8
+      "accent": "#9A563D",
+      "letterSpacing": 0.3,
+      "lineHeight": 1.9,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 30,
+      "tint": "#E2EDDD",
+      "radius": 12,
+      "page": "#F3F8EF",
+      "border": "#c4d6cc",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 2,
@@ -1733,19 +2489,24 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "image",
+        "callout"
+      ],
+      "description": "品牌故事与产品服务"
     },
     "industries": [
       "品牌宣传"
     ],
     "styleTags": [
-      "pill",
-      "tag",
-      "rounded-fill"
+      "品牌",
+      "薄荷",
+      "亲和"
     ],
-    "visual": "浅彩标题底，圆角产品卡，轻量标签",
+    "visual": "薄荷吊牌刊头、亲和导读卡与柔和章节标题，产品柔角图文",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T39",
@@ -1754,70 +2515,105 @@
     "seriesId": "H",
     "layout": {
       "sectionMark": "hairline",
-      "rhythm": "airy",
-      "cardStyle": "image-first",
+      "cardStyle": "folio",
       "calloutStyle": "thin-frame",
-      "titleLayout": "left-large"
+      "headerStyle": "visual",
+      "summaryStyle": "center",
+      "quoteStyle": "pull",
+      "listStyle": "ruled",
+      "dividerStyle": "double",
+      "headingFont": "serif",
+      "bodyFont": "sans",
+      "headerLabel": "VISUAL / STORIES",
+      "emphasisStyle": "color",
+      "showContents": false,
+      "footerStyle": "ornament",
+      "pageStyle": "folio",
+      "openingStyle": "dropcap"
     },
     "tokens": {
-      "primary": "#3A3A3A",
+      "primary": "#3B413C",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 24,
-      "accent": "#7e6e5c",
-      "letterSpacing": 0.5,
-      "lineHeight": 2.0,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 48,
-      "tint": "#FAF6EF",
-      "radius": 0
+      "text": "#29312F",
+      "paraGap": 22,
+      "accent": "#99503C",
+      "letterSpacing": 0.3,
+      "lineHeight": 2,
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 36,
+      "tint": "#EBE6DA",
+      "radius": 12,
+      "page": "#F9F5EB",
+      "border": "#cdccc3",
+      "pagePadding": 14,
+      "titleSize": 30
     },
     "fit": {
       "headingAffinity": 2,
       "lengths": [
-        "short",
+        "medium",
         "long"
       ],
-      "imageAffinity": 3
+      "imageAffinity": 3,
+      "preferredBlocks": [
+        "image",
+        "callout"
+      ],
+      "description": "品牌故事与产品服务"
     },
     "industries": [
       "品牌宣传"
     ],
     "styleTags": [
-      "left-large",
-      "hairline",
-      "thin-frame"
+      "画册",
+      "叙事",
+      "艺术"
     ],
-    "visual": "大图优先，克制图注，细框正文",
+    "visual": "艺术画册刊头、衬线大标题与留白章节，展签式视觉图注",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   },
   {
     "id": "T40",
-    "name": "服务指南",
+    "name": "服务路径",
     "series": "品牌宣传",
     "seriesId": "H",
     "layout": {
       "sectionMark": "step",
-      "rhythm": "normal",
       "cardStyle": "flow",
       "calloutStyle": "soft-fill",
-      "titleLayout": "split"
+      "headerStyle": "service",
+      "summaryStyle": "note",
+      "quoteStyle": "frame",
+      "listStyle": "steps",
+      "dividerStyle": "line",
+      "headingFont": "sans",
+      "bodyFont": "sans",
+      "headerLabel": "SERVICE / JOURNEY",
+      "emphasisStyle": "underline",
+      "showContents": true,
+      "footerStyle": "check",
+      "pageStyle": "none",
+      "openingStyle": "note"
     },
     "tokens": {
-      "primary": "#138382",
+      "primary": "#176565",
       "bodySize": 16,
-      "text": "#263238",
-      "paraGap": 18,
-      "accent": "#0E6E6D",
-      "letterSpacing": 0.5,
+      "text": "#29312F",
+      "paraGap": 15,
+      "accent": "#9B532A",
+      "letterSpacing": 0.3,
       "lineHeight": 1.8,
-      "textMuted": "#52616b",
-      "onPrimary": "#ffffff",
-      "sectionGap": 36,
-      "tint": "#EFF3F5",
-      "radius": 4
+      "textMuted": "#5B625D",
+      "onPrimary": "#FFFFFF",
+      "sectionGap": 26,
+      "tint": "#E0EEEE",
+      "radius": 2,
+      "page": "#F3F8F7",
+      "border": "#c0d6d5",
+      "pagePadding": 14,
+      "titleSize": 28
     },
     "fit": {
       "headingAffinity": 3,
@@ -1825,18 +2621,23 @@
         "medium",
         "long"
       ],
-      "imageAffinity": 2
+      "imageAffinity": 2,
+      "preferredBlocks": [
+        "list",
+        "heading"
+      ],
+      "description": "品牌故事与产品服务"
     },
     "industries": [
       "品牌宣传"
     ],
     "styleTags": [
-      "split",
-      "step",
-      "soft-fill"
+      "服务",
+      "流程",
+      "指南"
     ],
-    "visual": "操作序号标题，提示色块，步骤图卡",
+    "visual": "服务路径刊头、步骤编号与导览索引，串联式操作图卡",
     "status": "draft",
-    "version": "1.0.0"
+    "version": "2.1.0"
   }
 ]
