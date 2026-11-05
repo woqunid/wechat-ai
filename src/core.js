@@ -27,4 +27,3 @@ export const ArticleSchema = z.object({schemaVersion:z.literal(1), id:z.string()
 export const uid = (prefix='id') => `${prefix}_${globalThis.crypto?.randomUUID?.().replaceAll('-', '').slice(0, 16) || Math.random().toString(36).slice(2, 12)}`;
 export const textOfRuns = (runs=[]) => runs.map(r=>r.text).join('');
 export const blockText = (b) => b.type==='heading'?b.text:b.type==='paragraph'||b.type==='callout'||b.type==='quote'?textOfRuns(b.runs):b.type==='list'?b.items.map(textOfRuns).join(' '):b.type==='image'||b.type==='imageCard'?[b.title,b.caption].filter(Boolean).join(' '):'';
-export const articleText = (a) => [a.title,a.summary,...a.blocks.map(blockText)].filter(Boolean).join('\n');

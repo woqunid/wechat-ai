@@ -1255,49 +1255,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   pointer-events: none;
 }
 
-.editor-assets,
 .editor-image-controls {
   padding: 12px;
   background: var(--bg-subtle);
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.editor-assets-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 9px;
-  font-size: 11px;
-}
-
-.editor-assets-heading button {
-  color: var(--primary-deep);
-  font-size: 11px;
-}
-
-.editor-asset-strip {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-}
-
-.editor-asset-strip button {
-  flex: 0 0 60px;
-  width: 60px;
-  height: 60px;
-  cursor: grab;
-}
-
-.editor-asset-strip img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border: 1px solid var(--border-subtle);
-  border-radius: 5px;
-}
-
-.editor-asset-strip small,
 .editor-help {
   font-size: 11px;
   color: var(--text-secondary);
@@ -1460,173 +1423,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--primary);
 }
 
-/* 积木式段落单元 (Block Item) */
-.block-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding-top: 14px;
-}
-
-.edit-block {
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-md);
-  padding: 14px;
-  background: #ffffff;
-  transition: all 180ms ease;
-  position: relative;
-}
-
-.edit-block:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-micro);
-}
-
-.edit-block:focus-within {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-glow);
-}
-
 [data-editor-key] {
   scroll-margin-block: 24px;
 }
 
-.edit-block.is-linked,
 .title-edit.is-linked,
 .summary-edit.is-linked {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-glow);
-}
-
-.block-type {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.block-type select {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-regular);
-  background: var(--bg-subtle);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--r-pill);
-  padding: 3px 10px;
-  outline: none;
-}
-
-.block-type div {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.block-type button,
-.image-edit-row > button {
-  width: 26px;
-  height: 26px;
-  border-radius: var(--r-xs);
-  display: grid;
-  place-items: center;
-  color: var(--text-tertiary);
-}
-
-.block-type button:hover:not(:disabled),
-.image-edit-row > button:hover:not(:disabled) {
-  color: var(--text-main);
-  background: var(--bg-subtle);
-}
-
-.edit-block textarea {
-  width: 100%;
-  border: 1px solid transparent;
-  border-radius: var(--r-xs);
-  padding: 6px 8px;
-  font-size: 13px;
-  line-height: 1.65;
-  color: var(--text-main);
-  background: transparent;
-  resize: vertical;
-  min-height: 56px;
-}
-
-.edit-block textarea:focus {
-  background: var(--bg-subtle);
-  border-color: var(--border-subtle);
-}
-
-.edit-block textarea.heading-edit {
-  font-size: 15px;
-  font-weight: 700;
-  min-height: 40px;
-}
-
-.run-tools {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--border-light);
-}
-
-.run-tools button {
-  height: 26px;
-  padding: 0 10px;
-  border-radius: var(--r-pill);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-regular);
-  background: var(--bg-subtle);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.run-tools button:hover {
-  background: var(--border-subtle);
-  color: var(--text-main);
-}
-
-.swatch {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  display: inline-block;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
-}
-
-.swatch.primary { background: var(--primary); }
-.swatch.accent { background: #0284c7; }
-.swatch.red { background: #dc2626; }
-.swatch.orange { background: #ea580c; }
-.swatch.green { background: #16a34a; }
-
-.image-edit-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.image-edit-row img {
-  width: 52px;
-  height: 52px;
-  object-fit: cover;
-  border-radius: var(--r-xs);
-  border: 1px solid var(--border-light);
-  box-shadow: var(--shadow-micro);
-}
-
-.image-edit-row textarea {
-  min-height: 48px;
-}
-
-.divider-preview {
-  height: 2px;
-  background: var(--border-subtle);
-  border-radius: 2px;
-  margin: 18px 0;
 }
 
 .add-block {
@@ -1659,26 +1463,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   padding-top: 18px;
   border-top: 1px solid var(--border-light);
   margin-top: 18px;
-}
-
-.undo-line {
-  position: sticky;
-  bottom: 0;
-  background: #0f172a;
-  color: #ffffff;
-  padding: 12px 18px;
-  border-radius: var(--r-md);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 13px;
-  margin-top: 14px;
-  box-shadow: var(--shadow-floating);
-}
-
-.undo-line button {
-  color: #38bdf8;
-  font-weight: 600;
 }
 
 /* 中栏：现代展台式真机渲染器 (Phone & Wide Stage) */

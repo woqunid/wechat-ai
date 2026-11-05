@@ -7,14 +7,11 @@ import {
   FileText,
   ImagePlus,
   LayoutGrid,
-  Minus,
   Plus,
   RefreshCw,
   Search,
   Settings2,
-  Trash2,
   Upload,
-  WandSparkles,
   X,
 } from "lucide-react";
 import { templates } from "./templates";
@@ -176,12 +173,6 @@ function App() {
     () => (article ? recommendTemplates(article) : []),
     [article],
   );
-  const updateBlock = (id, patch) =>
-    setArticle((a) => ({
-      ...a,
-      blocks: a.blocks.map((b) => (b.id === id ? { ...b, ...patch } : b)),
-      updatedAt: new Date().toISOString(),
-    }));
   const enterRaw = async (parsed, source = "", sourceInput = input, templateId = "T01", resetSnapshot = true) => {
     const now = new Date().toISOString();
     const digest = await crypto.subtle.digest(
@@ -611,7 +602,6 @@ function App() {
       recs={recs}
       assets={assets}
       setAssets={setAssets}
-      updateBlock={updateBlock}
       previewWidth={previewWidth}
       setPreviewWidth={setPreviewWidth}
       copy={copy}
@@ -1090,7 +1080,6 @@ function Edit({
   recs,
   assets,
   setAssets,
-  updateBlock,
   previewWidth,
   setPreviewWidth,
   copy,
@@ -1151,7 +1140,6 @@ function Edit({
   const [replaceBlockId, setReplaceBlockId] = useState(null);
   const [imageSource, setImageSource] = useState('local');
   useEffect(() => { if (modal === 'gallery') setImageSource('local'); }, [modal]);
-  const [articleHeight, setArticleHeight] = useState("");
   const undo = () => {
     const prev = history.current.pop();
     if (!prev) return;
