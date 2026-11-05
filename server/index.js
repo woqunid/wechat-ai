@@ -50,7 +50,7 @@ app.use((req, res, next) => {
   const requestId = crypto.randomUUID();
   res.setHeader('X-Request-Id', requestId);
   const start = Date.now();
-  res.once('finish', () => console.info(JSON.stringify({ requestId, route: req.route?.path || req.path, method: req.method, status: res.statusCode, durationMs: Date.now() - start, ...(res.locals.modelUsages ? usageMeta(res.locals.modelUsages) : {}) })));
+  res.once('finish', () => console.info(JSON.stringify({ requestId, route: req.route?.path || req.path, method: req.method, status: res.statusCode, durationMs: Date.now() - start, ...(res.locals.modelUsages ? usageMeta(res.locals.modelUsages) : {}), ...(res.locals.modelFailure ? { modelFailure: res.locals.modelFailure } : {}) })));
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -460,7 +460,12 @@ async function requestModel({ config, system, source, topic, mode, tone, targetL
     const timeout = AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 90_000));
     return fetch(`${base}/${kind === 'responses' ? 'responses' : 'chat/completions'}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` }, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
   };
-  const upstreamFailure = async response => Object.assign(new Error(`upstream ${response.status}`), { status: response.status, upstreamMessage: (await response.text()).slice(0, 2000) });
+  const upstreamFailure = async response => {
+    const upstreamMessage = (await response.text()).slice(0, 2000);
+    let upstreamCode;
+    try { upstreamCode = JSON.parse(upstreamMessage).error?.code; } catch { /* non-JSON upstream errors have no code */ }
+    return Object.assign(new Error(`upstream ${response.status}`), { status: response.status, upstreamCode, upstreamMessage });
+  };
   if (style === 'responses' || style === 'chat') {
     const kind = style;
     const response = await request(kind, kind === 'responses' ? responsesBody : chatBody);
@@ -677,7 +682,14 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
   if (controller.signal.aborted) return;
   if (imageInputs.length && isUnsupportedVisionRequest(lastError)) return res.status(422).json({ error: { code: 'VISION_UNSUPPORTED', message: '当前模型不支持多模态识图' } });
   const timeout = signal.aborted || ['TimeoutError', 'AbortError'].includes(lastError?.name);
-  return res.status(timeout ? 504 : 502).json({ error: { code: timeout ? 'AI_TIMEOUT' : 'AI_EDIT_FAILED', message: timeout ? '修改方案生成超时，原稿已保留，请重试' : '修改方案未通过内容或版式检查，原稿已保留，请重试' } });
+  const upstream = Boolean(lastError?.status);
+  const code = timeout ? 'AI_TIMEOUT' : lastError?.upstreamCode === 'model_price_error' ? 'AI_UPSTREAM_CONFIG_ERROR' : upstream ? 'AI_UPSTREAM_ERROR' : 'AI_EDIT_FAILED';
+  const message = timeout ? '修改方案生成超时，原稿已保留，请重试'
+    : code === 'AI_UPSTREAM_CONFIG_ERROR' ? '当前模型的上游计费配置错误，请联系 AI 服务商修复或切换模型'
+      : upstream ? `AI 服务请求失败（HTTP ${lastError.status}），请检查模型和服务配置`
+        : '修改方案未通过内容或版式检查，原稿已保留，请重试';
+  res.locals.modelFailure = { kind: timeout ? 'timeout' : upstream ? 'upstream' : 'validation', ...(lastError?.status ? { status: lastError.status } : {}), ...(lastError?.upstreamCode ? { upstreamCode: lastError.upstreamCode } : {}) };
+  return res.status(timeout ? 504 : 502).json({ error: { code, message } });
 });
 
 app.use(express.static(path.join(root, 'dist')));
