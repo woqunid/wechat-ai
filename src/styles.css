@@ -1090,30 +1090,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   padding: 3px;
 }
 
-.editor-ai-tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
-  margin-top: 5px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border-light);
-}
-
-.editor-ai-tools > span {
-  flex: 1;
-  font-size: 10px;
-  color: var(--text-secondary);
-}
-
-.editor-ai-tools button {
-  display: inline-flex;
-  gap: 3px;
-  align-items: center;
-  font-size: 11px;
-  color: var(--primary-deep);
-}
-
 .document-sheet {
   position: relative;
 }
@@ -1306,13 +1282,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--primary-deep);
   font-size: 12px;
 }
-
-.editor-ai-backdrop { z-index: 80; }
-.editor-ai-dialog { width: min(560px, 94vw); max-height: 88vh; overflow-y: auto; }
-.editor-ai-dialog > label { display: block; margin: 16px 0 8px; font-size: 12px; font-weight: 600; }
-.editor-ai-original { max-height: 130px; overflow: auto; padding: 12px; font-size: 13px; line-height: 1.8; white-space: pre-wrap; background: var(--bg-subtle); }
-.editor-ai-dialog textarea { width: 100%; min-height: 180px; padding: 12px; border: 1px solid var(--border-subtle); border-radius: var(--r-sm); resize: vertical; font-size: 14px; line-height: 1.8; }
-.editor-ai-pending { display: flex; align-items: center; gap: 8px; padding: 20px 0; font-size: 13px; color: var(--primary-deep); }
 
 .content-origin {
   font-size: 12px;

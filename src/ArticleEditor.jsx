@@ -1,17 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, Eraser, Highlighter, ImagePlus, IndentIncrease, RefreshCw, Trash2, Underline, WandSparkles, X } from 'lucide-react';
+import { AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, Eraser, Highlighter, ImagePlus, IndentIncrease, Trash2, Underline } from 'lucide-react';
 import { blockText, uid } from './core.js';
-import { GENERATION_TIMEOUT_MS } from './creation.js';
 import { imageLink, readImageLink } from './image-assets.js';
 import { bookmarkRange, clipboardBlocks, editorBookmark, editorHtml, readEditorBlocks, restoreBookmark } from './editor-dom.js';
 
 const imageBlock = block => block?.type === 'image' || block?.type === 'imageCard';
 const plainRuns = runs => runs.map(run => ({ text: run.text }));
-const selectionFingerprint = (blocks, saved) => {
-  const from = blocks.findIndex(block => block.id === saved.startId);
-  const to = blocks.findIndex(block => block.id === saved.endId);
-  return from < 0 || to < from ? null : JSON.stringify(blocks.slice(from, to + 1));
-};
 
 export function ArticleEditor({ article, setArticle, template, assets, activeKey, onSelect, onUpload, onRegisterAsset, onGallery, setToast }) {
   const canvas = useRef();
@@ -24,8 +18,6 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
   const mutating = useRef(false);
   const draggingText = useRef(false);
   const lastSelected = useRef(null);
-  const request = useRef(null);
-  const aiDialog = useRef();
   const [selection, setSelection] = useState(null);
   const [drop, setDrop] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -33,7 +25,6 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
   const pendingImages = useRef(new Map());
   const latestArticle = useRef(article);
   latestArticle.current = article;
-  const [ai, setAi] = useState(null);
   const selectedId = activeKey?.startsWith('block:') ? activeKey.slice(6) : activeKey ? null : selection?.startId;
   const current = article.blocks.find(block => block.id === selectedId) || (!activeKey ? article.blocks[0] : undefined);
   const chosen = bookmark.current && current && bookmark.current.startId === current.id ? bookmark.current.ids.filter(id => article.blocks.some(block => block.id === id)) : [];
@@ -56,15 +47,11 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     document.addEventListener('selectionchange', listener);
     return () => document.removeEventListener('selectionchange', listener);
   });
-  useEffect(() => () => request.current?.abort(), []);
   useEffect(() => () => {
     for (const controller of pendingImages.current.values()) controller.abort();
     pendingImages.current.clear();
   }, [article.id]);
   useEffect(() => { setImportCount(0); }, [article.id]);
-  useEffect(() => {
-    if (ai) (aiDialog.current?.querySelector('textarea') || aiDialog.current)?.focus({ preventScroll: true });
-  }, [ai?.busy]);
   useEffect(() => {
     const id = activeKey?.startsWith('block:') ? activeKey.slice(6) : null;
     if (bookmark.current && bookmark.current.startId !== id) { bookmark.current = null; setSelection(null); }
@@ -340,50 +327,8 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     handle.addEventListener('pointerup', finish);
     handle.addEventListener('pointercancel', finish);
   };
-  const rewrite = async action => {
-    if (article.mode === 'raw') { setToast('原文排版不调用 AI，可手动编辑正文'); return; }
-    const saved = bookmark.current;
-    if (!saved?.text.trim() || saved.collapsed || saved.text.length > 6000 || saved.ids.some(id => imageBlock(article.blocks.find(block => block.id === id)))) { setToast('请在正文中选择 1–6000 字文字'); return; }
-    const fingerprint = selectionFingerprint(article.blocks, saved);
-    if (!fingerprint) { setToast('原选区已改变，请重新选择正文'); return; }
-    const controller = new AbortController();
-    request.current?.abort(); request.current = controller;
-    setAi({ action, bookmark: { ...saved }, original: saved.text, fingerprint, busy: true, result: '' });
-    try {
-      const response = await fetch('/api/articles/rewrite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, text: saved.text, mode: article.mode, tone: article.settings?.tone || 'plain' }), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(GENERATION_TIMEOUT_MS + 10000)]) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error?.message || 'AI 修改失败');
-      if (!controller.signal.aborted) setAi(previous => previous && { ...previous, busy: false, result: data.text });
-    } catch (error) {
-      if (!controller.signal.aborted) { setAi(null); setToast(error.name === 'TimeoutError' ? 'AI 修改超时，原文已保留' : error.message); }
-    }
-  };
-  const applyRewrite = () => {
-    const range = bookmarkRange(canvas.current, ai.bookmark);
-    const fingerprint = selectionFingerprint(article.blocks, ai.bookmark);
-    if (!range || fingerprint !== ai.fingerprint || range.toString() !== ai.original) { setToast('原选区已经改变，请重新选择文字后再修改'); setAi(null); return; }
-    bookmark.current = ai.bookmark;
-    if (restoreBookmark(canvas.current, ai.bookmark)) { execute('insertText', ai.result); commit(); }
-    setAi(null);
-  };
-  const cancelRewrite = () => {
-    request.current?.abort();
-    setAi(null);
-    restoreBookmark(canvas.current, bookmark.current);
-  };
-  const dialogKeys = event => {
-    if (event.key === 'Escape') { event.preventDefault(); cancelRewrite(); return; }
-    if (event.key !== 'Tab') return;
-    const fields = Array.from(aiDialog.current.querySelectorAll('button:not(:disabled),textarea'));
-    const index = fields.indexOf(document.activeElement);
-    if (index < 0 || (event.shiftKey && index === 0) || (!event.shiftKey && index === fields.length - 1)) {
-      event.preventDefault();
-      fields[event.shiftKey ? fields.length - 1 : 0]?.focus();
-    }
-  };
   const keepSelection = event => event.preventDefault();
   const valueType = current?.type === 'heading' ? `heading${current.level}` : current?.type === 'list' && current.ordered ? 'ordered' : current?.type || 'paragraph';
-  const hasSelection = Boolean(selection?.text.trim() && !selection.collapsed);
 
   return <div className="document-editor">
     <div className="document-toolbar" role="toolbar" aria-label="文字与段落排版">
@@ -406,7 +351,6 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
         <label>段距<select aria-label="段后间距" value={currentStyle.paragraphSpacing ?? ''} onChange={event => patchStyle({ paragraphSpacing: Number(event.target.value) })}><option value="" disabled>模板</option>{[0,8,12,16,18,24,32,48,64].map(value => <option key={value}>{value}</option>)}</select></label>
         <button title="切换首行缩进两字" aria-label="首行缩进" aria-pressed={Boolean(currentStyle.indent)} onMouseDown={keepSelection} onClick={() => patchStyle({ indent: currentStyle.indent ? 0 : 2 })}><IndentIncrease size={16}/></button>
       </div>}
-      <div className="editor-ai-tools"><span>{article.mode === 'raw' ? '原文排版不调用 AI，可手动编辑正文' : hasSelection ? `已选 ${selection.text.length} 字` : '选中文字后可局部修改'}</span>{article.mode !== 'raw' && [['polish','润色'],['shorten','缩短'],['expand','扩写']].map(([action,label]) => <button key={action} disabled={!hasSelection || Boolean(ai)} onMouseDown={keepSelection} onClick={() => rewrite(action)}><WandSparkles size={12}/>{label}</button>)}</div>
     </div>
     {imageBlock(current) && <div className="editor-image-controls"><label>图片宽度 <input aria-label="图片宽度" type="range" min="20" max="100" step="5" value={currentStyle.imageWidth || 100} onChange={event => patchStyle({ imageWidth: Number(event.target.value) })}/><span>{currentStyle.imageWidth || 100}%</span></label><div>{[['left','靠左'],['center','居中'],['right','靠右']].map(([align,label]) => <button key={align} aria-pressed={(currentStyle.align || 'left') === align} onClick={() => patchStyle({ align })}>{label}</button>)}<button onClick={() => onGallery(article.blocks.findIndex(block => block.id === current.id), current.id)}>替换图片</button><button title="删除当前图片，可撤销" aria-label="删除图片" onClick={() => publish(article.blocks.filter(block => block.id !== current.id))}><Trash2 size={14}/></button></div></div>}
     {uploading && <p className="editor-uploading" role="status">图片上传中…</p>}
@@ -427,6 +371,5 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
         onPointerDown={resizeImage} onDragStart={event => { const figure = event.target.closest('figure[data-block-id]'); draggingText.current = !figure; if (figure) { event.dataTransfer.setData('application/x-weave-block', figure.dataset.blockId); event.dataTransfer.effectAllowed = 'move'; } }} onDragEnd={() => { draggingText.current = false; setDrop(null); }}/>
     </div>
     <p className="editor-help">回车换段 · Shift+回车换行 · 拖动图片可调整位置，拖动图片角落可缩放</p>
-    {ai && <div className="modal-backdrop editor-ai-backdrop" onClick={cancelRewrite}><div ref={aiDialog} tabIndex={-1} onKeyDown={dialogKeys} className="small-modal editor-ai-dialog" role="dialog" aria-modal="true" aria-labelledby="rewrite-title" onClick={event => event.stopPropagation()}><button className="modal-close" aria-label="取消局部修改" onClick={cancelRewrite}><X size={18}/></button><span className="eyebrow">局部修改</span><h2 id="rewrite-title">{({ polish:'润色',shorten:'缩短',expand:'扩写' })[ai.action]}选中文字</h2><label>原文</label><p className="editor-ai-original">{ai.original}</p>{ai.busy ? <p role="status" className="editor-ai-pending"><RefreshCw className="spin" size={16}/>正在修改，原文已保留…</p> : <><label htmlFor="rewrite-result">修改结果，可继续编辑</label><textarea id="rewrite-result" value={ai.result} maxLength={12000} onChange={event => setAi(previous => ({ ...previous, result: event.target.value }))}/></>}<div className="modal-buttons"><button className="ghost-action" onClick={cancelRewrite}>取消</button><button className="publish-action" disabled={ai.busy || !ai.result.trim()} onClick={applyRewrite}>替换选中文字</button></div></div></div>}
   </div>;
 }

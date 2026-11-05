@@ -22,7 +22,6 @@
 | DELETE | `/api/assets/:id` | 删除图片资源 |
 | POST | `/api/articles/generate` | create/polish 模式生成结构化文章；raw 模式由共享解析器在前端完成 |
 | POST | `/api/articles/design` | 根据全文或用户风格要求生成独立版式，保留全部原文与图片 |
-| POST | `/api/articles/rewrite` | 仅修改所选文字，支持润色、缩短与扩写，响应为待用户预览的修改结果 |
 
 `generate` 请求字段：`mode`、`topic`、`text`、`materials[]`、`assetIds[]`、`tone`、`targetLength`，可选 `templateId`（T01–T40，重新生成时保留选中模板）。未指定模板时，根据规范化后的内容推荐初始模板。AI 服务配置齐全时按 `AI_API_STYLE` 调用 OpenAI 兼容 Responses 或 Chat Completions 接口；`auto` 默认先尝试 Responses，不支持时回退 Chat Completions。未配置时响应使用带 `mockGenerated` 标记的本地示例内容。响应带 `warnings` 和 `meta`（提示词/Schema 版本、模型、耗时、重试状态）。
 
@@ -31,8 +30,6 @@
 生成后按规范化内容实测正文非空白 Unicode 字符数（含标点、小标题、清单、引用及出处，不含主标题、摘要、图片标题和图注），目标范围为 ±15%。润色核对原文数字、日期与引语；Markdown 列表编号不当作事实数字。结构校验失败、字数偏离或受保护片段缺失时，最多再调用一次模型；已有合法草稿时提交 `revision` 要求定向修正。优先选择受保护片段缺失更少、长度更接近要求的结果；纠正失败保留已有合法草稿并警告，始终不接纳结构无效的结果，不硬截断正文。格式仍无效时返回 `AI_INVALID_OUTPUT`。`meta.length` 返回 `{actual,target,min,max,within}`，`meta.protectedMissingCount` 返回需核对片段数；这些是部分规则检查，不能替代事实审核。
 
 响应警告同时保存到可选的 `article.settings.generationWarnings`，供草稿恢复后继续展示；警告不参与正文、预览和复制。总生成/纠正预算为 180 秒，单次请求仍受 `AI_TIMEOUT_MS` 限制，客户端最多等待 190 秒；客户端取消会终止模型请求并停止后续纠正。无 AI 配置的本地示例明确提示未执行语气和目标长度，不返回真实生成的长度达标结论。
-
-`rewrite` 请求为 `{text,action,mode?,tone?}`，其中 `text` 是 1–6000 字选区，`action` 为 `polish`、`shorten` 或 `expand`。编辑器传入当前文章模式和语气，旧客户端默认 `polish/plain`；`raw` 返回 `RAW_MODE_NO_AI`，无效模式或语气返回 `INVALID_SETTINGS`。只提交选区文字，不提交整篇文章或模板，选区长度按操作调整，不受整篇目标字数强制裁剪。数字、日期、引语缺失时重试一次，仍缺失则保留原文并返回失败。响应 `{text,meta:{model,action}}`，返回文字最多 12000 字；未配置 AI 时返回 `AI_NOT_CONFIGURED`，不使用本地假结果。客户端先展示可编辑结果，再替换原选区；原选区被修改、插入内容或删除时拒绝覆盖。取消会中断请求并保留原文。
 
 客户端将成功生成时的输入单独保存在本地草稿 `generationInput`，不写入正文。AI 重新生成使用该输入、当前文章的模式/语气/目标长度、当前所选模板与正文实际引用的图片；新上传、替换或删除的图片不会退回首次提交的列表。原文排版重新解析原始输入并保留所选模板。生成期间正文或设置被修改时拒绝覆盖；成功替换后保存此前的文章快照，恢复时一并恢复模板、设置及生成警告。缺少原始输入的旧草稿需返回创作页补充素材。
 

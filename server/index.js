@@ -12,7 +12,7 @@ import { ArticleSchema, uid } from '../src/core.js';
 import { templates } from '../src/templates.js';
 import { markdownBlocks, normalizeDraft } from '../src/content.js';
 import { GENERATION_TIMEOUT_MS, TARGET_LENGTHS, WRITING_TONES } from '../src/creation.js';
-import { draftWarnings, generationInstructions, inspectDraft, missingProtectedParts, preferDraft, protectedFragments, selectionInstructions } from './writing-rules.js';
+import { draftWarnings, generationInstructions, inspectDraft, preferDraft, protectedFragments } from './writing-rules.js';
 import { recommendTemplates } from '../src/recommender.js';
 import { DomUtils, parseDocument } from 'htmlparser2';
 import { fetchModels, getAIConfig, getAIStatus, resetAIConfig, resolveAIConfig, resolveCredentials, saveAIConfig } from './ai-config.js';
@@ -290,13 +290,13 @@ app.delete('/api/assets/:id', (req, res) => {
 });
 
 const outputText = data => data.output_text || data.choices?.[0]?.message?.content || data.output?.flatMap(item => item.content || []).find(item => item.type === 'output_text')?.text || '';
-async function requestModel({ config, system, source, topic, mode, tone, targetLength, assetIds, template, task, signal, previousError, revision, inputData }) {
+async function requestModel({ config, system, source, topic, mode, tone, targetLength, assetIds, template, signal, previousError, revision, inputData }) {
   const base = config.baseUrl;
   const style = process.env.AI_API_STYLE || 'auto';
   const cacheKey = `${base}\0${crypto.createHash('sha256').update(config.apiKey).digest('hex')}\0${config.model}`;
   const resolvedApiStyle = resolvedApiStyles.get(cacheKey);
   const templateContentGuide = template ? { preferredBlocks: template.fit.preferredBlocks, headingLevels: [1, 2], missingContent: 'omit', priority: 'below-writing-rules' } : undefined;
-  const input = JSON.stringify(inputData || { task: task || (mode === 'polish' ? '润色文章，保留事实与重要细节及叙事顺序' : '基于主题和素材创作文章'), mode, topic, source, imageAssetIds: assetIds, tone, targetLength, templateContentGuide, revision, schemaVersion: 1, previousValidationError: previousError || undefined });
+  const input = JSON.stringify(inputData || { task: mode === 'polish' ? '润色文章，保留事实与重要细节及叙事顺序' : '基于主题和素材创作文章', mode, topic, source, imageAssetIds: assetIds, tone, targetLength, templateContentGuide, revision, schemaVersion: 1, previousValidationError: previousError || undefined });
   const responsesBody = { model: config.model, input: [{ role: 'system', content: [{ type: 'input_text', text: system }] }, { role: 'user', content: [{ type: 'input_text', text: input }] }], text: { format: { type: 'json_object' } } };
   const chatBody = { model: config.model, temperature: 0.5, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content: input }] };
   const request = async (kind, body) => {
@@ -455,43 +455,6 @@ app.post('/api/articles/design', rateLimit(10, 'RATE_DESIGN_PER_MIN'), concurren
   if (controller.signal.aborted) return;
   const timeout = signal.aborted || ['TimeoutError', 'AbortError'].includes(lastError?.name);
   return res.status(timeout ? 504 : 502).json({ error: { code: timeout ? 'AI_TIMEOUT' : 'AI_DESIGN_FAILED', message: timeout ? '设计超时，当前排版已保留，请重试' : '新版式未通过完整性或适配检查，当前排版已保留，请重试' } });
-});
-
-app.post('/api/articles/rewrite', rateLimit(20, 'RATE_REWRITE_PER_MIN'), concurrentGenerationLimit, async (req, res) => {
-  const { text, action, mode = 'polish', tone = 'plain' } = req.body || {};
-  const tasks = { polish: '仅润色这段选中文字，使表达自然清楚', shorten: '仅精简这段选中文字，保留核心事实和结论', expand: '仅适度扩写这段选中文字，讲清已有信息，不增加未经提供的事实' };
-  if (typeof text !== 'string' || !text.trim() || text.length > 6000 || typeof action !== 'string' || !Object.hasOwn(tasks, action)) return res.status(400).json({ error: { code: 'INVALID_SELECTION', message: '请选择 1–6000 字正文，并选择修改方式' } });
-  if (mode === 'raw') return res.status(400).json({ error: { code: 'RAW_MODE_NO_AI', message: '原文排版不调用 AI，请手动编辑或返回创作页选择素材润色' } });
-  if (!['create', 'polish'].includes(mode) || typeof tone !== 'string' || !Object.hasOwn(WRITING_TONES, tone)) return res.status(400).json({ error: { code: 'INVALID_SETTINGS', message: '文章设置无效' } });
-  const controller = new AbortController();
-  res.once('close', () => { if (!res.writableEnded) controller.abort(); });
-  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(GENERATION_TIMEOUT_MS)]);
-  let config;
-  try { config = await resolveAIConfig(); }
-  catch (error) { return res.status(error.status || 502).json({ error: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '无法连接 AI 服务' } }); }
-  if (!config.baseUrl || !config.apiKey || !config.model) return res.status(400).json({ error: { code: 'AI_NOT_CONFIGURED', message: '请先在顶部设置中配置 AI 服务' } });
-  const targetLength = Math.max(20, Math.min(10000, Math.round(text.length * (action === 'shorten' ? 0.65 : action === 'expand' ? 1.4 : 1))));
-  const system = selectionInstructions({ tone, targetLength });
-  const protectedParts = protectedFragments(text);
-  let lastError;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (signal.aborted) break;
-    try {
-      const raw = (await requestModel({ config, system, source: text, topic: '', mode, tone, targetLength, assetIds: [], task: tasks[action], signal, previousError: lastError?.message })).trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/, '$1').trim();
-      let output;
-      try {
-        const parsed = JSON.parse(raw);
-        output = typeof parsed === 'string' ? parsed : parsed?.text;
-      } catch { if (!/^[{[]/.test(raw)) output = raw; }
-      if (typeof output !== 'string' || !output.trim() || output.length > 12000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(output)) throw new Error('请返回包含有效 text 字符串的完整 JSON 对象');
-      const missing = missingProtectedParts(output, protectedParts);
-      if (missing.length) throw new Error(`选区中的数字、日期或引语不得删改，请恢复：${JSON.stringify(missing)}`);
-      return res.json({ text: output.trim(), meta: { model: config.model, action } });
-    } catch (error) { if (controller.signal.aborted) return; lastError = error; }
-  }
-  if (controller.signal.aborted) return;
-  const timeout = signal.aborted || ['TimeoutError', 'AbortError'].includes(lastError?.name);
-  return res.status(timeout ? 504 : 502).json({ error: { code: timeout ? 'AI_TIMEOUT' : 'AI_REWRITE_FAILED', message: timeout ? '修改超时，原文已保留' : 'AI 修改未完成，原文已保留，请重试' } });
 });
 
 app.use(express.static(path.join(root, 'dist')));
