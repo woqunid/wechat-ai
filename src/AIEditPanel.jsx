@@ -92,6 +92,11 @@ export function useAIEdit({ article, setArticle, assets, disabled, onApplied, on
       return previous.length < 100 ? [...previous, reference] : previous;
     });
   };
+  const restoreReferences = values => {
+    const valid = values.filter(reference => validAIReference(latest.current.article, reference));
+    if (valid.length < values.length) setError('部分引用内容已变化，请重新选中后发送');
+    setReferences(previous => [...previous, ...valid.filter(reference => !previous.some(item => sameAIReference(item, reference)))].slice(0, 100));
+  };
   const stop = () => {
     request.current?.abort(); request.current = null; setBusy('');
     setError('已停止，原稿和已有方案均已保留，可继续输入要求');
@@ -193,7 +198,8 @@ export function useAIEdit({ article, setArticle, assets, disabled, onApplied, on
     const controller = new AbortController();
     request.current = controller;
     setBusy('generating'); setError(''); setPrompt('');
-    setMessages(previous => [...previous, { id: uid('msg'), role: 'user', text: instruction, referenceCount: selected.length, attachmentNames: latest.current.attachments.map(attachment => attachment.name) }]);
+    const userMessageId = uid('msg');
+    setMessages(previous => [...previous.map(message => message.retryReferences ? { ...message, retryReferences: undefined } : message), { id: userMessageId, role: 'user', text: instruction, referenceCount: selected.length, references: selected.map(({ kind, text }) => ({ kind, text })), retryReferences: selected, attachmentNames: latest.current.attachments.map(attachment => attachment.name) }]);
     try {
       const cachedAttachments = await ensureAttachmentCaches([...latest.current.attachments], controller.signal);
       if (controller.signal.aborted || request.current !== controller) return;
@@ -202,11 +208,14 @@ export function useAIEdit({ article, setArticle, assets, disabled, onApplied, on
       const requestAttachments = cachedAttachments.map(attachment => attachment.kind === 'image'
         ? { kind: 'image', name: attachment.name, assetId: attachment.assetId }
         : { kind: 'document', name: attachment.name, text: attachment.text, imageAssetIds: attachment.images.map(image => image.assetId) });
-      const response = await fetch('/api/articles/edit', {
+      const responsePromise = fetch('/api/articles/edit', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ article: working, prompt: instruction, references: selected.map(({ snapshot, assetId, ...reference }) => reference), messages: messages.slice(-16).map(message => ({ role: message.role, text: message.text.slice(0, 4000) })), attachments: requestAttachments }),
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(AI_EDIT_TIMEOUT_MS + 10000)]),
       });
+      const sentReferenceIds = new Set(selected.map(reference => reference.id));
+      setReferences(previous => previous.filter(reference => !sentReferenceIds.has(reference.id)));
+      const response = await responsePromise;
       const data = await response.json();
       if (!response.ok) {
         const issue = new Error(data.error?.code === 'NOT_FOUND' ? 'AI修改接口尚未启动，请重启后端服务' : data.error?.message || '修改方案生成失败');
@@ -226,7 +235,7 @@ export function useAIEdit({ article, setArticle, assets, disabled, onApplied, on
       }
       if (controller.signal.aborted || request.current !== controller) return;
       const messageId = uid('msg');
-      setMessages(previous => [...previous.map(message => changed && message.id === candidate?.messageId ? { ...message, status: 'superseded' } : message), { id: messageId, role: 'assistant', text: result.message, ...(changed && hasChanges ? { status: 'pending' } : {}) }]);
+      setMessages(previous => [...previous.map(message => ({ ...(message.retryReferences ? { ...message, retryReferences: undefined } : message), ...(changed && message.id === candidate?.messageId ? { status: 'superseded' } : {}) })), { id: messageId, role: 'assistant', text: result.message, ...(changed && hasChanges ? { status: 'pending' } : {}) }]);
       if (changed) { setCandidate(hasChanges ? { base: original, next, references: selected, messageId } : null); setShowCandidate(true); if (hasChanges) onCandidate?.(); }
     } catch (cause) {
       if (!controller.signal.aborted && request.current === controller) {
@@ -259,19 +268,20 @@ export function useAIEdit({ article, setArticle, assets, disabled, onApplied, on
     } catch (cause) { if (!controller.signal.aborted) setError(cause.message || '方案检查失败，原稿已保留'); }
     finally { if (request.current === controller) { request.current = null; setBusy(''); } }
   };
-  return { references, messages, prompt, setPrompt, busy, error, attachments, attachmentsReady, attachmentBusy, addAttachments, removeAttachment, candidate, problem: resolved.problem, changes, invalidReferences, showCandidate, setShowCandidate, previewArticle: showCandidate && !disabled ? resolved.article : null, addReference, removeReference: referenceId => setReferences(previous => previous.filter(reference => reference.id !== referenceId)), submit, stop, discard, apply };
+  return { references, messages, prompt, setPrompt, busy, error, attachments, attachmentsReady, attachmentBusy, addAttachments, removeAttachment, candidate, problem: resolved.problem, changes, invalidReferences, showCandidate, setShowCandidate, previewArticle: showCandidate && !disabled ? resolved.article : null, addReference, restoreReferences, removeReference: referenceId => setReferences(previous => previous.filter(reference => reference.id !== referenceId)), submit, stop, discard, apply };
 }
 
 export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
   const end = useRef(null);
   const fileInput = useRef(null);
-  const lastInstruction = editor.messages.findLast(message => message.role === 'user')?.text;
+  const lastUserMessage = editor.messages.findLast(message => message.role === 'user');
+  const lastInstruction = lastUserMessage?.text;
   useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }); }, [editor.messages, editor.busy]);
   return <section className="ai-edit-panel" aria-label="AI修改对话">
     <div className="ai-edit-context"><span><span className="connection-dot connected"/>全文上下文</span><small title="引用用于提示关注点">选中内容可添加引用</small></div>
     <div className="ai-edit-messages" role="log" aria-label="修改对话记录" aria-live="polite" aria-relevant="additions text">
       {!editor.messages.length && <div className="ai-edit-empty"><span className="ai-empty-icon"><Sparkles size={23}/></span><h3>让文章更进一步</h3><p>调整文字、图片或排版。</p><div className="ai-prompt-suggestions">{['精简表达，保留关键信息', '优化开头，更快切入主题', '统一段落间距与文字样式'].map(text => <button type="button" key={text} disabled={disabled} onClick={() => editor.setPrompt(text)}>{text}<ArrowUp size={13}/></button>)}</div></div>}
-      {editor.messages.map(message => <div key={message.id} className={`ai-edit-message ${message.role}`}><strong>{message.role === 'user' ? '你' : <><Sparkles size={12}/>Weave AI</>}</strong><p>{message.text}</p>{message.referenceCount > 0 && <small>{message.referenceCount} 处引用</small>}{message.attachmentNames?.length > 0 && <small>附件：{message.attachmentNames.join('、')}</small>}{message.status && <small className={`ai-message-status ${message.status}`}>{({ pending: editor.problem ? '方案已失效' : '待应用', applied: '已应用', discarded: '已取消', superseded: '已有新方案' })[message.status]}</small>}</div>)}
+      {editor.messages.map(message => <div key={message.id} className={`ai-edit-message ${message.role}`}><strong>{message.role === 'user' ? '你' : <><Sparkles size={12}/>Weave AI</>}</strong><p>{message.text}</p>{message.referenceCount > 0 && <details className="ai-edit-message-references"><summary>{message.referenceCount} 处引用</summary><div>{message.references?.map((reference, index) => <p key={index}>{reference.text || '图片引用'}</p>)}</div></details>}{message.attachmentNames?.length > 0 && <small>附件：{message.attachmentNames.join('、')}</small>}{message.status && <small className={`ai-message-status ${message.status}`}>{({ pending: editor.problem ? '方案已失效' : '待应用', applied: '已应用', discarded: '已取消', superseded: '已有新方案' })[message.status]}</small>}</div>)}
       {editor.busy && <div className="ai-edit-progress" role="status"><span className="ai-thinking"><i/><i/><i/></span><span>{editor.busy === 'checking' ? '检查改动与布局…' : '生成修改方案…'}</span></div>}
       <div ref={end}/>
     </div>
@@ -281,7 +291,7 @@ export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
       <div className="ai-edit-review-actions"><button type="button" className="ghost-action" disabled={Boolean(editor.problem)} aria-pressed={!editor.showCandidate} onClick={() => editor.setShowCandidate(value => !value)}>{editor.showCandidate ? '查看原稿' : '预览方案'}</button><button type="button" className="publish-action" aria-label="应用本次修改" disabled={Boolean(editor.busy || editor.problem || disabled)} onClick={editor.apply}>{editor.busy === 'checking' ? <RefreshCw size={14} className="spin"/> : <Check size={14}/>}应用修改</button></div>
     </div>}
     {disabled && <p className="ai-edit-error" role="status">请先结束当前生成或排版预览。</p>}
-    {editor.error && <div className="ai-edit-error" role="alert"><p>{editor.error}</p>{lastInstruction && !editor.prompt && <button className="text-link" type="button" onClick={() => editor.setPrompt(lastInstruction)}>填回上次要求</button>}</div>}
+    {editor.error && <div className="ai-edit-error" role="alert"><p>{editor.error}</p>{lastInstruction && !editor.prompt && <button className="text-link" type="button" onClick={() => { editor.setPrompt(lastInstruction); editor.restoreReferences(lastUserMessage.retryReferences || []); }}>填回上次要求</button>}</div>}
     <form className="ai-edit-composer" onSubmit={editor.submit}>
       {editor.references.length > 0 && <div className="ai-edit-references" aria-label="关注内容引用">{editor.references.map(reference => {
         const valid = validAIReference(article, reference);

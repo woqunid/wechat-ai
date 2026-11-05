@@ -2458,6 +2458,10 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
 .ai-edit-message strong { display: flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 9px; font-weight: 500; }
 .ai-edit-message p { margin-top: 5px; }
 .ai-edit-message small { margin-top: 6px; font-size: 9px; }
+.ai-edit-message-references { margin-top: 6px; color: var(--text-secondary); font-size: 9px; }
+.ai-edit-message-references summary { cursor: pointer; }
+.ai-edit-message-references > div { max-height: 84px; overflow-y: auto; margin-top: 5px; scrollbar-width: thin; }
+.ai-edit-message-references > div > p { margin: 0 0 5px; padding-left: 7px; border-left: 2px solid var(--border-strong); color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
 .ai-message-status { display: inline-block; padding: 1px 5px; border-radius: 3px; background: var(--bg-subtle); }
 .ai-message-status.applied { color: var(--primary); background: var(--primary-subtle); }
 .ai-edit-progress { display: flex; align-items: center; gap: 9px; padding: 8px 2px; color: var(--text-secondary); font-size: 10px; }
