@@ -19,11 +19,12 @@ test('统一编辑区按标题、摘要、正文排列，引用键保持兼容�
   assert.deepEqual(blocks.map(block => editorKey(block.id)), ['title', 'summary', 'block:b_first']);
   const saved = ArticleSchema.parse({ ...source, ...editorContent(blocks) });
   assert.deepEqual(saved, source);
-  const html = editorHtml(blocks, new Map(), templates[0]);
+  const html = editorHtml(source, new Map(), templates[0]);
   const doc = parseDocument(html);
-  assert.equal(descendants(doc, 'h1').length, 1);
+  const title = DomUtils.findOne(node => node.attribs?.['data-editor-part'] === 'runs', anchor(doc, 'title').children, true);
+  assert.ok(title);
   assert.equal(descendants(doc, 'textarea').length, 0);
-  assert.equal(DomUtils.textContent(descendants(doc, 'h1')[0]), source.title);
+  assert.equal(DomUtils.textContent(title), source.title);
   assert.equal(saved.blocks.length, 1);
 });
 
@@ -34,7 +35,10 @@ test('清空标题或摘要不删除正文，空字段仍可在统一编辑区�
   assert.equal(next.title, '');
   assert.equal(next.summary, '');
   assert.deepEqual(next.blocks, source.blocks);
-  assert.ok(editorHtml(editorBlocks(next), new Map(), templates[0]).includes('添加摘要（可选）'));
+  const doc = parseDocument(editorHtml(next, new Map(), templates[0]));
+  assert.ok(anchor(doc, 'title'));
+  assert.ok(anchor(doc, 'summary'));
+  assert.ok(anchor(doc, 'block:b_first'));
 });
 
 test('40套模板的预览与复制均保留标题和摘要的对齐、字号与局部格式', () => {

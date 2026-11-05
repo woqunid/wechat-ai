@@ -13,6 +13,7 @@ const headingFont = t => `font-family:${fonts[t.layout.headingFont] || fonts.san
 const label = (text, t, css = '') => `<p style="${base(t)}font-size:11px;line-height:1.6;letter-spacing:2px;color:${t.tokens.accent};margin:0 0 12px;${css}">${escapeHtml(text)}</p>`;
 const manualStyle = block => BlockStyleSchema.safeParse(block.style || {}).data || {};
 const spacing = (block, fallback) => manualStyle(block).paragraphSpacing ?? fallback;
+const editPart = (t, part = 'runs', index) => t.editing ? ` data-editor-part="${part}"${index !== undefined ? ` data-editor-index="${index}"` : ''}` : '';
 const textStyle = block => {
   const style = manualStyle(block);
   return `${style.fontSize ? `font-size:${style.fontSize}px;` : ''}${style.align ? `text-align:${style.align};` : ''}${style.lineHeight ? `line-height:${style.lineHeight};` : ''}${style.indent !== undefined ? `text-indent:${style.indent}em;` : ''}`;
@@ -38,17 +39,18 @@ function textRuns(runs = [], t, inverse = false, decorate = true) {
     if (run.underline === false) css += 'text-decoration:none;border-bottom:0;';
     if (/^#[0-9a-f]{6}$/i.test(run.highlight || '')) css += `background-color:${run.highlight};`;
     const tag = run.bold ? 'strong' : 'span';
-    return `<${tag} style="${css}">${escapeHtml(run.text)}</${tag}>`;
+    const format = t.editing ? ` data-run-format="${escapeHtml(JSON.stringify(run))}"` : '';
+    return `<${tag}${format} style="${css}">${escapeHtml(run.text)}</${tag}>`;
   }).join('');
 }
 
 function renderHeader(article, t) {
-  if (!article.title) return '';
+  if (!article.title && !t.editing) return '';
   const { primary, accent, tint, onPrimary, border, highlight = onPrimary } = t.tokens;
   const size = article.title.length > 48 ? 23 : article.title.length > 32 ? 25 : t.tokens.titleSize || 28;
   const titleCss = `${base(t)}${headingFont(t)}font-size:${size}px;line-height:1.5;font-weight:800;letter-spacing:0.5px;margin:0;`;
   const field = articleField(article, 'title');
-  const title = (extra = '') => `<p style="${titleCss}${extra}${textStyle(field)}${field.style?.paragraphSpacing !== undefined ? `margin-bottom:${field.style.paragraphSpacing}px;` : ''}">${textRuns(field.runs, t, false, false)}</p>`;
+  const title = (extra = '') => `<p${editPart(t)} style="${titleCss}${extra}${textStyle(field)}${field.style?.paragraphSpacing !== undefined ? `margin-bottom:${field.style.paragraphSpacing}px;` : ''}">${textRuns(field.runs, t, false, false)}</p>`;
   const kicker = (extra = '') => label(t.layout.headerLabel, t, extra);
   const rule = (color = accent, width = '100%', extra = '') => `<p style="margin:16px 0 0;border-top:1px solid ${color};width:${width};font-size:1px;line-height:1;${extra}">&nbsp;</p>`;
   const panel = (content, css) => `<section style="${css}">${content}</section>`;
@@ -142,7 +144,7 @@ function renderHeader(article, t) {
 
 function renderSummary(article, t) {
   const summary = article.summary;
-  if (!summary?.trim()) return '';
+  if (!summary?.trim() && !t.editing) return '';
   const { primary, accent, tint, onPrimary, border } = t.tokens;
   const style = t.layout.summaryStyle;
   const styles = {
@@ -153,7 +155,7 @@ function renderSummary(article, t) {
     note: `background-color:${tint};border-top:2px solid ${accent};border-bottom:1px dashed ${border};padding:16px;`,
   };
   const field = articleField(article, 'summary');
-  return `<section style="${base(t)}margin:0 0 ${spacing(field, 28)}px;${styles[style] || styles.rule}">${label('导读', t, `margin:0 0 7px;${style === 'dark' ? `color:${onPrimary};` : ''}`)}<p style="font-size:15px;line-height:1.9;margin:0;white-space:pre-wrap;${textStyle(field)}">${textRuns(field.runs, t, style === 'dark', false)}</p></section>`;
+  return `<section style="${base(t)}margin:0 0 ${spacing(field, 28)}px;${styles[style] || styles.rule}">${label('导读', t, `margin:0 0 7px;${style === 'dark' ? `color:${onPrimary};` : ''}`)}<p${editPart(t)} style="font-size:15px;line-height:1.9;margin:0;white-space:pre-wrap;${textStyle(field)}">${textRuns(field.runs, t, style === 'dark', false)}</p></section>`;
 }
 
 const hasChapterNumber = text => /^(?:第[一二三四五六七八九十百零〇\d]+[章节篇部]|[一二三四五六七八九十]+[、．.]|\d{1,2}[、．](?!\d)|\d{1,2}\.(?:\s|(?=[^\d]))|[（(][一二三四五六七八九十\d]{1,3}[)）])/.test(text.trim());
@@ -161,7 +163,7 @@ const hasChapterNumber = text => /^(?:第[一二三四五六七八九十百零�
 function renderHeading(block, index, t, primaryLevel) {
   const { primary, accent, tint, onPrimary } = t.tokens;
   const text = block.runs ? textRuns(block.runs, t) : escapeHtml(block.text);
-  if (block.level !== primaryLevel) return `<p style="${base(t)}${headingFont(t)}font-size:18px;font-weight:700;color:${primary};margin:22px 0 ${spacing(block, 14)}px;padding-left:10px;border-left:2px solid ${accent};${textStyle(block)}">${text}</p>`;
+  if (block.level !== primaryLevel) return `<p${editPart(t)} style="${base(t)}${headingFont(t)}font-size:18px;font-weight:700;color:${primary};margin:22px 0 ${spacing(block, 14)}px;padding-left:10px;border-left:2px solid ${accent};${textStyle(block)}">${text}</p>`;
   const n = number(index);
   const markers = {
     hairline: label(`${n} /`, t, `border-top:1px solid ${accent};padding-top:14px;margin-bottom:8px;`),
@@ -178,7 +180,7 @@ function renderHeading(block, index, t, primaryLevel) {
     none: '',
   };
   const marker = hasChapterNumber(block.text) ? '' : markers[t.layout.sectionMark] || '';
-  return `<section style="margin:${index > 1 ? t.tokens.sectionGap : 0}px 0 ${spacing(block, 20)}px;">${marker}<p style="${base(t)}${headingFont(t)}font-size:22px;line-height:1.55;font-weight:800;color:${primary};margin:0;${textStyle(block)}">${text}</p></section>`;
+  return `<section style="margin:${index > 1 ? t.tokens.sectionGap : 0}px 0 ${spacing(block, 20)}px;">${marker}<p${editPart(t)} style="${base(t)}${headingFont(t)}font-size:22px;line-height:1.55;font-weight:800;color:${primary};margin:0;${textStyle(block)}">${text}</p></section>`;
 }
 
 const imageUrl = (asset, mode) => {
@@ -196,10 +198,10 @@ function renderImage(block, t, assets, mode) {
     ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(block.caption || block.title || '文章图片')}" style="display:block;width:100%;max-width:100%;height:auto;border-radius:${corner}px;" />`
     : `<p style="margin:0;padding:30px 10px;background-color:${tint};text-align:center;color:${textMuted};font-size:13px;line-height:1.7;">[图片待补充：${escapeHtml(block.caption || block.title || '请重新上传图片')}]</p>`;
   const hasTitle = Boolean(block.title?.trim());
-  const hasCaption = Boolean(block.caption?.trim());
+  const hasCaption = Boolean(block.caption?.trim()) || t.editing;
   const hasDescription = hasTitle || hasCaption;
-  const title = (css = '') => hasTitle ? `<p style="font-weight:700;line-height:1.7;color:${primary};margin:0 0 10px;${css}">${escapeHtml(block.title)}</p>` : '';
-  const caption = (css = '') => hasCaption ? `<p style="font-size:13px;line-height:1.8;color:${textMuted};margin:10px 0 0;white-space:pre-wrap;${css}">${escapeHtml(block.caption)}</p>` : '';
+  const title = (css = '') => hasTitle ? `<p${editPart(t, 'title')} style="font-weight:700;line-height:1.7;color:${primary};margin:0 0 10px;${css}">${escapeHtml(block.title)}</p>` : '';
+  const caption = (css = '') => hasCaption ? `<p${editPart(t, 'caption')} style="font-size:13px;line-height:1.8;color:${textMuted};margin:10px 0 0;white-space:pre-wrap;${css}">${escapeHtml(block.caption)}</p>` : '';
   let content;
   let css = '';
   switch (style) {
@@ -247,8 +249,8 @@ function renderQuote(block, t) {
     editorial: `border-left:4px solid ${accent};padding:4px 0 4px 16px;`,
   };
   const opening = style === 'pull' ? `<p style="${headingFont(t)}font-size:42px;line-height:1;color:${accent};margin:0 0 4px;">“</p>` : '';
-  const cite = block.cite ? `<p style="font-size:13px;color:${t.tokens.textMuted};text-align:right;margin:12px 0 0;border-top:1px solid ${border};padding-top:10px;">— ${escapeHtml(block.cite)}</p>` : '';
-  return `<section style="${base(t)}margin:22px 0 ${spacing(block, 22)}px;${styles[style] || styles.editorial}">${opening}<p style="${headingFont(t)}font-size:${style === 'pull' ? 19 : 16}px;line-height:1.9;color:${primary};margin:0;white-space:pre-wrap;${textStyle(block)}">${textRuns(block.runs, t)}</p>${cite}</section>`;
+  const cite = block.cite || t.editing ? `<p style="font-size:13px;color:${t.tokens.textMuted};text-align:right;margin:12px 0 0;border-top:1px solid ${border};padding-top:10px;">— <span${editPart(t, 'cite')}>${escapeHtml(block.cite)}</span></p>` : '';
+  return `<section style="${base(t)}margin:22px 0 ${spacing(block, 22)}px;${styles[style] || styles.editorial}">${opening}<p${editPart(t)} style="${headingFont(t)}font-size:${style === 'pull' ? 19 : 16}px;line-height:1.9;color:${primary};margin:0;white-space:pre-wrap;${textStyle(block)}">${textRuns(block.runs, t)}</p>${cite}</section>`;
 }
 
 function renderList(block, t) {
@@ -259,7 +261,7 @@ function renderList(block, t) {
     const badge = style === 'steps' || style === 'tiles';
     const markerCss = badge ? `background-color:${primary};color:${t.tokens.onPrimary};border-radius:${style === 'steps' ? '99' : '3'}px;padding:2px 7px;` : `color:${accent};font-weight:700;`;
     const itemCss = style === 'tiles' ? `padding:14px;background-color:${tint};border-radius:${t.tokens.radius}px;` : style === 'ruled' ? `padding:12px 0;border-bottom:1px solid ${border};` : style === 'steps' ? `padding:12px;border-left:2px solid ${border};` : 'padding:7px 0;';
-    return `<p style="margin:0 0 8px;${itemCss}white-space:pre-wrap;"><span style="display:inline-block;font-size:13px;line-height:1.8;margin-right:9px;vertical-align:baseline;${markerCss}">${escapeHtml(marker)}</span>${textRuns(runs, t)}</p>`;
+    return `<p style="margin:0 0 8px;${itemCss}white-space:pre-wrap;"><span style="display:inline-block;font-size:13px;line-height:1.8;margin-right:9px;vertical-align:baseline;${markerCss}">${escapeHtml(marker)}</span><span${editPart(t, 'item', index)}>${textRuns(runs, t)}</span></p>`;
   }).join('');
   return `<section style="${base(t)}margin:18px 0 ${spacing(block, 22)}px;${textStyle(block)}">${items}</section>`;
 }
@@ -283,10 +285,10 @@ function renderParagraph(block, t, first) {
       const character = Array.from(block.runs[0].text)[0];
       const head = { ...block.runs[0], text: character };
       const tail = [{ ...block.runs[0], text: block.runs[0].text.slice(character.length) }, ...block.runs.slice(1)].filter(run => run.text);
-      content = `<span style="${headingFont(t)}font-size:32px;line-height:1;vertical-align:baseline;color:${t.tokens.primary};margin-right:3px;">${textRuns([head], t)}</span>${textRuns(tail, t)}`;
+      content = `<span${t.editing ? ' data-run-format="{}"' : ''} style="${headingFont(t)}font-size:32px;line-height:1;vertical-align:baseline;color:${t.tokens.primary};margin-right:3px;">${textRuns([head], t)}</span>${textRuns(tail, t)}`;
     }
   }
-  return `<p style="${base(t)}margin:0 0 ${spacing(block, t.tokens.paraGap)}px;white-space:pre-wrap;${css}${textStyle(block)}">${content}</p>`;
+  return `<p${editPart(t)} style="${base(t)}margin:0 0 ${spacing(block, t.tokens.paraGap)}px;white-space:pre-wrap;${css}${textStyle(block)}">${content}</p>`;
 }
 
 function renderBlock(block, t, assets, mode, primaryLevel, context) {
@@ -310,7 +312,7 @@ function renderBlock(block, t, assets, mode, primaryLevel, context) {
       'dashed-frame': `border:1px dashed ${accent};background-color:${tint};`,
       'gold-frame': `border:1px solid ${accent};background-color:${tint};`,
     };
-    return `<section style="${base(t)}margin:22px 0 ${spacing(block, 22)}px;padding:18px 16px;${styles[style] || styles['soft-fill']}">${label('重点', t, `margin-bottom:8px;${inverse ? `color:${onPrimary};` : ''}`)}<p style="margin:0;white-space:pre-wrap;${textStyle(block)}">${textRuns(block.runs, t, inverse)}</p></section>`;
+    return `<section style="${base(t)}margin:22px 0 ${spacing(block, 22)}px;padding:18px 16px;${styles[style] || styles['soft-fill']}">${label('重点', t, `margin-bottom:8px;${inverse ? `color:${onPrimary};` : ''}`)}<p${editPart(t)} style="margin:0;white-space:pre-wrap;${textStyle(block)}">${textRuns(block.runs, t, inverse)}</p></section>`;
   }
   return '';
 }
@@ -359,12 +361,12 @@ function renderEnding(t) {
 const allowedTags = new Set(['section', 'p', 'span', 'strong', 'br', 'img']);
 const allowedAttrs = new Set(['style', 'src', 'alt']);
 const allowedCss = new Set(['color', 'background-color', 'font-size', 'font-weight', 'font-family', 'line-height', 'letter-spacing', 'text-align', 'text-indent', 'text-decoration', 'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'border', 'border-left', 'border-right', 'border-top', 'border-top-style', 'border-top-width', 'border-bottom', 'border-style', 'border-color', 'border-width', 'border-radius', 'width', 'max-width', 'height', 'display', 'box-sizing', 'vertical-align', 'word-break', 'white-space', 'overflow-wrap']);
-export function assertSafeHtml(html, { interactive = false } = {}) {
+export function assertSafeHtml(html, { interactive = false, editing = false } = {}) {
   for (const match of html.matchAll(/<\/?([a-z0-9]+)([^>]*)>/gi)) {
     if (!allowedTags.has(match[1].toLowerCase())) throw new Error(`HTML tag is not allowed: ${match[1]}`);
     for (const attr of match[2].matchAll(/([a-z-]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi)) {
       const name = attr[1].toLowerCase();
-      if (!allowedAttrs.has(name) && !(interactive && name === 'data-preview-key')) throw new Error(`HTML attribute is not allowed: ${attr[1]}`);
+      if (!allowedAttrs.has(name) && !(interactive && name === 'data-preview-key') && !(editing && ['data-editor-part', 'data-editor-index', 'data-run-format'].includes(name))) throw new Error(`HTML attribute is not allowed: ${attr[1]}`);
     }
     const style = match[2].match(/style="([^"]*)"/i)?.[1];
     if (style) for (const declaration of style.split(';').filter(Boolean)) {
@@ -381,7 +383,9 @@ export function assertSafeHtml(html, { interactive = false } = {}) {
 
 export function renderArticle(article, template, assets = new Map(), opts = {}) {
   const mode = opts.mode || 'wechat';
-  const interactive = mode === 'preview' && opts.interactive === true;
+  const editing = mode === 'preview' && opts.editing === true;
+  if (editing) template = { ...template, editing: true };
+  const interactive = mode === 'preview' && (opts.interactive === true || editing);
   const anchor = (html, key) => interactive && html ? html.replace(/^<([a-z]+)(?=[\s>])/i, `<$1 data-preview-key="${escapeHtml(key)}"`) : html;
   const primaryLevel = article.blocks.some(block => block.type === 'heading' && block.level === 1) ? 1 : 2;
   const headings = article.blocks.filter(block => block.type === 'heading' && block.level === primaryLevel);
@@ -390,8 +394,8 @@ export function renderArticle(article, template, assets = new Map(), opts = {}) 
     if (block.type === 'heading' && block.level === primaryLevel) context.headingIndex++;
     return anchor(renderBlock(block, template, assets, mode, primaryLevel, context), `block:${block.id}`);
   }).join('');
-  const customHtml = article.layoutDesign ? renderLayoutArticle(article, assets, { mode, anchor, imageUrl }) : null;
-  const html = assertSafeHtml(customHtml ?? `<section style="${base(template)}max-width:100%;padding:24px ${template.tokens.pagePadding || 14}px;background-color:${template.tokens.page || '#FFFFFF'};${pageCss(template)}">${anchor(renderHeader(article, template), 'title')}${anchor(renderSummary(article, template), 'summary')}${renderContents(headings, template)}${inner}${renderEnding(template)}</section>`, { interactive });
+  const customHtml = article.layoutDesign ? renderLayoutArticle(article, assets, { mode, anchor, imageUrl, editing }) : null;
+  const html = assertSafeHtml(customHtml ?? `<section style="${base(template)}max-width:100%;padding:24px ${template.tokens.pagePadding || 14}px;background-color:${template.tokens.page || '#FFFFFF'};${pageCss(template)}">${anchor(renderHeader(article, template), 'title')}${anchor(renderSummary(article, template), 'summary')}${renderContents(headings, template)}${inner}${renderEnding(template)}</section>`, { interactive, editing });
   const plainBlocks = article.blocks.map(block => block.type === 'image' || block.type === 'imageCard' ? `[图片：${block.caption || block.title || '文章图片'}]` : block.type === 'quote' && block.cite ? `${blockText(block)}\n— ${block.cite}` : blockText(block));
   const text = [article.title, article.summary, ...plainBlocks].filter(Boolean).join('\n\n');
   const images = article.blocks.filter(block => block.type === 'image' || block.type === 'imageCard').map(block => ({ assetId: block.assetId, caption: block.caption || block.title || '' }));

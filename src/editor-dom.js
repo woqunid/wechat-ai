@@ -1,4 +1,5 @@
 import { articleField, BlockStyleSchema, blockText, uid } from './core.js';
+import { renderArticle } from './renderer.js';
 
 export const editorKey = id => id === '$title' || id === '$summary' ? id.slice(1) : `block:${id}`;
 export const editorBlocks = article => [articleField(article, 'title'), articleField(article, 'summary'), ...article.blocks];
@@ -12,14 +13,8 @@ export function editorContent(blocks) {
   return { ...fields, blocks: blocks.filter(block => !block.field) };
 }
 
-export const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const palette = { red: '#dc2626', orange: '#ea580c', green: '#16a34a' };
 const blockTags = new Set(['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'UL', 'OL', 'FIGURE', 'HR', 'SECTION', 'ARTICLE']);
 const ignoredTags = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'BUTTON', 'INPUT', 'SELECT']);
-
-export function resolveColor(value, template) {
-  return /^#[0-9a-f]{6}$/i.test(value || '') ? value : template.tokens[value] || palette[value] || template.tokens.text;
-}
 
 function color(value) {
   if (/^#[0-9a-f]{6}$/i.test(value || '')) return value.toLowerCase();
@@ -29,45 +24,80 @@ function color(value) {
   return { red: '#ff0000', yellow: '#ffff00', green: '#008000', blue: '#0000ff', black: '#000000', white: '#ffffff' }[value?.toLowerCase()];
 }
 
-function runHtml(runs = [], template) {
-  return runs.map(run => {
-    const css = `${run.bold !== undefined ? `font-weight:${run.bold ? 700 : 400};` : ''}${run.underline !== undefined ? `text-decoration:${run.underline ? 'underline' : 'none'};` : ''}${run.color ? `color:${resolveColor(run.color, template)};` : ''}${run.highlight ? `background-color:${color(run.highlight) || '#fff2a8'};` : ''}`;
-    const token = ['primary', 'accent', 'red', 'orange', 'green'].includes(run.color) ? ` data-run-color="${run.color}"` : '';
-    return css ? `<span style="${css}"${token}>${escapeHtml(run.text).replace(/\n/g, '<br>')}</span>` : escapeHtml(run.text).replace(/\n/g, '<br>');
-  }).join('') || '<br>';
+export const editorHtml = (article, assets, template) => renderArticle(article, template, assets, { mode: 'preview', editing: true }).html;
+
+const partsOf = node => [ ...(node.matches('[data-editor-part]') ? [node] : []), ...node.querySelectorAll('[data-editor-part]') ];
+const partKey = node => node.dataset.editorPart === 'item' ? `item:${node.dataset.editorIndex}` : node.dataset.editorPart;
+const partElement = (root, id, part = 'runs') => {
+  const node = root.querySelector(`[data-block-id="${CSS.escape(id)}"]`);
+  return node && partsOf(node).find(node => partKey(node) === part);
+};
+export function prepareEditor(root, blocks, readOnly = false) {
+  const byKey = new Map(blocks.map(block => [editorKey(block.id), block]));
+  for (const node of root.querySelectorAll('[data-preview-key]')) {
+    const block = byKey.get(node.dataset.previewKey);
+    if (!block) continue;
+    node.dataset.blockId = block.id;
+    node.dataset.blockType = block.type;
+    node.dataset.editorKey = editorKey(block.id);
+    if (block.type === 'image' || block.type === 'imageCard' || block.type === 'divider') {
+      node.tabIndex = 0;
+      if (block.type !== 'divider') {
+        node.classList.add('editor-image');
+        node.draggable = !readOnly;
+        node.dataset.imageAlign = block.style?.align || 'left';
+        if (!readOnly) {
+          const handle = root.ownerDocument.createElement('span');
+          handle.className = 'editor-image-resize';
+          handle.dataset.resizeHandle = '';
+          handle.contentEditable = 'false';
+          handle.title = '拖动调整图片宽度';
+          node.appendChild(handle);
+        }
+      }
+    }
+    for (const part of partsOf(node)) {
+      part.contentEditable = String(!readOnly);
+      part.spellcheck = false;
+      part.dataset.placeholder = block.field === 'title' ? '输入文章标题' : block.field === 'summary' ? '添加摘要（可选）' : ({ cite: '引文出处（可选）', caption: '点击填写图片说明' })[part.dataset.editorPart] || '输入正文';
+      if (!part.textContent) part.innerHTML = '<br>';
+    }
+  }
 }
 
-export function editorHtml(blocks, assets, template) {
-  return blocks.map(block => {
-    const style = BlockStyleSchema.safeParse(block.style || {}).data || {};
-    const css = `${style.fontSize ? `font-size:${style.fontSize}px;` : ''}${style.align ? `text-align:${style.align};` : ''}${style.lineHeight ? `line-height:${style.lineHeight};` : ''}${style.paragraphSpacing !== undefined ? `margin-bottom:${style.paragraphSpacing}px;` : ''}${style.indent !== undefined ? `text-indent:${style.indent}em;` : ''}`;
-    const attrs = `data-block-id="${escapeHtml(block.id)}" data-block-type="${block.type}" data-editor-key="${escapeHtml(editorKey(block.id))}"${block.field ? ` data-article-field="${block.field}" data-placeholder="${block.field === 'title' ? '输入文章标题' : '添加摘要（可选）'}"` : ''} data-block-style="${escapeHtml(JSON.stringify(style))}" style="${css}"`;
-    if (block.type === 'heading') {
-      const tag = block.field === 'title' ? 'h1' : block.level === 1 ? 'h2' : 'h3';
-      return `<${tag} ${attrs}>${runHtml(block.runs || [{ text: block.text }], template)}</${tag}>`;
+export function readRenderedBlocks(root, previous) {
+  return previous.map(block => {
+    const node = root.querySelector(`[data-block-id="${CSS.escape(block.id)}"]`);
+    if (!node) return block;
+    const next = { ...block };
+    for (const part of partsOf(node)) {
+      const copy = part.cloneNode(true);
+      let tail = copy;
+      while (tail.lastChild) tail = tail.lastChild;
+      // Browsers keep a trailing BR as a caret placeholder in an empty editing host.
+      if (tail.nodeName === 'BR') tail.remove();
+      const runs = compactRuns(Array.from(copy.childNodes).flatMap(child => readRuns(child, {}, true)));
+      const text = runs.map(run => run.text).join('');
+      const name = part.dataset.editorPart;
+      if (name === 'item') next.items = (next.items || []).map((item, index) => index === Number(part.dataset.editorIndex) ? runs : item);
+      else if (name === 'runs') {
+        next.runs = runs;
+        if (block.type === 'heading') next.text = text;
+      } else next[name] = text;
     }
-    if (block.type === 'list') {
-      const tag = block.ordered ? 'ol' : 'ul';
-      return `<${tag} ${attrs}>${block.items.map(item => `<li>${runHtml(item, template)}</li>`).join('')}</${tag}>`;
-    }
-    if (block.type === 'quote') return `<blockquote ${attrs}><p data-quote-text>${runHtml(block.runs, template)}</p><cite data-cite contenteditable="true" data-placeholder="引文出处（可选）">${escapeHtml(block.cite || '')}</cite></blockquote>`;
-    if (block.type === 'divider') return `<hr ${attrs} contenteditable="false">`;
-    if (block.type === 'image' || block.type === 'imageCard') {
-      const asset = assets.get(block.assetId);
-      const url = asset?.previewUrl || asset?.url;
-      const safeUrl = typeof url === 'string' && /^(https?:\/\/|blob:|data:image\/(?:png|jpeg|webp);base64,|\/uploads\/)/i.test(url) ? url : '';
-      const placement = `width:${style.imageWidth || 100}%;margin-left:${['right', 'center'].includes(style.align) ? 'auto' : '0'};margin-right:${style.align === 'right' ? '0' : 'auto'};`;
-      return `<figure ${attrs.replace(`style="${css}"`, `style="${placement}"`)} data-asset-id="${escapeHtml(block.assetId)}" data-image-align="${style.align || 'left'}" contenteditable="false" tabindex="0" draggable="true">${safeUrl ? `<img src="${escapeHtml(safeUrl)}" alt="${escapeHtml(block.caption || '文章图片')}" draggable="false">` : '<span class="editor-image-missing">图片待补充</span>'}<figcaption contenteditable="true" data-placeholder="点击填写图片说明">${escapeHtml(block.caption || '')}</figcaption><span class="editor-image-resize" data-resize-handle title="拖动调整图片宽度"></span></figure>`;
-    }
-    return `<p ${attrs}>${runHtml(block.runs, template)}</p>`;
-  }).join('');
+    return next;
+  });
 }
 
-function readRuns(node, inherited = {}) {
+function readRuns(node, inherited = {}, rendered = false) {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ? [{ ...inherited, text: node.textContent }] : [];
   if (node.nodeType !== Node.ELEMENT_NODE || ignoredTags.has(node.tagName) || node.hasAttribute('data-cite') || node.hasAttribute('data-resize-handle')) return [];
   if (node.tagName === 'BR') return [{ ...inherited, text: '\n' }];
   const format = { ...inherited };
+  if (rendered && node.dataset.runFormat) {
+    try { const { text, ...stored } = JSON.parse(node.dataset.runFormat); Object.assign(format, stored); } catch { /* Invalid editor metadata is ignored. */ }
+    return Array.from(node.childNodes).flatMap(child => readRuns(child, format, true));
+  }
   if (node.style.fontWeight === 'normal' || (Number(node.style.fontWeight) > 0 && Number(node.style.fontWeight) < 600)) format.bold = false;
   if (['B', 'STRONG'].includes(node.tagName) || Number(node.style.fontWeight) >= 600 || node.style.fontWeight === 'bold') format.bold = true;
   const decoration = node.style.textDecorationLine || node.style.textDecoration;
@@ -78,7 +108,7 @@ function readRuns(node, inherited = {}) {
   const background = color(node.style.backgroundColor);
   if (background) format.highlight = background;
   else if (node.style.backgroundColor) delete format.highlight;
-  return Array.from(node.childNodes).flatMap(child => readRuns(child, format));
+  return Array.from(node.childNodes).flatMap(child => readRuns(child, format, rendered));
 }
 
 function compactRuns(runs) {
@@ -100,7 +130,7 @@ function compactRuns(runs) {
   return result.length ? result : [{ text: '' }];
 }
 
-export function readEditorBlocks(root, previous = [], assets = new Map()) {
+function readClipboardBlocks(root, previous = [], assets = new Map()) {
   const originals = new Map(previous.map(block => [block.id, block]));
   const seen = new Set();
   const result = [];
@@ -180,27 +210,24 @@ export function editorBookmark(root) {
   const selection = window.getSelection();
   if (!selection?.rangeCount || !root) return null;
   const range = selection.getRangeAt(0);
-  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+  const element = node => node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  const firstPart = element(range.startContainer)?.closest('[data-editor-part]');
+  const lastPart = element(range.endContainer)?.closest('[data-editor-part]');
+  if (!firstPart || !lastPart || !root.contains(firstPart) || !root.contains(lastPart)) return null;
+  const first = blockElement(root, firstPart), last = blockElement(root, lastPart);
   const nodes = Array.from(root.querySelectorAll('[data-block-id]'));
-  const endpoint = (container, offset, end) => {
-    const direct = blockElement(root, container);
-    if (direct) return direct;
-    const child = container.childNodes[end ? Math.max(0, offset - 1) : offset];
-    const adjacent = blockElement(root, child);
-    if (adjacent) return adjacent;
-    const candidates = nodes.filter(node => child?.contains?.(node));
-    return end ? candidates.at(-1) || nodes.at(-1) : candidates[0] || nodes[0];
-  };
-  const first = endpoint(range.startContainer, range.startOffset, false);
-  const last = endpoint(range.endContainer, range.endOffset, true);
-  if (!first || !last) return null;
-  const offset = (element, container, end) => {
+  const offset = (part, container, end) => {
     const prefix = range.cloneRange();
-    prefix.selectNodeContents(element);
+    prefix.selectNodeContents(part);
     prefix.setEnd(container, end);
     return prefix.toString().length;
   };
-  return { startId: first.dataset.blockId, endId: last.dataset.blockId, startOffset: offset(first, range.startContainer, range.startOffset), endOffset: offset(last, range.endContainer, range.endOffset), ids: nodes.slice(nodes.indexOf(first), nodes.indexOf(last) + 1).map(node => node.dataset.blockId), text: range.toString(), collapsed: range.collapsed };
+  const startOffset = offset(firstPart, range.startContainer, range.startOffset);
+  const endOffset = offset(lastPart, range.endContainer, range.endOffset);
+  const parts = Array.from(root.querySelectorAll('[data-editor-part]'));
+  const selected = parts.slice(parts.indexOf(firstPart), parts.indexOf(lastPart) + 1);
+  const text = selected.map((part, i) => part.textContent.slice(i ? 0 : startOffset, i === selected.length - 1 ? endOffset : undefined)).join('\n');
+  return { startId: first.dataset.blockId, endId: last.dataset.blockId, startPart: partKey(firstPart), endPart: partKey(lastPart), startOffset, endOffset, ids: nodes.slice(nodes.indexOf(first), nodes.indexOf(last) + 1).map(node => node.dataset.blockId), text, collapsed: range.collapsed };
 }
 
 function textPoint(element, offset) {
@@ -217,8 +244,8 @@ function textPoint(element, offset) {
 
 export function bookmarkRange(root, bookmark) {
   if (!root || !bookmark) return null;
-  const first = root.querySelector(`[data-block-id="${CSS.escape(bookmark.startId)}"]`);
-  const last = root.querySelector(`[data-block-id="${CSS.escape(bookmark.endId)}"]`);
+  const first = partElement(root, bookmark.startId, bookmark.startPart);
+  const last = partElement(root, bookmark.endId, bookmark.endPart);
   if (!first || !last) return null;
   const range = root.ownerDocument.createRange();
   range.setStart(...textPoint(first, bookmark.startOffset));
@@ -229,18 +256,101 @@ export function bookmarkRange(root, bookmark) {
 export function restoreBookmark(root, bookmark) {
   const range = bookmarkRange(root, bookmark);
   if (!range) return false;
-  root.focus({ preventScroll: true });
+  const part = partElement(root, bookmark.startId, bookmark.startPart);
+  part?.focus({ preventScroll: true });
   const selection = window.getSelection();
   selection.removeAllRanges();
   selection.addRange(range);
   return true;
 }
 
+export function editorSelectionHtml(root, bookmark) {
+  const parts = [...root.querySelectorAll('[data-editor-part]')];
+  const first = partElement(root, bookmark.startId, bookmark.startPart), last = partElement(root, bookmark.endId, bookmark.endPart);
+  return parts.slice(parts.indexOf(first), parts.indexOf(last) + 1).map(part => {
+    const range = root.ownerDocument.createRange();
+    range.setStart(...textPoint(part, part === first ? bookmark.startOffset : 0));
+    range.setEnd(...textPoint(part, part === last ? bookmark.endOffset : part.textContent.length));
+    const paragraph = root.ownerDocument.createElement('p');
+    const style = getComputedStyle(part);
+    for (const property of ['font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing', 'color', 'text-align', 'white-space']) paragraph.style.setProperty(property, style.getPropertyValue(property));
+    paragraph.appendChild(range.cloneContents());
+    for (const node of paragraph.querySelectorAll('*')) for (const attribute of [...node.attributes]) if (attribute.name !== 'style') node.removeAttribute(attribute.name);
+    return paragraph.outerHTML;
+  }).join('');
+}
+
+export const editorParts = block => block.type === 'list' ? block.items.map((_, index) => `item:${index}`)
+  : block.type === 'image' || block.type === 'imageCard' ? [...(block.title ? ['title'] : []), 'caption']
+  : block.type === 'divider' ? [] : ['runs', ...(block.type === 'quote' ? ['cite'] : [])];
+export const partRuns = (block, part = 'runs') => part.startsWith('item:') ? block.items[Number(part.slice(5))]
+  : part === 'runs' ? block.runs || [{ text: block.text || '' }] : [{ text: block[part] || '' }];
+export function withPartRuns(block, part = 'runs', runs) {
+  runs = compactRuns(runs);
+  if (part.startsWith('item:')) return { ...block, items: block.items.map((item, index) => index === Number(part.slice(5)) ? runs : item) };
+  if (part !== 'runs') return { ...block, [part]: runs.map(run => run.text).join('') };
+  return { ...block, runs, ...(block.type === 'heading' ? { text: runs.map(run => run.text).join('') } : {}) };
+}
+export function sliceRuns(runs, start = 0, end = Infinity) {
+  let offset = 0;
+  return runs.flatMap(run => {
+    const from = Math.max(0, start - offset), to = Math.min(run.text.length, end - offset);
+    offset += run.text.length;
+    return to > from ? [{ ...run, text: run.text.slice(from, to) }] : [];
+  });
+}
+export function formatEditorSelection(blocks, saved, patch) {
+  if (!saved || saved.collapsed) return blocks;
+  let inside = false;
+  return blocks.map(block => {
+    let next = block;
+    for (const part of editorParts(block)) {
+      const first = block.id === saved.startId && part === (saved.startPart || 'runs');
+      const last = block.id === saved.endId && part === (saved.endPart || 'runs');
+      if (first) inside = true;
+      if (inside && (part === 'runs' || part.startsWith('item:'))) {
+        const runs = partRuns(block, part), from = first ? saved.startOffset : 0, to = last ? saved.endOffset : Infinity;
+        next = withPartRuns(next, part, [...sliceRuns(runs, 0, from), ...sliceRuns(runs, from, to).map(run => patch === null ? { text: run.text } : { ...run, ...patch }), ...sliceRuns(runs, to)]);
+      }
+      if (last) inside = false;
+    }
+    return next;
+  });
+}
+
+export function replaceEditorSelection(blocks, saved, inserted = [{ text: '' }]) {
+  if (!saved) return null;
+  const first = blocks.find(block => block.id === saved.startId), last = blocks.find(block => block.id === saved.endId);
+  if (!first || !last) return null;
+  const startPart = saved.startPart || 'runs', endPart = saved.endPart || 'runs';
+  const prefix = sliceRuns(partRuns(first, startPart), 0, saved.startOffset);
+  const suffix = sliceRuns(partRuns(last, endPart), saved.endOffset);
+  const plain = block => !block.field && ['paragraph', 'heading', 'callout'].includes(block.type);
+  const join = first.id !== last.id && plain(first) && plain(last) && startPart === 'runs' && endPart === 'runs';
+  let inside = false;
+  const next = blocks.flatMap(block => {
+    if (join && block.id === first.id) { inside = true; return [withPartRuns(block, startPart, [...prefix, ...inserted, ...suffix])]; }
+    if (join && inside) { if (block.id === last.id) inside = false; return []; }
+    let value = block;
+    const wasInside = inside;
+    for (const part of editorParts(block)) {
+      const start = block.id === first.id && part === startPart, end = block.id === last.id && part === endPart;
+      if (start) inside = true;
+      if (inside) value = withPartRuns(value, part, [...(start ? [...prefix, ...inserted] : []), ...(end ? suffix : [])]);
+      if (end) inside = false;
+    }
+    if (wasInside && inside && !block.field && block.id !== first.id && block.id !== last.id) return [];
+    return [value];
+  });
+  const offset = saved.startOffset + inserted.reduce((length, run) => length + run.text.length, 0);
+  return { blocks: next, bookmark: { startId: first.id, endId: first.id, startPart, endPart: startPart, startOffset: offset, endOffset: offset, ids: [first.id], collapsed: true, text: '' } };
+}
+
 export function clipboardBlocks(html, text, assets) {
   if (html) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
     doc.querySelectorAll('script,style,iframe,object').forEach(node => node.remove());
-    const blocks = readEditorBlocks(doc.body, [], assets);
+    const blocks = readClipboardBlocks(doc.body, [], assets);
     if (blocks.some(block => block.type !== 'paragraph' || block.runs.some(run => run.text))) return blocks;
   }
   return text.replace(/\r\n?/g, '\n').split('\n').map(line => ({ id: uid('b'), type: 'paragraph', runs: [{ text: line }] }));

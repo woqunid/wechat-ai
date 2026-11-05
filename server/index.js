@@ -13,7 +13,7 @@ import { ArticleSchema, uid } from '../src/core.js';
 import { templates } from '../src/templates.js';
 import { markdownBlocks, normalizeDraft } from '../src/content.js';
 import { GENERATION_TIMEOUT_MS, TARGET_LENGTHS, WRITING_TONES } from '../src/creation.js';
-import { draftWarnings, generationInstructions, inspectDraft, preferDraft, protectedFragments } from './writing-rules.js';
+import { generationInstructions, inspectDraft, preferDraft, protectedFragments } from './writing-rules.js';
 import { recommendTemplates } from '../src/recommender.js';
 import { DomUtils, parseDocument } from 'htmlparser2';
 import { fetchModels, getAIConfig, getAIStatus, resetAIConfig, resolveAIConfig, resolveCredentials, saveAIConfig } from './ai-config.js';
@@ -569,15 +569,12 @@ app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concu
   };
   const parsed = ArticleSchema.safeParse(candidate);
   if (!parsed.success) return res.status(502).json({ error: { code: 'AI_INVALID_OUTPUT', message: '生成内容格式异常，请重试' } });
-  const warnings = useAI ? draftWarnings(report, mode) : ['当前使用本地示例内容，语气与目标长度未执行；配置 AI 服务后生效'];
   const referenced = new Set(parsed.data.blocks.filter(block => block.type === 'image' || block.type === 'imageCard').map(block => block.assetId));
   for (const assetId of assetIds) if (!referenced.has(assetId)) {
     parsed.data.blocks.push({ id: uid('b'), type: 'imageCard', assetId, caption: '' });
-    warnings.push('已将未安排位置的图片添加到文章末尾');
   }
   if (!templateId) parsed.data.templateId = recommendTemplates(parsed.data)[0]?.id || 'T01';
-  parsed.data.settings.generationWarnings = warnings;
-  res.json({ article: parsed.data, warnings, meta: { promptVersion: useAI ? 'semantic-3' : 'mock-2', schemaVersion: 1, model, latencyMs: Date.now() - startedAt, retried, ...usageMeta(usages), ...(report ? { length: report.length, protectedMissingCount: report.missing.length } : {}) } });
+  res.json({ article: parsed.data, meta: { promptVersion: useAI ? 'semantic-3' : 'mock-2', schemaVersion: 1, model, latencyMs: Date.now() - startedAt, retried, ...usageMeta(usages), ...(report ? { length: report.length, protectedMissingCount: report.missing.length } : {}) } });
 });
 
 app.post('/api/articles/design', rateLimit(10, 'RATE_DESIGN_PER_MIN'), concurrentGenerationLimit, async (req, res) => {

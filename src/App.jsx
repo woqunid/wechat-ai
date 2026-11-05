@@ -11,6 +11,10 @@ import {
   ImagePlus,
   LayoutGrid,
   Plus,
+  PanelRightClose,
+  PanelRightOpen,
+  Undo2,
+  Redo2,
   RefreshCw,
   Search,
   Settings2,
@@ -108,7 +112,7 @@ function App() {
   const requestAbort = useRef(null);
   const [rawPending, setRawPending] = useState(null);
   const [copyFailure, setCopyFailure] = useState("general");
-  const [previewWidth, setPreviewWidth] = useState(375);
+  const [canvasWidth, setCanvasWidth] = useState(375);
   const [saved, setSaved] = useState("");
   const [savedSnapshot, setSavedSnapshot] = useState(null);
   const fileRef = useRef();
@@ -275,7 +279,6 @@ function App() {
       setSavedSnapshot(null);
       clearSnapshot().catch(() => {});
       setPage("edit");
-      if (data.warnings?.length) setToast(data.warnings.join("；"));
     } catch (e) {
       setToast(
         e.name === "AbortError"
@@ -544,7 +547,7 @@ function App() {
         return { pending: true };
       }
       await enterRaw(parsed, source, sourceInput, selected, false);
-      return { warnings: parsed.ignoredImages ? [`${parsed.ignoredImages} 张 Markdown 图片未导入，请在编辑器中插入原图`] : [] };
+      return { ignoredImages: parsed.ignoredImages };
     }
     const response = await fetch("/api/articles/generate", {
       method: "POST",
@@ -615,8 +618,8 @@ function App() {
       recs={recs}
       assets={assets}
       setAssets={setAssets}
-      previewWidth={previewWidth}
-      setPreviewWidth={setPreviewWidth}
+      canvasWidth={canvasWidth}
+      setCanvasWidth={setCanvasWidth}
       copy={copy}
       clear={clear}
       saved={saved}
@@ -801,7 +804,7 @@ function Create({
     </main>
   );
 }
-const previewDocument = (html, interactive = false) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><style>*{box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}p{overflow-wrap:anywhere}img{max-width:100%;height:auto}${interactive ? '[data-preview-key]{cursor:pointer;scroll-margin-top:28px}[data-preview-key].ai-proposed-change{outline:2px dashed #0284c7;outline-offset:3px}[data-preview-key]:hover{outline:1px dashed #0d9488;outline-offset:3px}[data-preview-key].preview-linked{outline:2px solid #0d9488;outline-offset:3px;animation:preview-locate 1s ease-out}@keyframes preview-locate{from{box-shadow:0 0 0 7px rgba(13,148,136,.2)}to{box-shadow:0 0 0 0 rgba(13,148,136,0)}}@media(prefers-reduced-motion:reduce){[data-preview-key].preview-linked{animation:none}}' : ''}</style></head><body>${html}</body></html>`;
+const previewDocument = html => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><style>*{box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}p{overflow-wrap:anywhere}img{max-width:100%;height:auto}</style></head><body>${html}</body></html>`;
 
 function TemplateThumb({ article, template, assets, large = false }) {
   const container = useRef();
@@ -856,8 +859,8 @@ function Edit({
   recs,
   assets,
   setAssets,
-  previewWidth,
-  setPreviewWidth,
+  canvasWidth,
+  setCanvasWidth,
   copy,
   clear,
   saved,
@@ -874,7 +877,7 @@ function Edit({
   const [layoutTrial, setLayoutTrial] = useState(null);
   const [layoutReset, setLayoutReset] = useState(0);
   const [sideTab, setSideTab] = useState('templates');
-  const [workspaceView, setWorkspaceView] = useState('editor');
+  const [toolsOpen, setToolsOpen] = useState(true);
   const resetLayoutTrial = () => { setLayoutTrial(null); setLayoutReset(value => value + 1); };
   const applyLayoutTrial = () => {
     const candidate = layoutTrial;
@@ -915,7 +918,7 @@ function Edit({
   }, [library, libraryOriginal, setSelected]);
   const snapshot = savedSnapshot;
   const [regenerating, setRegenerating] = useState(false);
-  const aiEditor = useAIEdit({ article, setArticle, assets, disabled: library || regenerating || Boolean(layoutTrial), onApplied: resetLayoutTrial, setToast });
+  const aiEditor = useAIEdit({ article, setArticle, assets, disabled: library || regenerating || Boolean(layoutTrial), onApplied: resetLayoutTrial, onCandidate: () => { if (window.matchMedia('(max-width: 760px)').matches) setToolsOpen(false); }, setToast });
   const history = useRef([]);
   const future = useRef([]);
   const [historySize, setHistorySize] = useState(0);
@@ -961,6 +964,7 @@ function Edit({
         ["INPUT", "TEXTAREA"].includes(e.target.tagName)
       )
         return;
+      if (editorPane.current?.querySelector('[aria-readonly="true"]')) return;
       e.preventDefault();
       e.shiftKey ? redo() : undo();
     };
@@ -980,104 +984,29 @@ function Edit({
       historyMove.current = false;
     }
   }, [article]);
-  const iframe = useRef();
   const editorPane = useRef();
   const activeKeyRef = useRef(null);
-  const pendingPreviewKey = useRef(null);
   const [activeKey, setActiveKey] = useState(null);
-  const highlightPreview = (doc, key) => {
-    doc?.querySelector('.preview-linked')?.classList.remove('preview-linked');
-    const target = key ? doc?.querySelector(`[data-preview-key="${CSS.escape(key)}"]`) : null;
-    target?.classList.add('preview-linked');
-    return target;
-  };
   const locateContent = (key, source) => {
-    if (source === 'preview' && window.matchMedia('(max-width: 1100px)').matches) setWorkspaceView('editor');
     activeKeyRef.current = key;
     setActiveKey(key);
-    const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
-    const frame = iframe.current;
-    const target = highlightPreview(frame?.contentDocument, key);
-    if (source === 'editor') {
-      if (target) {
-        frame.contentWindow.scrollTo({ top: Math.max(0, target.getBoundingClientRect().top + frame.contentWindow.scrollY - 28), behavior });
-        pendingPreviewKey.current = null;
-        if (window.matchMedia('(max-width: 880px)').matches) {
-          window.scrollTo({ top: Math.max(0, frame.getBoundingClientRect().top + window.scrollY - 24), behavior });
-        }
-      } else pendingPreviewKey.current = key;
-    } else {
-      pendingPreviewKey.current = null;
-      requestAnimationFrame(() => {
-        const pane = editorPane.current;
-        const editorTarget = pane?.querySelector(`[data-editor-key="${CSS.escape(key)}"]`);
-        if (editorTarget) {
-          const toolbarHeight = pane.querySelector('.document-toolbar')?.offsetHeight || 0;
-          const offset = Math.max(toolbarHeight + 24, (pane.clientHeight - editorTarget.offsetHeight) / 2);
-          if (pane.scrollHeight > pane.clientHeight) {
-            pane.scrollTo({ top: Math.max(0, pane.scrollTop + editorTarget.getBoundingClientRect().top - pane.getBoundingClientRect().top - offset), behavior });
-          } else {
-            window.scrollTo({ top: Math.max(0, editorTarget.getBoundingClientRect().top + window.scrollY - 24), behavior });
-          }
-        }
-      });
-    }
+    if (source === 'editor') return;
+    if (window.matchMedia('(max-width: 760px)').matches) setToolsOpen(false);
+    requestAnimationFrame(() => {
+      const pane = editorPane.current?.querySelector('.canvas-scroll');
+      const target = pane?.querySelector(`[data-editor-key="${CSS.escape(key)}"]`);
+      if (target) pane.scrollTo({ top: Math.max(0, pane.scrollTop + target.getBoundingClientRect().top - pane.getBoundingClientRect().top - 40), behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    });
   };
-  const locateFromEditor = (event) => {
+  const locateFromCanvas = event => {
     const key = event.target.closest('[data-editor-key]')?.dataset.editorKey;
     if (key) locateContent(key, 'editor');
   };
-  const aiPreview = sideTab === 'ai' && !library && !layoutTrial ? aiEditor.previewArticle : null;
-  const preview = useMemo(
-    () =>
-      renderArticle(
-        { ...(aiPreview || (layoutTrial?.signature === layoutSignature(article) ? clearArticleStyles(article) : article)), layoutDesign: library ? undefined : aiPreview ? aiPreview.layoutDesign : layoutTrial?.signature === layoutSignature(article) ? layoutTrial.design : article.layoutDesign, settings: { ...article.settings, accountName: account } },
-        template,
-        assets,
-        { mode: "preview", interactive: true },
-      ).html,
-    [article, template, assets, account, library, layoutTrial, aiPreview],
-  );
-  useEffect(() => {
-    let removeClick;
-    const t = setTimeout(() => {
-      if (iframe.current) {
-        const frame = iframe.current;
-        const previousScroll = frame.contentWindow?.scrollY || 0;
-        const doc = frame.contentDocument;
-        if (!doc) return;
-        const previousTarget = activeKeyRef.current
-          ? doc.querySelector(`[data-preview-key="${CSS.escape(activeKeyRef.current)}"]`)
-          : null;
-        const previousOffset = previousTarget?.getBoundingClientRect().top;
-        doc.open();
-        doc.write(
-          previewDocument(preview, true),
-        );
-        doc.close();
-        if (aiPreview) for (const change of aiEditor.changes) {
-          if (change.key !== 'layout') doc.querySelector(`[data-preview-key="${CSS.escape(change.key)}"]`)?.classList.add('ai-proposed-change');
-        }
-        const target = highlightPreview(doc, activeKeyRef.current);
-        const targetTop = target ? target.getBoundingClientRect().top + frame.contentWindow.scrollY : 0;
-        const top = target && pendingPreviewKey.current === activeKeyRef.current
-          ? targetTop - 28
-          : target && previousOffset !== undefined ? targetTop - previousOffset : previousScroll;
-        frame.contentWindow?.scrollTo(0, Math.max(0, top));
-        pendingPreviewKey.current = null;
-        const click = (event) => {
-          const key = event.target.closest('[data-preview-key]')?.dataset.previewKey;
-          if (key) locateContent(key, 'preview');
-        };
-        doc.addEventListener('click', click);
-        removeClick = () => doc.removeEventListener('click', click);
-      }
-    }, 150);
-    return () => {
-      clearTimeout(t);
-      removeClick?.();
-    };
-  }, [preview, Boolean(aiPreview)]);
+  const aiPreview = !library && !layoutTrial ? aiEditor.previewArticle : null;
+  const canvasArticle = useMemo(() => aiPreview || (layoutTrial?.signature === layoutSignature(article)
+    ? { ...clearArticleStyles(article), layoutDesign: layoutTrial.design } : article), [article, aiPreview, layoutTrial]);
+  const canvasReadOnly = Boolean(aiPreview || layoutTrial || library || regenerating || aiEditor.busy === 'checking');
+  const preview = useMemo(() => renderArticle({ ...article, layoutDesign: undefined }, template, assets, { mode: 'preview' }).html, [article, template, assets]);
   const chooseTemplate = (id) => {
     resetLayoutTrial();
     setSelected(id);
@@ -1107,8 +1036,7 @@ function Edit({
       blocks.splice(Math.min(insertAt, blocks.length), 0, next);
       return { ...a, blocks };
     });
-    locateContent(`block:${id}`, 'preview');
-    locateContent(`block:${id}`, 'editor');
+    locateContent(`block:${id}`);
   };
   const insertionAfterSelection = () => {
     if (['title', 'summary'].includes(activeKeyRef.current)) return 0;
@@ -1185,16 +1113,15 @@ function Edit({
       setImageUploads(count => count - 1);
     }
   };
-  const requestRegenerate = () => setModal("regen");
-  const confirmRegen = async () => {
+  const requestRegenerate = async () => {
+    if (regenerating || canvasReadOnly) return;
     const previous = article;
-    setModal(null);
     setRegenerating(true);
     try {
       const result = await onRegenerate();
       if (!result?.pending) {
         onSnapshotSaved?.(previous);
-        setToast(result?.warnings?.length ? result.warnings.join("；") : "文章已重新生成");
+        setToast(result?.ignoredImages ? `${result.ignoredImages} 张 Markdown 图片未导入，请在编辑器中插入原图` : "文章已重新生成");
       }
     } catch (e) {
       setToast(e.message || "重新生成失败");
@@ -1221,7 +1148,11 @@ function Edit({
           </span>
         </div>
         <div className="top-actions">
-          <div className="mobile-workspace-actions" role="group" aria-label="工作区切换">{[['editor', FileText, '编辑'], ['preview', LayoutGrid, '预览'], ['tools', Sparkles, '排版与 AI']].map(([id, Icon, label]) => <button key={id} aria-label={label} title={label} aria-pressed={workspaceView === id} onClick={() => setWorkspaceView(id)}><Icon size={16}/></button>)}</div>
+          <div className="history-tools">
+            <button onClick={undo} disabled={!historySize || canvasReadOnly} title="撤销 Ctrl+Z" aria-label="撤销"><Undo2 size={16}/></button>
+            <button onClick={redo} disabled={!futureSize || canvasReadOnly} title="重做 Ctrl+Shift+Z" aria-label="重做"><Redo2 size={16}/></button>
+          </div>
+          <button className="icon-action tools-toggle" aria-label={toolsOpen ? '收起工具面板' : '展开工具面板'} aria-controls="workspace-tools" aria-expanded={toolsOpen} title="模板与 AI" onClick={() => setToolsOpen(value => !value)}>{toolsOpen ? <PanelRightClose size={17}/> : <PanelRightOpen size={17}/>}</button>
           <button
             className="icon-action"
             title="AI 服务设置"
@@ -1242,184 +1173,39 @@ function Edit({
         open={serviceOpen}
         onClose={() => setServiceOpen(false)}
       />
-      <div className={`edit-workspace view-${workspaceView}`}>
-        <aside
-          className="editor-pane"
-          ref={editorPane}
-          onClickCapture={locateFromEditor}
-          onFocusCapture={locateFromEditor}
-        >
-          <div className="article-edit">
-            {article.settings?.mockGenerated && (
-              <div className="content-origin mock-origin">示例草稿 · 尚未连接 AI</div>
-            )}
-            <div className="writing-status" aria-label="当前文章创作设置">
-              <span title="含标点、小标题和引用出处，不计空白、主标题、摘要及图片说明">正文 {bodyLength?.actual ?? bodyCharCount(article.blocks)} 字</span>
-              <span className={article.title.length > 64 ? 'error' : ''}>标题 {article.title.length}/64</span>
-              {article.mode !== "raw" && !article.settings?.mockGenerated && bodyLength && !bodyLength.within && <small>参考范围 {bodyLength.min}–{bodyLength.max} 字</small>}
+      <div className={`edit-workspace${toolsOpen ? ' tools-open' : ''}`}>
+        <main className="canvas-pane" ref={editorPane} onClickCapture={locateFromCanvas} onFocusCapture={locateFromCanvas}>
+          <div className="canvas-toolbar">
+            <div className="canvas-heading"><strong>{canvasArticle.layoutDesign?.name || template.name}</strong><span>{canvasReadOnly ? '方案预览' : '直接编辑'}</span></div>
+            <div className="width-switch" role="group" aria-label="画布宽度">
+              {[320, 375, 414, 720].map(width => <button key={width} aria-pressed={canvasWidth === width} className={canvasWidth === width ? 'on' : ''} onClick={() => setCanvasWidth(width)}>{width === 720 ? '宽屏' : width}</button>)}
             </div>
-            {article.settings?.generationWarnings?.length > 0 && <div className="writing-warnings" role="status">
-              <strong>提示</strong>
-              {article.settings.generationWarnings.map((warning, index) => <p key={index}>{warning}</p>)}
+            <div className="writing-status" aria-label="当前文章创作设置"><span>正文 {bodyLength?.actual ?? bodyCharCount(article.blocks)} 字</span><span className={article.title.length > 64 ? 'error' : ''}>标题 {article.title.length}/64</span></div>
+          </div>
+          {article.settings?.mockGenerated && <div className="content-origin mock-origin">示例草稿 · 尚未连接 AI</div>}
+          {aiEditor.candidate && !aiEditor.problem && <div className="ai-edit-preview-bar"><span>{aiPreview ? `${aiEditor.changes.length} 处改动 · 应用后可编辑` : '原稿'}</span><div><button className="text-link" onClick={() => aiEditor.setShowCandidate(value => !value)}>{aiEditor.showCandidate ? '看原稿' : '看方案'}</button><button className="preview-apply" disabled={Boolean(aiEditor.busy || aiEditor.problem)} onClick={aiEditor.apply}><Check size={13}/>应用</button></div></div>}
+          {layoutTrial && <div className="ai-edit-preview-bar layout-preview-bar"><span>{layoutTrial.design.name} · 应用后可编辑</span><div><button className="text-link" onClick={resetLayoutTrial}>取消</button><button className="preview-apply" onClick={applyLayoutTrial}><Check size={13}/>应用排版</button></div></div>}
+          {imageUploads > 0 && <div className="editor-uploading" role="status"><RefreshCw size={14} className="spin"/>上传图片中…</div>}
+          <ArticleEditor
+            article={article} displayArticle={canvasArticle === article ? undefined : canvasArticle} readOnly={canvasReadOnly} width={canvasWidth} changes={aiPreview ? aiEditor.changes : []}
+            setArticle={setArticle} template={template} assets={assets} activeKey={activeKey}
+            onSelect={key => locateContent(key, 'editor')} onReference={aiEditor.addReference} onUpload={uploadImage} onRegisterAsset={registerImageAsset}
+            onGallery={(index, blockId = null) => { setInsertAt(index); setReplaceBlockId(blockId); setModal('gallery'); }} setToast={setToast}
+            header={<div className="canvas-account"><input maxLength={64} value={account} disabled={canvasReadOnly} onChange={event => { setAccount(event.target.value); setArticle(a => ({ ...a, settings: { ...a.settings, accountName: event.target.value } })); }} aria-label="公众号名称"/><span>{new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}</span></div>}
+            footer={<div className="canvas-footer" style={{ width: canvasWidth }}>
+              <button className="add-block" disabled={canvasReadOnly} onClick={() => { setInsertAt(article.blocks.length); setModal('add'); }}><Plus size={15}/>添加内容</button>
+              <div className="article-end-actions"><button className="text-link" disabled={regenerating || canvasReadOnly} onClick={requestRegenerate}><RefreshCw size={14} className={regenerating ? 'spin' : ''}/>重新生成</button><button className="text-link" onClick={original}>修改素材</button>{snapshot && <button className="text-link" disabled={canvasReadOnly} onClick={() => { setArticle(snapshot); setSelected(snapshot.templateId); onSnapshotCleared?.(); }}>撤销重新生成</button>}</div>
             </div>}
-            <div className="block-toolbar">
-              <span>{article.blocks.length} 段</span>
-              <span className="history-tools">
-                <button
-                  onClick={undo}
-                  disabled={!historySize}
-                  title="撤销 Ctrl+Z"
-                >
-                  撤销
-                </button>
-                <button
-                  onClick={redo}
-                  disabled={!futureSize}
-                  title="重做 Ctrl+Shift+Z"
-                >
-                  重做
-                </button>
-              </span>
-              <button
-                className="insert-image"
-                onClick={() => {
-                  setInsertAt(insertionAfterSelection());
-                  setReplaceBlockId(null);
-                  setModal("gallery");
-                }}
-              >
-                <ImagePlus size={15} />
-                插入图片
-              </button>
-            </div>
-            {imageUploads > 0 && <div className="editor-uploading" role="status"><RefreshCw size={14} className="spin"/>上传图片中…</div>}
-            <ArticleEditor
-              article={article}
-              setArticle={setArticle}
-              template={template}
-              assets={assets}
-              activeKey={activeKey}
-              onSelect={key => locateContent(key, 'editor')}
-              onReference={aiEditor.addReference}
-              onUpload={uploadImage}
-              onRegisterAsset={registerImageAsset}
-              onGallery={(index, blockId = null) => {
-                setInsertAt(index);
-                setReplaceBlockId(blockId);
-                setModal('gallery');
-              }}
-              setToast={setToast}
-            />
-            <button
-              className="add-block"
-              onClick={() => {
-                setInsertAt(article.blocks.length);
-                setModal("add");
-              }}
-            >
-              <Plus size={15} />
-              添加内容
-            </button>
-            <div className="article-end-actions">
-              <button
-                className="text-link"
-                disabled={regenerating}
-                onClick={requestRegenerate}
-              >
-                {regenerating ? (
-                  <RefreshCw size={14} className="spin" />
-                ) : (
-                  <RefreshCw size={14} />
-                )}
-                重新生成
-              </button>
-              <button className="text-link" onClick={original}>
-                修改素材
-              </button>
-              {snapshot && (
-                <button
-                  className="text-link"
-                  onClick={() => {
-                    setArticle(snapshot);
-                    setSelected(snapshot.templateId);
-                    onSnapshotCleared?.();
-                  }}
-                >
-                  撤销重新生成
-                </button>
-              )}
-            </div>
-          </div>
-        </aside>
-        <main className="preview-pane">
-          <div className="preview-toolbar">
-            <div className="width-switch">
-              {[320, 375, 414].map((w) => (
-                <button
-                  className={previewWidth === w ? "on" : ""}
-                  onClick={() => setPreviewWidth(w)}
-                  key={w}
-                >
-                  {w}
-                </button>
-              ))}
-              <button
-                className={previewWidth === 720 ? "on" : ""}
-                onClick={() => setPreviewWidth(720)}
-              >
-                宽屏
-              </button>
-            </div>
-          </div>
-          {sideTab === 'ai' && aiEditor.candidate && !aiEditor.problem && <div className="ai-edit-preview-bar"><span>{aiPreview ? `${aiEditor.changes.length} 处改动 · 未应用` : '原稿'}</span><div><button className="text-link" onClick={() => aiEditor.setShowCandidate(value => !value)}>{aiEditor.showCandidate ? '看原稿' : '看方案'}</button><button className="preview-apply" disabled={Boolean(aiEditor.busy || aiEditor.problem)} onClick={aiEditor.apply}><Check size={13}/>应用</button></div></div>}
-          {layoutTrial && <div className="ai-edit-preview-bar layout-preview-bar"><span>{layoutTrial.design.name} · 待应用</span><div><button className="text-link" onClick={resetLayoutTrial}>取消</button><button className="preview-apply" onClick={applyLayoutTrial}><Check size={13}/>应用排版</button></div></div>}
-          <div className="phone-stage">
-            <div
-              className={
-                previewWidth === 720 ? "phone-frame wide" : "phone-frame"
-              }
-              style={{
-                width:
-                  previewWidth === 720 ? "min(722px,100%)" : previewWidth + 2,
-              }}
-            >
-              <div className="phone-account">
-                <input
-                  maxLength={64}
-                  value={account}
-                  onChange={(e) => {
-                    setAccount(e.target.value);
-                    setArticle((a) => ({
-                      ...a,
-                      settings: { ...a.settings, accountName: e.target.value },
-                    }));
-                  }}
-                  aria-label="公众号名称"
-                />
-                <span>
-                  {new Date().toLocaleDateString("zh-CN", {
-                    year: "numeric",
-                    month: "long",
-                    day: "numeric",
-                  })}
-                </span>
-              </div>
-              <iframe
-                ref={iframe}
-                title="文章实时预览"
-                sandbox="allow-same-origin"
-                style={{ width: previewWidth }}
-              />
-            </div>
-          </div>
+          />
         </main>
-        <aside className={`template-pane${sideTab === 'ai' ? ' ai-edit-pane' : ''}`}>
+        <aside id="workspace-tools" hidden={!toolsOpen} className={`template-pane${sideTab === 'ai' ? ' ai-edit-pane' : ''}`}>
+          <div className="tools-heading"><span>排版与 AI</span><button className="asset-remove" aria-label="关闭工具面板" onClick={() => setToolsOpen(false)}><X size={16}/></button></div>
           <div className="side-panel-tabs" role="tablist" aria-label="右侧工具">
             <button id="templates-tab" role="tab" aria-selected={sideTab === 'templates'} aria-controls="templates-panel" onClick={() => setSideTab('templates')}>模板</button>
             <button id="ai-edit-tab" role="tab" aria-selected={sideTab === 'ai'} aria-controls="ai-edit-panel" onClick={() => setSideTab('ai')}>AI 修改{aiEditor.references.length > 0 && <span>{aiEditor.references.length}</span>}</button>
           </div>
           <div className="side-panel-content" id="templates-panel" role="tabpanel" aria-labelledby="templates-tab" hidden={sideTab !== 'templates'}>
-          <React.Suspense fallback={null}><LayoutDesigner key={article.id} article={article} setArticle={setArticle} onTrial={candidate => { setLayoutTrial(candidate); if (candidate && window.matchMedia('(max-width: 1100px)').matches) setWorkspaceView('preview'); }} resetKey={layoutReset} disabled={library || regenerating || Boolean(aiEditor.busy)} setToast={setToast} /></React.Suspense>
+          <React.Suspense fallback={null}><LayoutDesigner key={article.id} article={article} setArticle={setArticle} onTrial={candidate => { setLayoutTrial(candidate); if (candidate && window.matchMedia('(max-width: 760px)').matches) setToolsOpen(false); }} resetKey={layoutReset} disabled={library || regenerating || Boolean(aiEditor.busy)} setToast={setToast} /></React.Suspense>
           <div className="recommend-label">
             <span>推荐模板</span>
           </div>
@@ -1451,7 +1237,7 @@ function Edit({
           <div className="template-current"><span>当前</span><strong>{article.layoutDesign?.name || template.name}</strong></div>
           </div>
           <div className="side-panel-content ai-edit-slot" id="ai-edit-panel" role="tabpanel" aria-labelledby="ai-edit-tab" hidden={sideTab !== 'ai'}>
-            <AIEditPanel editor={aiEditor} article={article} assets={assets} disabled={library || regenerating || Boolean(layoutTrial)} onLocate={key => locateContent(key, 'editor')} onCandidate={() => { if (window.matchMedia('(max-width: 1100px)').matches) setWorkspaceView('preview'); }}/>
+            <AIEditPanel editor={aiEditor} article={article} assets={assets} disabled={library || regenerating || Boolean(layoutTrial)} onLocate={key => locateContent(key)}/>
           </div>
         </aside>
       </div>
@@ -1633,8 +1419,7 @@ function Edit({
                   return placeImageAsset(asset, insertAt, replaceBlockId);
                 }} onDone={id => {
                   setModal(null);
-                  locateContent(`block:${id}`, 'preview');
-                  locateContent(`block:${id}`, 'editor');
+                  locateContent(`block:${id}`);
                 }}/> : <>
                 <div className="asset-gallery">
                   {[...assets.values()].map((asset) => (
@@ -1670,8 +1455,7 @@ function Edit({
                             return { ...a, blocks };
                           });
                         setModal(null);
-                        locateContent(`block:${id}`, 'preview');
-                        locateContent(`block:${id}`, 'editor');
+                        locateContent(`block:${id}`);
                       }}
                     >
                       <img src={asset.previewUrl || asset.url} alt="" />
@@ -1700,8 +1484,7 @@ function Edit({
                     setModal(null);
                     uploadImage(file, insertAt, blockId).then(id => {
                       if (!id) return;
-                      locateContent(`block:${id}`, 'preview');
-                      locateContent(`block:${id}`, 'editor');
+                      locateContent(`block:${id}`);
                     });
                   }}
                 />
@@ -1759,23 +1542,6 @@ function Edit({
                   </button>
                   <button className="publish-action" onClick={confirmRaw}>
                     仍然继续
-                  </button>
-                </div>
-              </>
-            ) : modal === "regen" ? (
-              <>
-                <span className="eyebrow">重新生成</span>
-                <h2>替换当前正文？</h2>
-                <p>重新生成会替换当前正文，当前编辑内容会保留为恢复点。</p>
-                <div className="modal-buttons">
-                  <button
-                    className="ghost-action"
-                    onClick={() => setModal(null)}
-                  >
-                    继续编辑
-                  </button>
-                  <button className="publish-action" onClick={confirmRegen}>
-                    确认重新生成
                   </button>
                 </div>
               </>

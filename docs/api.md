@@ -37,15 +37,15 @@ AI 生成、设计和编辑成功响应的 `meta` 均增加 `usage:{inputTokens,
 | POST | `/api/articles/edit` | 基于全文、引用和临时对话返回待确认的内容与排版修改方案 |
 | POST | `/api/articles/edit/attachments` | `multipart/form-data`，字段 `file`，解析 AI 修改附件并提取文档文字与内嵌图片 |
 
-`generate` 请求字段：`mode`、`topic`、`text`、`materials[]`、`assetIds[]`、`tone`、`targetLength`，可选 `templateId`（T01–T40，重新生成时保留选中模板）。未指定模板时，根据规范化后的内容推荐初始模板。AI 服务配置齐全时按 `AI_API_STYLE` 调用 OpenAI 兼容 Responses 或 Chat Completions 接口；`auto` 默认先尝试 Responses，不支持时回退 Chat Completions。未配置时响应使用带 `mockGenerated` 标记的本地示例内容。响应带 `warnings` 和 `meta`（提示词/Schema 版本、模型、耗时、重试状态）。
+`generate` 请求字段：`mode`、`topic`、`text`、`materials[]`、`assetIds[]`、`tone`、`targetLength`，可选 `templateId`（T01–T40，重新生成时保留选中模板）。未指定模板时，根据规范化后的内容推荐初始模板。AI 服务配置齐全时按 `AI_API_STYLE` 调用 OpenAI 兼容 Responses 或 Chat Completions 接口；`auto` 默认先尝试 Responses，不支持时回退 Chat Completions。未配置时响应使用带 `mockGenerated` 标记的本地示例内容。响应带 `meta`（提示词/Schema 版本、模型、耗时、重试状态）。
 
 `semantic-3` 提示词分别定义创作、润色和三种中文语气。事实与当前模式的保留要求优先于语气和长度，模板仅提供低优先级的块类型偏好，不提供主题或强制结构。服务端兼容 JSON 代码围栏、Markdown 正文、文字型段落和列表条目，保留加粗语义、去除 AI 视觉字段，整理标题层级与长段落；图片必须引用请求提供的 ID。原文排版不走此流程，继续在前端本地解析。
 
-生成后按规范化内容实测正文非空白 Unicode 字符数（含标点、小标题、清单、引用及出处，不含主标题、摘要、图片标题和图注），目标范围为 ±15%。润色核对原文数字、日期与引语；Markdown 列表编号不当作事实数字。结构校验失败、字数偏离或受保护片段缺失时，最多再调用一次模型；已有合法草稿时提交 `revision` 要求定向修正。优先选择受保护片段缺失更少、长度更接近要求的结果；纠正失败保留已有合法草稿并警告，始终不接纳结构无效的结果，不硬截断正文。格式仍无效时返回 `AI_INVALID_OUTPUT`。`meta.length` 返回 `{actual,target,min,max,within}`，`meta.protectedMissingCount` 返回需核对片段数；这些是部分规则检查，不能替代事实审核。
+生成后按规范化内容实测正文非空白 Unicode 字符数（含标点、小标题、清单、引用及出处，不含主标题、摘要、图片标题和图注），目标范围为 ±15%。润色核对原文数字、日期与引语；Markdown 列表编号不当作事实数字。结构校验失败、字数偏离或受保护片段缺失时，最多再调用一次模型；已有合法草稿时提交 `revision` 要求定向修正。优先选择受保护片段缺失更少、长度更接近要求的结果；纠正失败保留已有合法草稿，始终不接纳结构无效的结果，不硬截断正文。格式仍无效时返回 `AI_INVALID_OUTPUT`。`meta.length` 返回 `{actual,target,min,max,within}`，`meta.protectedMissingCount` 返回需核对片段数；这些是部分规则检查，不能替代事实审核。
 
-响应警告同时保存到可选的 `article.settings.generationWarnings`，供草稿恢复后继续展示；警告不参与正文、预览和复制。总生成/纠正预算为 180 秒，单次请求仍受 `AI_TIMEOUT_MS` 限制，客户端最多等待 190 秒；客户端取消会终止模型请求并停止后续纠正。无 AI 配置的本地示例明确提示未执行语气和目标长度，不返回真实生成的长度达标结论。
+生成与重新生成不返回或保存生成警告，编辑画布不展示字数偏差、图片补齐等生成提示栏；未安排的图片仍自动补到正文末尾。旧草稿中的历史警告不再展示。总生成/纠正预算为 180 秒，单次请求仍受 `AI_TIMEOUT_MS` 限制，客户端最多等待 190 秒；客户端取消会终止模型请求并停止后续纠正。无 AI 配置时保留本地示例标识，不返回真实生成的长度达标结论。
 
-客户端将成功生成时的输入单独保存在本地草稿 `generationInput`，不写入正文。AI 重新生成使用该输入、当前文章的模式/语气/目标长度、当前所选模板与正文实际引用的图片；新上传、替换或删除的图片不会退回首次提交的列表。原文排版重新解析原始输入并保留所选模板。生成期间正文或设置被修改时拒绝覆盖；成功替换后保存此前的文章快照，恢复时一并恢复模板、设置及生成警告。缺少原始输入的旧草稿需返回创作页补充素材。
+客户端将成功生成时的输入单独保存在本地草稿 `generationInput`，不写入正文。AI 重新生成使用该输入、当前文章的模式/语气/目标长度、当前所选模板与正文实际引用的图片；新上传、替换或删除的图片不会退回首次提交的列表。原文排版重新解析原始输入并保留所选模板。生成期间正文或设置被修改时拒绝覆盖；成功替换后保存此前的文章快照，恢复时一并恢复模板和设置。缺少原始输入的旧草稿需返回创作页补充素材。
 
 草稿内容块可选 `style` 保存 `fontSize`（12–40）、`align`（left/center/right/justify）、`lineHeight`（1.2–3）、`paragraphSpacing`（0–64px）、`indent`（0–4em）、`imageWidth`（20–100%）。文字 run 可选 `bold`、`underline`、`color`（原有语义颜色或六位十六进制颜色）及 `highlight`（六位十六进制颜色）。标题块可选 `runs` 保存局部格式，同时维护纯文字 `text`；旧草稿不需要迁移。手动样式在预览与复制中优先于模板默认值，AI 生成仍只提供语义内容。
 

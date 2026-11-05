@@ -14,7 +14,7 @@ const attachmentImages = attachment => attachment.kind === 'image' ? [attachment
 const withAttachmentPreviews = attachment => attachment.kind === 'image'
   ? { ...attachment, previewUrl: attachment.blob ? URL.createObjectURL(attachment.blob) : attachment.cacheUrl }
   : { ...attachment, images: (attachment.images || []).map(image => ({ ...image, previewUrl: image.blob ? URL.createObjectURL(image.blob) : image.cacheUrl })) };
-export function useAIEdit({ article, setArticle, assets, disabled, onApplied, setToast }) {
+export function useAIEdit({ article, setArticle, assets, disabled, onApplied, onCandidate, setToast }) {
   const [references, setReferences] = useState([]);
   const [messages, setMessages] = useState([]);
   const [prompt, setPrompt] = useState('');
@@ -262,7 +262,7 @@ export function useAIEdit({ article, setArticle, assets, disabled, onApplied, se
   return { references, messages, prompt, setPrompt, busy, error, attachments, attachmentsReady, attachmentBusy, addAttachments, removeAttachment, candidate, problem: resolved.problem, changes, invalidReferences, showCandidate, setShowCandidate, previewArticle: showCandidate && !disabled ? resolved.article : null, addReference, removeReference: referenceId => setReferences(previous => previous.filter(reference => reference.id !== referenceId)), submit, stop, discard, apply };
 }
 
-export function AIEditPanel({ editor, article, assets, disabled, onLocate, onCandidate }) {
+export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
   const end = useRef(null);
   const fileInput = useRef(null);
   const lastInstruction = editor.messages.findLast(message => message.role === 'user')?.text;

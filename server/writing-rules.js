@@ -68,10 +68,3 @@ export function preferDraft(next, previous) {
   if (next.length.within !== previous.length.within) return next.length.within;
   return Math.abs(next.length.actual - next.length.target) < Math.abs(previous.length.actual - previous.length.target);
 }
-
-export function draftWarnings(report, mode) {
-  const warnings = [];
-  if (report.missing.length) warnings.push(`润色后仍有原文数字、日期或引语需核对：${report.missing.slice(0, 5).map(part => part.length > 60 ? `${part.slice(0, 60)}…` : part).join('、')}${report.missing.length > 5 ? `等${report.missing.length}处` : ''}`);
-  if (!report.length.within) warnings.push(`正文${report.length.actual}字，未达到目标范围${report.length.min}–${report.length.max}字；${mode === 'polish' ? '润色优先保留原文事实与重要细节，可手动调整目标或内容' : '已保留可用正文，可手动调整内容或重新生成'}`);
-  return warnings;
-}
