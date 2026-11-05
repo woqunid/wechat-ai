@@ -22,6 +22,7 @@ import { renderArticle } from '../src/renderer.js';
 import { layoutInstructions } from './layout-rules.js';
 import { AIEditRequestSchema, AIEditResponseSchema, AI_EDIT_TIMEOUT_MS, buildAIEdit, describeAIEdit, isImageBlock } from '../src/ai-edit.js';
 import { editInstructions } from './edit-rules.js';
+import { normalizeUsage, usageMeta } from './ai-usage.js';
 
 dotenv.config();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -45,7 +46,7 @@ app.use((req, res, next) => {
   const requestId = crypto.randomUUID();
   res.setHeader('X-Request-Id', requestId);
   const start = Date.now();
-  res.once('finish', () => console.info(JSON.stringify({ requestId, route: req.route?.path || req.path, method: req.method, status: res.statusCode, durationMs: Date.now() - start })));
+  res.once('finish', () => console.info(JSON.stringify({ requestId, route: req.route?.path || req.path, method: req.method, status: res.statusCode, durationMs: Date.now() - start, ...(res.locals.modelUsages ? usageMeta(res.locals.modelUsages) : {}) })));
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -291,7 +292,7 @@ app.delete('/api/assets/:id', (req, res) => {
   res.status(204).end();
 });
 
-const outputText = data => data.output_text || data.choices?.[0]?.message?.content || data.output?.flatMap(item => item.content || []).find(item => item.type === 'output_text')?.text || '';
+const modelResult = data => ({ text: data.output_text || data.choices?.[0]?.message?.content || data.output?.flatMap(item => item.content || []).find(item => item.type === 'output_text')?.text || '', usage: normalizeUsage(data.usage) });
 async function requestModel({ config, system, source, topic, mode, tone, targetLength, assetIds, template, signal, previousError, revision, inputData }) {
   const base = config.baseUrl;
   const style = process.env.AI_API_STYLE || 'auto';
@@ -309,22 +310,22 @@ async function requestModel({ config, system, source, topic, mode, tone, targetL
     const kind = style;
     const response = await request(kind, kind === 'responses' ? responsesBody : chatBody);
     if (!response.ok) throw Object.assign(new Error(`upstream ${response.status}`), { status: response.status });
-    return outputText(await response.json());
+    return modelResult(await response.json());
   }
   if (style === 'auto' && resolvedApiStyle === 'chat') {
     const response = await request('chat', chatBody);
     if (!response.ok) throw Object.assign(new Error(`upstream ${response.status}`), { status: response.status });
-    return outputText(await response.json());
+    return modelResult(await response.json());
   }
   const response = await request('responses', responsesBody);
-  if (response.ok) { resolvedApiStyles.set(cacheKey, 'responses'); return outputText(await response.json()); }
+  if (response.ok) { resolvedApiStyles.set(cacheKey, 'responses'); return modelResult(await response.json()); }
   const bodyText = await response.text();
   const unsupported = [400, 404, 405, 422].includes(response.status) && (/unsupported|not found|unknown|not support/i.test(bodyText) || response.status === 404 || response.status === 405);
   if (!unsupported) throw Object.assign(new Error(`upstream ${response.status}`), { status: response.status });
   const chatResponse = await request('chat', chatBody);
   if (!chatResponse.ok) throw Object.assign(new Error(`upstream ${chatResponse.status}`), { status: chatResponse.status });
   resolvedApiStyles.set(cacheKey, 'chat');
-  return outputText(await chatResponse.json());
+  return modelResult(await chatResponse.json());
 }
 function mockDraft(title, source, assetIds) {
   const fallback = [
@@ -373,6 +374,7 @@ app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concu
   let draft = null;
   let model = 'local-mock';
   let retried = false;
+  const usages = res.locals.modelUsages = [];
   let lastError;
   let report;
   const protectedParts = mode === 'polish' ? protectedFragments(source) : [];
@@ -380,9 +382,11 @@ app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concu
     for (let attempt = 0; attempt < 2; attempt++) {
       if (signal.aborted) break;
       retried = attempt > 0;
+      usages.push(normalizeUsage());
       try {
-        const raw = await requestModel({ config: aiConfig, system: generationInstructions({ mode, tone, targetLength }), source, topic, mode, tone, targetLength, assetIds, template: templates.find(template => template.id === templateId), signal, previousError: lastError?.message, revision: draft ? { draft, issues: report.issues, actualBodyChars: report.length.actual } : undefined });
-        const next = normalizeDraft(raw, assetIds);
+        const output = await requestModel({ config: aiConfig, system: generationInstructions({ mode, tone, targetLength }), source, topic, mode, tone, targetLength, assetIds, template: templates.find(template => template.id === templateId), signal, previousError: lastError?.message, revision: draft ? { draft, issues: report.issues, actualBodyChars: report.length.actual } : undefined });
+        usages[attempt] = output.usage;
+        const next = normalizeDraft(output.text, assetIds);
         const nextReport = inspectDraft(next, { targetLength, protectedParts });
         if (preferDraft(nextReport, report)) { draft = next; report = nextReport; }
         model = aiConfig.model;
@@ -418,7 +422,7 @@ app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concu
   }
   if (!templateId) parsed.data.templateId = recommendTemplates(parsed.data)[0]?.id || 'T01';
   parsed.data.settings.generationWarnings = warnings;
-  res.json({ article: parsed.data, warnings, meta: { promptVersion: useAI ? 'semantic-3' : 'mock-2', schemaVersion: 1, model, latencyMs: Date.now() - startedAt, retried, ...(report ? { length: report.length, protectedMissingCount: report.missing.length } : {}) } });
+  res.json({ article: parsed.data, warnings, meta: { promptVersion: useAI ? 'semantic-3' : 'mock-2', schemaVersion: 1, model, latencyMs: Date.now() - startedAt, retried, ...usageMeta(usages), ...(report ? { length: report.length, protectedMissingCount: report.missing.length } : {}) } });
 });
 
 app.post('/api/articles/design', rateLimit(10, 'RATE_DESIGN_PER_MIN'), concurrentGenerationLimit, async (req, res) => {
@@ -438,15 +442,18 @@ app.post('/api/articles/design', rateLimit(10, 'RATE_DESIGN_PER_MIN'), concurren
   try { config = await resolveAIConfig(); }
   catch (error) { return res.status(error.status || 502).json({ error: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '无法连接 AI 服务' } }); }
   if (!config.baseUrl || !config.apiKey || !config.model) return res.status(400).json({ error: { code: 'AI_NOT_CONFIGURED', message: '请先在顶部设置中配置 AI 服务' } });
+  const usages = res.locals.modelUsages = [];
   let lastError;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (signal.aborted) break;
+    usages.push(normalizeUsage());
     try {
       const output = await requestModel({ config, system: layoutInstructions, signal, inputData: { mode, designPrompt: mode === 'prompt' ? prompt.trim() : undefined, content, previousValidationError: lastError?.message.slice(0, 800) } });
-      const value = JSON.parse(output.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/, '$1'));
+      usages[attempt] = output.usage;
+      const value = JSON.parse(output.text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/, '$1'));
       const design = validateLayoutDesign(value, article);
       renderArticle({ ...clearArticleStyles(article), layoutDesign: design }, templates[0]);
-      if (!controller.signal.aborted) return res.json({ design, meta: { model: config.model, retried: attempt > 0 } });
+      if (!controller.signal.aborted) return res.json({ design, meta: { model: config.model, retried: attempt > 0, ...usageMeta(usages) } });
       return;
     } catch (error) {
       if (controller.signal.aborted) return;
@@ -480,17 +487,20 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
       return { assetId, width: metadata?.width || null, height: metadata?.height || null };
     } catch { return { assetId, width: null, height: null }; }
   }));
-  const input = { article: { mode: article.mode, title: article.title, summary: article.summary, blocks: article.blocks, templateId: article.templateId, layoutDesign: article.layoutDesign, tone: article.settings.tone }, prompt, references, conversation: messages, imageDimensions, template: templates.find(template => template.id === article.templateId) };
+  const input = { template: templates.find(template => template.id === article.templateId), article: { mode: article.mode, title: article.title, summary: article.summary, blocks: article.blocks, templateId: article.templateId, layoutDesign: article.layoutDesign, tone: article.settings.tone }, imageDimensions, conversation: messages, prompt, references };
   if (JSON.stringify(input).length > 450000) return res.status(400).json({ error: { code: 'CONTENT_TOO_LONG', message: '全文及引用内容过长，请减少引用后重试；正文不会被截断提交' } });
+  const usages = res.locals.modelUsages = [];
   let lastError;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (signal.aborted) break;
+    usages.push(normalizeUsage());
     try {
       const output = await requestModel({ config, system: editInstructions, signal, inputData: { ...input, previousValidationError: lastError?.message.slice(0, 1200) } });
-      const result = AIEditResponseSchema.parse(JSON.parse(output.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/, '$1')));
+      usages[attempt] = output.usage;
+      const result = AIEditResponseSchema.parse(JSON.parse(output.text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/, '$1')));
       const candidate = buildAIEdit(article, result.operations);
       renderArticle(candidate, templates.find(template => template.id === candidate.templateId));
-      if (!controller.signal.aborted) return res.json({ ...result, changes: describeAIEdit(article, candidate), meta: { model: config.model, retried: attempt > 0 } });
+      if (!controller.signal.aborted) return res.json({ ...result, changes: describeAIEdit(article, candidate), meta: { model: config.model, retried: attempt > 0, ...usageMeta(usages) } });
       return;
     } catch (error) {
       if (controller.signal.aborted) return;
