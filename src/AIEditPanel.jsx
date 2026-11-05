@@ -277,6 +277,21 @@ export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
   const lastUserMessage = editor.messages.findLast(message => message.role === 'user');
   const lastInstruction = lastUserMessage?.text;
   useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }); }, [editor.messages, editor.busy]);
+  const pasteAttachments = event => {
+    const clipboard = event.clipboardData;
+    const files = [...clipboard.files];
+    if (!files.length) for (const item of clipboard.items) {
+      if (item.kind === 'file') { const file = item.getAsFile(); if (file) files.push(file); }
+    }
+    if (!files.length) return;
+    if (!clipboard.getData('text/plain')) event.preventDefault();
+    const extensions = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+    editor.addAttachments(files.map((file, index) => {
+      const extension = extensions[file.type];
+      return extension && !/\.(jpe?g|png|webp)$/i.test(file.name)
+        ? new File([file], `粘贴图片-${index + 1}.${extension}`, { type: file.type, lastModified: file.lastModified }) : file;
+    }));
+  };
   return <section className="ai-edit-panel" aria-label="AI修改对话">
     <div className="ai-edit-messages" role="log" aria-label="修改对话记录" aria-live="polite" aria-relevant="additions text">
       {!editor.messages.length && <div className="ai-edit-empty"><span className="ai-empty-icon"><Sparkles size={23}/></span><h3>让文章更进一步</h3><p>调整文字、图片或排版。</p><div className="ai-prompt-suggestions">{['精简表达，保留关键信息', '优化开头，更快切入主题', '统一段落间距与文字样式'].map(text => <button type="button" key={text} disabled={disabled} onClick={() => editor.setPrompt(text)}>{text}<ArrowUp size={13}/></button>)}</div></div>}
@@ -291,7 +306,7 @@ export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
     </div>}
     {disabled && <p className="ai-edit-error" role="status">请先结束当前生成或排版预览。</p>}
     {editor.error && <div className="ai-edit-error" role="alert"><p>{editor.error}</p>{lastInstruction && !editor.prompt && <button className="text-link" type="button" onClick={() => { editor.setPrompt(lastInstruction); editor.restoreReferences(lastUserMessage.retryReferences || []); }}>填回上次要求</button>}</div>}
-    <form className="ai-edit-composer" onSubmit={editor.submit}>
+    <form className="ai-edit-composer" onSubmit={editor.submit} onPaste={pasteAttachments}>
       {editor.references.length > 0 && <div className="ai-edit-references" aria-label="关注内容引用">{editor.references.map(reference => {
         const valid = validAIReference(article, reference);
         const asset = assets.get(reference.assetId);
