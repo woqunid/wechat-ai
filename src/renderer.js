@@ -183,7 +183,7 @@ const imageUrl = (asset, mode) => {
   return candidates.find(url => typeof url === 'string' && (/^https:\/\//i.test(url) || (mode === 'preview' && /^(blob:|data:image\/(?:png|jpeg|webp);base64,|\/uploads\/)/i.test(url)))) || '';
 };
 
-function renderImage(block, t, assets, mode, index) {
+function renderImage(block, t, assets, mode) {
   const { primary, accent, tint, border, radius, textMuted, onPrimary } = t.tokens;
   const style = t.layout.cardStyle;
   const url = imageUrl(assets.get(block.assetId), mode);
@@ -191,37 +191,40 @@ function renderImage(block, t, assets, mode, index) {
   const image = url
     ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(block.caption || block.title || '文章图片')}" style="display:block;width:100%;max-width:100%;height:auto;border-radius:${corner}px;" />`
     : `<p style="margin:0;padding:30px 10px;background-color:${tint};text-align:center;color:${textMuted};font-size:13px;line-height:1.7;">[图片待补充：${escapeHtml(block.caption || block.title || '请重新上传图片')}]</p>`;
-  const title = (css = '') => block.title ? `<p style="font-weight:700;line-height:1.7;color:${primary};margin:0 0 10px;${css}">${escapeHtml(block.title)}</p>` : '';
-  const caption = (css = '') => block.caption ? `<p style="font-size:13px;line-height:1.8;color:${textMuted};margin:10px 0 0;white-space:pre-wrap;${css}">${escapeHtml(block.caption)}</p>` : '';
-  const figure = (css = '') => label(`图 ${number(index)}`, t, `font-size:10px;letter-spacing:1px;margin:0 0 10px;${css}`);
+  const hasTitle = Boolean(block.title?.trim());
+  const hasCaption = Boolean(block.caption?.trim());
+  const hasDescription = hasTitle || hasCaption;
+  const title = (css = '') => hasTitle ? `<p style="font-weight:700;line-height:1.7;color:${primary};margin:0 0 10px;${css}">${escapeHtml(block.title)}</p>` : '';
+  const caption = (css = '') => hasCaption ? `<p style="font-size:13px;line-height:1.8;color:${textMuted};margin:10px 0 0;white-space:pre-wrap;${css}">${escapeHtml(block.caption)}</p>` : '';
   let content;
   let css = '';
   switch (style) {
     case 'bordered':
       css = `border:1px solid ${border};padding:8px;`;
-      content = `${figure('text-align:right;')}${title()}${image}${caption('text-align:center;')}`; break;
+      content = `${title()}${image}${caption('text-align:center;')}`; break;
     case 'rounded':
       css = `background-color:#FFFFFF;border:1px solid ${border};border-radius:${Math.max(radius, 14)}px;padding:10px;`;
-      content = `${image}<section style="padding:12px 4px 2px;">${title()}${caption('margin-top:0;')}</section>`; break;
+      content = `${image}${hasDescription ? `<section style="padding:12px 4px 2px;">${title()}${caption('margin-top:0;')}</section>` : ''}`; break;
     case 'story':
-      content = `${image}<section style="background-color:${tint};border-left:3px solid ${accent};padding:16px 14px;">${figure()}${title()}${caption('margin-top:0;')}</section>`; break;
+      content = `${image}${hasDescription ? `<section style="background-color:${tint};border-left:3px solid ${accent};padding:16px 14px;">${title()}${caption('margin-top:0;')}</section>` : ''}`; break;
     case 'info':
       css = `border:1px solid ${border};`;
-      content = `<section style="padding:10px 12px;background-color:${primary};">${block.title ? title(`color:${onPrimary};margin:0;`) : figure(`color:${onPrimary};margin:0;`)}</section>${image}${block.caption ? `<section style="padding:12px;background-color:${tint};">${caption('margin:0;')}</section>` : ''}`; break;
+      content = `${hasTitle ? `<section style="padding:10px 12px;background-color:${primary};">${title(`color:${onPrimary};margin:0;`)}</section>` : ''}${image}${hasCaption ? `<section style="padding:12px;background-color:${tint};">${caption('margin:0;')}</section>` : ''}`; break;
     case 'image-first':
-      content = `${image}<section style="margin-top:14px;border-left:2px solid ${accent};padding-left:12px;">${figure()}${title()}${caption('margin-top:0;')}</section>`; break;
+      content = `${image}${hasDescription ? `<section style="margin-top:14px;border-left:2px solid ${accent};padding-left:12px;">${title()}${caption('margin-top:0;')}</section>` : ''}`; break;
     case 'compact':
       content = `${title('font-size:14px;')}${image}${caption(`text-align:right;border-bottom:1px solid ${border};padding-bottom:10px;`)}`; break;
     case 'flow':
       css = `border-left:2px solid ${border};padding-left:12px;`;
-      content = `${figure(`display:inline-block;background-color:${primary};color:${onPrimary};padding:3px 8px;`)}${title()}${image}${caption()}`; break;
+      content = `${title()}${image}${caption()}`; break;
     case 'polaroid':
       css = `padding:8px 8px 18px;background-color:#FFFFFF;border:1px solid ${border};`;
-      content = `${image}<section style="padding:14px 6px 0;text-align:center;">${title(`${headingFont(t)}font-size:16px;`)}${caption('margin-top:0;')}</section>`; break;
+      content = `${image}${hasDescription ? `<section style="padding:14px 6px 0;text-align:center;">${title(`${headingFont(t)}font-size:16px;`)}${caption('margin-top:0;')}</section>` : ''}`; break;
     case 'film':
-      content = `<section style="background-color:${primary};padding:8px;">${label('•　•　•　•　•　•', t, `color:${onPrimary};text-align:center;font-size:8px;margin-bottom:8px;`)}${image}${label('•　•　•　•　•　•', t, `color:${onPrimary};text-align:center;font-size:8px;margin:8px 0 0;`)}</section><section style="padding-top:14px;">${title()}${caption('margin-top:0;')}</section>`; break;
+      content = `<section style="background-color:${primary};padding:8px;">${label('•　•　•　•　•　•', t, `color:${onPrimary};text-align:center;font-size:8px;margin-bottom:8px;`)}${image}${label('•　•　•　•　•　•', t, `color:${onPrimary};text-align:center;font-size:8px;margin:8px 0 0;`)}</section>${hasDescription ? `<section style="padding-top:14px;">${title()}${caption('margin-top:0;')}</section>` : ''}`; break;
     case 'folio':
-      content = `${figure(`border-top:1px solid ${accent};padding-top:10px;`)}${image}<section style="padding:14px 0;border-bottom:1px solid ${border};">${title(`${headingFont(t)}`)}${caption('margin-top:0;')}</section>`; break;
+      css = `border-top:1px solid ${accent};padding-top:10px;`;
+      content = `${image}${hasDescription ? `<section style="padding:14px 0;border-bottom:1px solid ${border};">${title(`${headingFont(t)}`)}${caption('margin-top:0;')}</section>` : ''}`; break;
     default:
       content = `${title()}${image}${caption('text-align:center;')}`;
   }
@@ -288,7 +291,7 @@ function renderBlock(block, t, assets, mode, primaryLevel, context) {
   if (block.type === 'quote') return renderQuote(block, t);
   if (block.type === 'list') return renderList(block, t);
   if (block.type === 'divider') return renderDivider(t);
-  if (block.type === 'image' || block.type === 'imageCard') return renderImage(block, t, assets, mode, ++context.imageIndex);
+  if (block.type === 'image' || block.type === 'imageCard') return renderImage(block, t, assets, mode);
   if (block.type === 'callout') {
     const { primary, accent, tint, border, onPrimary, radius } = t.tokens;
     const style = t.layout.calloutStyle;
@@ -378,7 +381,7 @@ export function renderArticle(article, template, assets = new Map(), opts = {}) 
   const anchor = (html, key) => interactive && html ? html.replace(/^<([a-z]+)(?=[\s>])/i, `<$1 data-preview-key="${escapeHtml(key)}"`) : html;
   const primaryLevel = article.blocks.some(block => block.type === 'heading' && block.level === 1) ? 1 : 2;
   const headings = article.blocks.filter(block => block.type === 'heading' && block.level === primaryLevel);
-  const context = { headingIndex: 0, paragraphIndex: 0, imageIndex: 0 };
+  const context = { headingIndex: 0, paragraphIndex: 0 };
   const inner = article.blocks.map(block => {
     if (block.type === 'heading' && block.level === primaryLevel) context.headingIndex++;
     return anchor(renderBlock(block, template, assets, mode, primaryLevel, context), `block:${block.id}`);

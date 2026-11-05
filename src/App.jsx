@@ -1333,7 +1333,7 @@ function Edit({
     catch (error) { URL.revokeObjectURL(stored.previewUrl); throw error; }
     setAssets(current => new Map(current).set(stored.id, stored));
   };
-  const placeImageAsset = (asset, index, blockId, beforeId, caption = '') => {
+  const placeImageAsset = (asset, index, blockId, beforeId) => {
     const current = lastArticle.current;
     if (!current || current.id !== article.id) throw new Error('文章已切换，请重新插入图片');
     if (!blockId && current.blocks.length >= 120) throw new Error('段落数量已达上限，请先合并部分内容');
@@ -1346,7 +1346,7 @@ function Edit({
       if (a.blocks.length >= 120 || a.blocks.filter(block => block.type === 'image' || block.type === 'imageCard').length >= 10) return a;
       const blocks = [...a.blocks];
       const anchor = beforeId === null ? blocks.length : blocks.findIndex(block => block.id === beforeId);
-      blocks.splice(anchor >= 0 ? anchor : Math.min(index, blocks.length), 0, { id, type: 'imageCard', assetId: asset.id, caption });
+      blocks.splice(anchor >= 0 ? anchor : Math.min(index, blocks.length), 0, { id, type: 'imageCard', assetId: asset.id, caption: '' });
       return { ...a, blocks, updatedAt: new Date().toISOString() };
     });
     setReplaceBlockId(null);
@@ -1381,7 +1381,7 @@ function Edit({
         blob: file,
       };
       await registerImageAsset(asset);
-      return placeImageAsset(asset, index, blockId, beforeId, file.name);
+      return placeImageAsset(asset, index, blockId, beforeId);
     } catch (e) {
       setToast(e.message);
     }

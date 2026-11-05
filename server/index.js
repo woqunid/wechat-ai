@@ -331,7 +331,7 @@ function mockDraft(title, source, assetIds) {
     { id: uid('b'), type: 'heading', level: 1, text: '把重点整理清楚' },
     ...fallback.slice(2).map(text => ({ id: uid('b'), type: 'paragraph', runs: [{ text }] }))
   ];
-  for (const assetId of assetIds) blocks.push({ id: uid('b'), type: 'imageCard', assetId, caption: '图片说明' });
+  for (const assetId of assetIds) blocks.push({ id: uid('b'), type: 'imageCard', assetId, caption: '' });
   return { title, summary: `围绕${title}整理的编辑参考摘要`, blocks };
 }
 
@@ -405,7 +405,7 @@ app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concu
   const warnings = useAI ? draftWarnings(report, mode) : ['当前使用本地示例内容，语气与目标长度未执行；配置 AI 服务后生效'];
   const referenced = new Set(parsed.data.blocks.filter(block => block.type === 'image' || block.type === 'imageCard').map(block => block.assetId));
   for (const assetId of assetIds) if (!referenced.has(assetId)) {
-    parsed.data.blocks.push({ id: uid('b'), type: 'imageCard', assetId, caption: '图片说明' });
+    parsed.data.blocks.push({ id: uid('b'), type: 'imageCard', assetId, caption: '' });
     warnings.push('已将未安排位置的图片添加到文章末尾');
   }
   if (!templateId) parsed.data.templateId = recommendTemplates(parsed.data)[0]?.id || 'T01';
