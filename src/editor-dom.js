@@ -1,4 +1,16 @@
-import { BlockStyleSchema, uid } from './core.js';
+import { articleField, BlockStyleSchema, blockText, uid } from './core.js';
+
+export const editorKey = id => id === '$title' || id === '$summary' ? id.slice(1) : `block:${id}`;
+export const editorBlocks = article => [articleField(article, 'title'), articleField(article, 'summary'), ...article.blocks];
+export function editorContent(blocks) {
+  const fields = {};
+  for (const field of ['title', 'summary']) {
+    const block = blocks.find(block => block.field === field);
+    fields[field] = block ? blockText(block) : '';
+    fields[`${field}Format`] = block ? { ...(block.style ? { style: block.style } : {}), runs: block.runs || [{ text: fields[field] }] } : undefined;
+  }
+  return { ...fields, blocks: blocks.filter(block => !block.field) };
+}
 
 export const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const palette = { red: '#dc2626', orange: '#ea580c', green: '#16a34a' };
@@ -29,9 +41,9 @@ export function editorHtml(blocks, assets, template) {
   return blocks.map(block => {
     const style = BlockStyleSchema.safeParse(block.style || {}).data || {};
     const css = `${style.fontSize ? `font-size:${style.fontSize}px;` : ''}${style.align ? `text-align:${style.align};` : ''}${style.lineHeight ? `line-height:${style.lineHeight};` : ''}${style.paragraphSpacing !== undefined ? `margin-bottom:${style.paragraphSpacing}px;` : ''}${style.indent !== undefined ? `text-indent:${style.indent}em;` : ''}`;
-    const attrs = `data-block-id="${escapeHtml(block.id)}" data-block-type="${block.type}" data-editor-key="block:${escapeHtml(block.id)}" data-block-style="${escapeHtml(JSON.stringify(style))}" style="${css}"`;
+    const attrs = `data-block-id="${escapeHtml(block.id)}" data-block-type="${block.type}" data-editor-key="${escapeHtml(editorKey(block.id))}"${block.field ? ` data-article-field="${block.field}" data-placeholder="${block.field === 'title' ? '输入文章标题' : '添加摘要（可选）'}"` : ''} data-block-style="${escapeHtml(JSON.stringify(style))}" style="${css}"`;
     if (block.type === 'heading') {
-      const tag = block.level === 1 ? 'h2' : 'h3';
+      const tag = block.field === 'title' ? 'h1' : block.level === 1 ? 'h2' : 'h3';
       return `<${tag} ${attrs}>${runHtml(block.runs || [{ text: block.text }], template)}</${tag}>`;
     }
     if (block.type === 'list') {
@@ -104,9 +116,9 @@ export function readEditorBlocks(root, previous = [], assets = new Map()) {
     if (node.dataset) {
       node.dataset.blockId = id;
       node.dataset.blockType = type;
-      node.dataset.editorKey = `block:${id}`;
+      node.dataset.editorKey = editorKey(id);
     }
-    result.push({ id, type, ...(style && Object.keys(style).length ? { style } : {}), ...fields });
+    result.push({ id, type, ...(old?.field ? { field: old.field } : {}), ...(style && Object.keys(style).length ? { style } : {}), ...fields });
   };
   const visit = parent => {
     let inlineNodes = [];
@@ -137,7 +149,8 @@ export function readEditorBlocks(root, previous = [], assets = new Map()) {
         push(node, old?.type === 'image' ? 'image' : 'imageCard', { assetId, ...(old?.title ? { title: old.title } : {}), caption: node.querySelector('figcaption')?.textContent || '' });
       } else if (node.tagName === 'HR') push(node, 'divider', {});
       else if (/^H[1-6]$/.test(node.tagName)) {
-        const runs = compactRuns(readRuns(node));
+        const empty = node.childNodes.length === 1 && node.firstChild.nodeName === 'BR';
+        const runs = empty ? [{ text: '' }] : compactRuns(readRuns(node));
         push(node, 'heading', { level: ['H1', 'H2'].includes(node.tagName) ? 1 : 2, text: runs.map(run => run.text).join(''), runs });
       } else if (node.tagName === 'UL' || node.tagName === 'OL') {
         const items = Array.from(node.children).filter(child => child.tagName === 'LI').map(child => compactRuns(readRuns(child)));

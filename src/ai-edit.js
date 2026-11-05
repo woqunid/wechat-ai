@@ -129,6 +129,7 @@ export function mergeAIEdit(base, candidate, current) {
   for (const field of ['title', 'summary']) if (base[field] !== candidate[field]) {
     if (base[field] !== current[field]) conflict();
     merged[field] = candidate[field];
+    if (merged[`${field}Format`]) delete merged[`${field}Format`].runs;
   }
   const before = new Map(base.blocks.map(block => [block.id, block]));
   const after = new Map(candidate.blocks.map(block => [block.id, block]));

@@ -57,7 +57,8 @@ export function layoutSource(article) {
 export const layoutSignature = article => JSON.stringify(layoutSource(article));
 export function clearArticleStyles(article) {
   const runs = values => values.map(run => ({ text: run.text }));
-  return { ...article, blocks: article.blocks.map(block => {
+  const { titleFormat, summaryFormat, ...plain } = article;
+  return { ...plain, blocks: article.blocks.map(block => {
     const { style, ...content } = block;
     if (block.runs) content.runs = runs(block.runs);
     if (block.items) content.items = block.items.map(runs);

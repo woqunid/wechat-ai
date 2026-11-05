@@ -1,4 +1,4 @@
-import { BlockStyleSchema, blockText } from './core.js';
+import { articleField, BlockStyleSchema, blockText } from './core.js';
 import { renderLayoutArticle } from './layout-renderer.js';
 
 const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -18,7 +18,7 @@ const textStyle = block => {
   return `${style.fontSize ? `font-size:${style.fontSize}px;` : ''}${style.align ? `text-align:${style.align};` : ''}${style.lineHeight ? `line-height:${style.lineHeight};` : ''}${style.indent !== undefined ? `text-indent:${style.indent}em;` : ''}`;
 };
 
-function textRuns(runs = [], t, inverse = false) {
+function textRuns(runs = [], t, inverse = false, decorate = true) {
   const { primary, accent, tint, onPrimary } = t.tokens;
   const colors = { primary, accent, red: '#A6372C', orange: '#9E4D20', green: '#276143' };
   return runs.map(run => {
@@ -26,7 +26,7 @@ function textRuns(runs = [], t, inverse = false) {
     let css = '';
     if (run.bold) {
       css += 'font-weight:700;';
-      if (!inverse) css += {
+      if (!inverse && decorate) css += {
         underline: `border-bottom:2px solid ${accent};padding-bottom:1px;`,
         fill: `background-color:${tint};color:${primary};padding:1px 3px;`,
         color: `color:${primary};`,
@@ -47,7 +47,8 @@ function renderHeader(article, t) {
   const { primary, accent, tint, onPrimary, border, highlight = onPrimary } = t.tokens;
   const size = article.title.length > 48 ? 23 : article.title.length > 32 ? 25 : t.tokens.titleSize || 28;
   const titleCss = `${base(t)}${headingFont(t)}font-size:${size}px;line-height:1.5;font-weight:800;letter-spacing:0.5px;margin:0;`;
-  const title = (extra = '') => `<p style="${titleCss}${extra}">${escapeHtml(article.title)}</p>`;
+  const field = articleField(article, 'title');
+  const title = (extra = '') => `<p style="${titleCss}${extra}${textStyle(field)}${field.style?.paragraphSpacing !== undefined ? `margin-bottom:${field.style.paragraphSpacing}px;` : ''}">${textRuns(field.runs, t, false, false)}</p>`;
   const kicker = (extra = '') => label(t.layout.headerLabel, t, extra);
   const rule = (color = accent, width = '100%', extra = '') => `<p style="margin:16px 0 0;border-top:1px solid ${color};width:${width};font-size:1px;line-height:1;${extra}">&nbsp;</p>`;
   const panel = (content, css) => `<section style="${css}">${content}</section>`;
@@ -139,7 +140,8 @@ function renderHeader(article, t) {
   return `<section style="margin:0 0 26px;">${content}</section>`;
 }
 
-function renderSummary(summary, t) {
+function renderSummary(article, t) {
+  const summary = article.summary;
   if (!summary?.trim()) return '';
   const { primary, accent, tint, onPrimary, border } = t.tokens;
   const style = t.layout.summaryStyle;
@@ -150,7 +152,8 @@ function renderSummary(summary, t) {
     center: `text-align:center;padding:10px 12px 18px;border-bottom:1px solid ${border};`,
     note: `background-color:${tint};border-top:2px solid ${accent};border-bottom:1px dashed ${border};padding:16px;`,
   };
-  return `<section style="${base(t)}margin:0 0 28px;${styles[style] || styles.rule}">${label('导读', t, `margin:0 0 7px;${style === 'dark' ? `color:${onPrimary};` : ''}`)}<p style="font-size:15px;line-height:1.9;margin:0;white-space:pre-wrap;">${escapeHtml(summary)}</p></section>`;
+  const field = articleField(article, 'summary');
+  return `<section style="${base(t)}margin:0 0 ${spacing(field, 28)}px;${styles[style] || styles.rule}">${label('导读', t, `margin:0 0 7px;${style === 'dark' ? `color:${onPrimary};` : ''}`)}<p style="font-size:15px;line-height:1.9;margin:0;white-space:pre-wrap;${textStyle(field)}">${textRuns(field.runs, t, style === 'dark', false)}</p></section>`;
 }
 
 const hasChapterNumber = text => /^(?:第[一二三四五六七八九十百零〇\d]+[章节篇部]|[一二三四五六七八九十]+[、．.]|\d{1,2}[、．](?!\d)|\d{1,2}\.(?:\s|(?=[^\d]))|[（(][一二三四五六七八九十\d]{1,3}[)）])/.test(text.trim());
@@ -388,7 +391,7 @@ export function renderArticle(article, template, assets = new Map(), opts = {}) 
     return anchor(renderBlock(block, template, assets, mode, primaryLevel, context), `block:${block.id}`);
   }).join('');
   const customHtml = article.layoutDesign ? renderLayoutArticle(article, assets, { mode, anchor, imageUrl }) : null;
-  const html = assertSafeHtml(customHtml ?? `<section style="${base(template)}max-width:100%;padding:24px ${template.tokens.pagePadding || 14}px;background-color:${template.tokens.page || '#FFFFFF'};${pageCss(template)}">${anchor(renderHeader(article, template), 'title')}${anchor(renderSummary(article.summary, template), 'summary')}${renderContents(headings, template)}${inner}${renderEnding(template)}</section>`, { interactive });
+  const html = assertSafeHtml(customHtml ?? `<section style="${base(template)}max-width:100%;padding:24px ${template.tokens.pagePadding || 14}px;background-color:${template.tokens.page || '#FFFFFF'};${pageCss(template)}">${anchor(renderHeader(article, template), 'title')}${anchor(renderSummary(article, template), 'summary')}${renderContents(headings, template)}${inner}${renderEnding(template)}</section>`, { interactive });
   const plainBlocks = article.blocks.map(block => block.type === 'image' || block.type === 'imageCard' ? `[图片：${block.caption || block.title || '文章图片'}]` : block.type === 'quote' && block.cite ? `${blockText(block)}\n— ${block.cite}` : blockText(block));
   const text = [article.title, article.summary, ...plainBlocks].filter(Boolean).join('\n\n');
   const images = article.blocks.filter(block => block.type === 'image' || block.type === 'imageCard').map(block => ({ assetId: block.assetId, caption: block.caption || block.title || '' }));

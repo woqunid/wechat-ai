@@ -1,5 +1,5 @@
 import { LayoutDesignSchema, layoutContentStyle, layoutSource, reconcileLayout } from './layout-design.js';
-import { BlockStyleSchema } from './core.js';
+import { articleField, BlockStyleSchema } from './core.js';
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fonts = {
@@ -42,6 +42,7 @@ export function renderLayoutArticle(article, assets, { mode, anchor, imageUrl })
   const design = parsed.data;
   const source = new Map(layoutSource(article).map(item => [item.ref, item]));
   const blocks = new Map(article.blocks.map(block => [`block:${block.id}`, block]));
+  for (const field of ['title', 'summary']) blocks.set(field, articleField(article, field));
   const colors = { primary: design.rules.heading?.color || design.page.color, accent: design.rules.heading?.borderColor || design.page.color, red: '#A6372C', orange: '#9E4D20', green: '#276143' };
   const styledText = (runs, emphasis) => {
     if (!runs.some(run => Object.keys(run).some(key => key !== 'text'))) return emphasizedText(runs.map(run => run.text).join(''), emphasis);

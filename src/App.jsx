@@ -1135,7 +1135,6 @@ function Edit({
   const [account, setAccount] = useState(
     article.settings?.accountName || "我的公众号",
   );
-  const [summaryOpen, setSummaryOpen] = useState(Boolean(article.summary));
   const bodyLength = TARGET_LENGTHS.includes(article.settings?.targetLength)
     ? bodyLengthStatus(article.blocks, article.settings.targetLength) : null;
   const imageInput = useRef();
@@ -1217,12 +1216,11 @@ function Edit({
       } else pendingPreviewKey.current = key;
     } else {
       pendingPreviewKey.current = null;
-      if (key === 'summary') setSummaryOpen(true);
       requestAnimationFrame(() => {
         const pane = editorPane.current;
         const editorTarget = pane?.querySelector(`[data-editor-key="${CSS.escape(key)}"]`);
         if (editorTarget) {
-          const toolbarHeight = key.startsWith('block:') ? pane.querySelector('.document-toolbar')?.offsetHeight || 0 : 0;
+          const toolbarHeight = pane.querySelector('.document-toolbar')?.offsetHeight || 0;
           const offset = Math.max(toolbarHeight + 24, (pane.clientHeight - editorTarget.offsetHeight) / 2);
           if (pane.scrollHeight > pane.clientHeight) {
             pane.scrollTo({ top: Math.max(0, pane.scrollTop + editorTarget.getBoundingClientRect().top - pane.getBoundingClientRect().top - offset), behavior });
@@ -1236,12 +1234,6 @@ function Edit({
   const locateFromEditor = (event) => {
     const key = event.target.closest('[data-editor-key]')?.dataset.editorKey;
     if (key) locateContent(key, 'editor');
-  };
-  const captureFieldReference = event => {
-    if (event.nativeEvent?.shiftKey) return;
-    const { selectionStart, selectionEnd, value, dataset } = event.target;
-    if (selectionStart === selectionEnd) return;
-    aiEditor.addReference({ kind: 'text', keys: [dataset.editorKey], text: value.slice(selectionStart, selectionEnd), startOffset: selectionStart, endOffset: selectionEnd });
   };
   const aiPreview = sideTab === 'ai' && !library && !layoutTrial ? aiEditor.previewArticle : null;
   const preview = useMemo(
@@ -1327,6 +1319,7 @@ function Edit({
     locateContent(`block:${id}`, 'editor');
   };
   const insertionAfterSelection = () => {
+    if (['title', 'summary'].includes(activeKeyRef.current)) return 0;
     const id = activeKeyRef.current?.startsWith('block:') ? activeKeyRef.current.slice(6) : null;
     const index = article.blocks.findIndex(block => block.id === id);
     return index < 0 ? article.blocks.length : index + 1;
@@ -1463,7 +1456,7 @@ function Edit({
           <div className="pane-heading">
             <div>
               <span className="eyebrow">编辑</span>
-              <h2>正文</h2>
+              <h2>文章</h2>
             </div>
             <button
               className="icon-action"
@@ -1474,29 +1467,6 @@ function Edit({
             </button>
           </div>
           <div className="article-edit">
-            <label>文章标题</label>
-            <textarea
-              className={`title-edit${activeKey === 'title' ? ' is-linked' : ''}`}
-              data-editor-key="title"
-              onSelect={captureFieldReference}
-              onKeyUp={event => { if (event.key === 'Shift') captureFieldReference(event); }}
-              maxLength={80}
-              value={article.title}
-              onChange={(e) =>
-                setArticle((a) => ({ ...a, title: e.target.value }))
-              }
-            />
-            <div className="field-meta">
-              <span className={article.title.length > 64 ? "error" : ""}>
-                {article.title.length}/64
-              </span>
-              <button
-                className="text-link"
-                onClick={() => setSummaryOpen(value => !value)}
-              >
-                {summaryOpen ? "收起摘要" : article.summary ? "编辑摘要" : "添加摘要"}
-              </button>
-            </div>
             {article.settings?.mockGenerated && (
               <div className="content-origin mock-origin">本地示例 · 未执行语气和目标长度</div>
             )}
@@ -1512,26 +1482,13 @@ function Edit({
                 {bodyLength && <span>目标约 {bodyLength.target} 字</span>}
               </>}
               <span title="含标点、小标题和引用出处，不计空白、主标题、摘要及图片说明">正文 {bodyLength?.actual ?? bodyCharCount(article.blocks)} 字</span>
+              <span className={article.title.length > 64 ? 'error' : ''}>标题 {article.title.length}/64</span>
               {article.mode !== "raw" && !article.settings?.mockGenerated && bodyLength && !bodyLength.within && <small>当前超出 {bodyLength.min}–{bodyLength.max} 字参考范围，可继续编辑</small>}
             </div>
             {article.settings?.generationWarnings?.length > 0 && <div className="writing-warnings" role="status">
               <strong>生成时提示</strong>
               {article.settings.generationWarnings.map((warning, index) => <p key={index}>{warning}</p>)}
             </div>}
-            {summaryOpen && (
-              <textarea
-                className={`summary-edit${activeKey === 'summary' ? ' is-linked' : ''}`}
-                data-editor-key="summary"
-                onSelect={captureFieldReference}
-                onKeyUp={event => { if (event.key === 'Shift') captureFieldReference(event); }}
-                value={article.summary || ""}
-                maxLength={120}
-                placeholder="摘要"
-                onChange={(e) =>
-                  setArticle((a) => ({ ...a, summary: e.target.value }))
-                }
-              />
-            )}
             <div className="block-toolbar">
               <span>{article.blocks.length} 个内容段落</span>
               <span className="history-tools">

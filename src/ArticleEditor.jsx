@@ -1,17 +1,18 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, Eraser, Highlighter, ImagePlus, IndentIncrease, Trash2, Underline } from 'lucide-react';
 import { blockText, uid } from './core.js';
 import { imageLink, readImageLink } from './image-assets.js';
-import { bookmarkRange, clipboardBlocks, editorBookmark, editorHtml, readEditorBlocks, restoreBookmark } from './editor-dom.js';
+import { bookmarkRange, clipboardBlocks, editorBlocks, editorBookmark, editorContent, editorHtml, editorKey, readEditorBlocks, restoreBookmark } from './editor-dom.js';
 
 const imageBlock = block => block?.type === 'image' || block?.type === 'imageCard';
 const plainRuns = runs => runs.map(run => ({ text: run.text }));
+const contentFields = ['title', 'summary', 'titleFormat', 'summaryFormat', 'blocks'];
 
 export function ArticleEditor({ article, setArticle, template, assets, activeKey, onSelect, onReference, onUpload, onRegisterAsset, onGallery, setToast }) {
   const canvas = useRef();
   const sheet = useRef();
   const bookmark = useRef(null);
-  const localBlocks = useRef(null);
+  const localContent = useRef(null);
   const visualSource = useRef(null);
   const pendingRestore = useRef(false);
   const composing = useRef(false);
@@ -25,9 +26,10 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
   const pendingImages = useRef(new Map());
   const latestArticle = useRef(article);
   latestArticle.current = article;
-  const selectedId = activeKey?.startsWith('block:') ? activeKey.slice(6) : activeKey ? null : selection?.startId;
-  const current = article.blocks.find(block => block.id === selectedId) || (!activeKey ? article.blocks[0] : undefined);
-  const chosen = bookmark.current && current && bookmark.current.startId === current.id ? bookmark.current.ids.filter(id => article.blocks.some(block => block.id === id)) : [];
+  const content = useMemo(() => editorBlocks(article), [article.title, article.summary, article.titleFormat, article.summaryFormat, article.blocks]);
+  const selectedId = activeKey === 'title' || activeKey === 'summary' ? `$${activeKey}` : activeKey?.startsWith('block:') ? activeKey.slice(6) : selection?.startId;
+  const current = content.find(block => block.id === selectedId) || (!activeKey ? content[0] : undefined);
+  const chosen = bookmark.current && current && bookmark.current.startId === current.id ? bookmark.current.ids.filter(id => content.some(block => block.id === id)) : [];
   const selectedIds = chosen.length ? chosen : current ? [current.id] : [];
   const currentStyle = current?.style || {};
 
@@ -39,7 +41,7 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     setSelection(next);
     if (lastSelected.current !== next.startId) {
       lastSelected.current = next.startId;
-      onSelect(`block:${next.startId}`);
+      onSelect(editorKey(next.startId));
     }
   };
   const referenceImage = id => {
@@ -52,7 +54,7 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     if (figure) { referenceImage(figure.dataset.blockId); return; }
     const saved = editorBookmark(canvas.current);
     if (!saved || saved.collapsed) return;
-    if (saved.text.trim()) onReference?.({ kind: 'text', keys: saved.ids.map(id => `block:${id}`), text: saved.text, startOffset: saved.startOffset, endOffset: saved.endOffset });
+    if (saved.text.trim()) onReference?.({ kind: 'text', keys: saved.ids.map(editorKey), text: saved.text, startOffset: saved.startOffset, endOffset: saved.endOffset });
     saved.ids.forEach(referenceImage);
   };
   useEffect(() => {
@@ -66,7 +68,7 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
   }, [article.id]);
   useEffect(() => { setImportCount(0); }, [article.id]);
   useEffect(() => {
-    const id = activeKey?.startsWith('block:') ? activeKey.slice(6) : null;
+    const id = activeKey === 'title' || activeKey === 'summary' ? `$${activeKey}` : activeKey?.startsWith('block:') ? activeKey.slice(6) : null;
     if (bookmark.current && bookmark.current.startId !== id) { bookmark.current = null; setSelection(null); }
     if (imageBlock(article.blocks.find(block => block.id === id)) && document.activeElement === canvas.current) {
       window.getSelection()?.removeAllRanges();
@@ -78,39 +80,44 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
   useLayoutEffect(() => {
     const root = canvas.current;
     if (!root || composing.current) return;
-    if (localBlocks.current === article.blocks && visualSource.current?.template === template && visualSource.current?.assets === assets) return;
+    if (contentFields.every(key => localContent.current?.[key] === article[key]) && visualSource.current?.template === template && visualSource.current?.assets === assets) return;
     const focused = root.contains(document.activeElement);
     const saved = bookmark.current;
-    root.innerHTML = editorHtml(article.blocks.length ? article.blocks : [{ id: uid('b'), type: 'paragraph', runs: [{ text: '' }] }], assets, template);
-    localBlocks.current = article.blocks;
+    root.innerHTML = editorHtml(content, assets, template);
+    localContent.current = article;
     visualSource.current = { template, assets };
-    const sameTarget = !activeKey || activeKey === `block:${saved?.startId}`;
+    const sameTarget = !activeKey || activeKey === editorKey(saved?.startId);
     if ((focused || pendingRestore.current) && saved && sameTarget) restoreBookmark(root, saved);
     else if (focused && !sameTarget) document.activeElement?.blur();
     pendingRestore.current = false;
-  }, [article.blocks, assets, template]);
+  }, [content, assets, template]);
 
   useLayoutEffect(() => {
     canvas.current?.querySelector('.is-linked')?.classList.remove('is-linked');
     if (activeKey) canvas.current?.querySelector(`[data-editor-key="${CSS.escape(activeKey)}"]`)?.classList.add('is-linked');
-  }, [activeKey, article.blocks, template, assets]);
+  }, [activeKey, content, template, assets]);
 
-  const publish = (blocks, local = false) => {
+  const publish = (blocks, local = false, fields = {}) => {
     if (!blocks.length) blocks = [{ id: uid('b'), type: 'paragraph', runs: [{ text: '' }] }];
     if (blocks.length > 120) { setToast('正文最多保留 120 个段落，请先合并部分内容'); return false; }
     if (blocks.filter(imageBlock).length > 10) { setToast('正文最多添加 10 张图片'); return false; }
-    localBlocks.current = local ? blocks : null;
+    if ((fields.title ?? article.title).length > 80 || (fields.summary ?? article.summary).length > 120) { setToast('标题最多 80 字，摘要最多 120 字，请将较长内容放入正文'); return false; }
+    localContent.current = local ? { ...article, ...fields, blocks } : null;
     pendingRestore.current = !local;
-    setArticle(previous => ({ ...previous, blocks, updatedAt: new Date().toISOString() }));
+    setArticle(previous => ({ ...previous, ...fields, blocks, updatedAt: new Date().toISOString() }));
     return true;
+  };
+  const publishContent = (blocks, local = false) => {
+    const { blocks: body, ...fields } = editorContent(blocks);
+    return publish(body, local, fields);
   };
   const commit = () => {
     if (composing.current || mutating.current) return;
-    const blocks = readEditorBlocks(canvas.current, article.blocks, assets);
+    const blocks = readEditorBlocks(canvas.current, content, assets);
     remember();
-    const structuralChange = blocks.length !== article.blocks.length || blocks.some((block, index) => block.id !== article.blocks[index]?.id || block.type !== article.blocks[index]?.type);
-    if (!publish(blocks, !structuralChange)) {
-      canvas.current.innerHTML = editorHtml(article.blocks, assets, template);
+    const structuralChange = blocks.length !== content.length || blocks.some((block, index) => block.id !== content[index]?.id || block.type !== content[index]?.type);
+    if (!publishContent(blocks, !structuralChange)) {
+      canvas.current.innerHTML = editorHtml(content, assets, template);
       restoreBookmark(canvas.current, bookmark.current);
     }
   };
@@ -120,16 +127,16 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     finally { mutating.current = false; }
   };
   const command = (name, value) => {
-    if (!restoreBookmark(canvas.current, bookmark.current)) { setToast('先在正文中选择需要修改的文字'); return; }
+    if (!restoreBookmark(canvas.current, bookmark.current)) { setToast('先在文章中选择需要修改的文字'); return; }
     document.execCommand('styleWithCSS', false, true);
     execute(name, value);
     commit();
   };
   const patchStyle = patch => {
-    publish(article.blocks.map(block => selectedIds.includes(block.id) ? { ...block, style: { ...block.style, ...patch } } : block));
+    publishContent(content.map(block => selectedIds.includes(block.id) ? { ...block, style: { ...block.style, ...patch } } : block));
   };
   const resetStyle = () => {
-    publish(article.blocks.map(block => {
+    publishContent(content.map(block => {
       if (!selectedIds.includes(block.id)) return block;
       const { style, ...next } = block;
       if (next.runs) next.runs = plainRuns(next.runs);
@@ -138,7 +145,8 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     }));
   };
   const changeType = value => {
-    publish(article.blocks.map(block => {
+    publishContent(content.map(block => {
+      if (block.field) return block;
       if (!selectedIds.includes(block.id) || imageBlock(block)) return block;
       const runs = block.runs || (block.type === 'heading' ? [{ text: block.text }] : block.items?.flatMap((item, i) => i ? [{ text: '\n' }, ...item] : item)) || [{ text: '' }];
       const base = { id: block.id, ...(block.style ? { style: block.style } : {}) };
@@ -165,7 +173,20 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     const range = bookmarkRange(canvas.current, saved);
     if (!range) return;
     const node = canvas.current.querySelector(`[data-block-id="${CSS.escape(saved.startId)}"]`);
-    if (!node || !['P', 'H2', 'H3'].includes(node.tagName)) return;
+    if (!node || !['P', 'H1', 'H2', 'H3'].includes(node.tagName)) return;
+    if (node.dataset.articleField) {
+      event.preventDefault();
+      const next = node.nextElementSibling;
+      if (saved.collapsed && saved.startOffset === node.textContent.length && next) {
+        const cursor = document.createRange();
+        cursor.selectNodeContents(next);
+        cursor.collapse(true);
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(cursor);
+        remember();
+      } else { remember(); command('insertLineBreak'); }
+      return;
+    }
     if (article.blocks.length >= 120) { event.preventDefault(); setToast('段落数量已达上限'); return; }
     event.preventDefault();
     range.deleteContents();
@@ -190,6 +211,7 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     commit();
   };
   const insertIndex = () => {
+    if (['$title', '$summary'].includes(bookmark.current?.endId || selectedId)) return 0;
     const index = article.blocks.findIndex(block => block.id === (bookmark.current?.endId || selectedId));
     return index < 0 ? article.blocks.length : index + 1;
   };
@@ -260,7 +282,11 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     if (url) { remember(); pasteImageLink(url, text); return; }
     const blocks = clipboardBlocks(event.clipboardData.getData('text/html'), event.clipboardData.getData('text/plain'), assets);
     remember();
-    const replacing = bookmark.current?.collapsed ? 0 : Math.max(0, (bookmark.current?.ids.length || 1) - 1);
+    if (current?.field && bookmark.current?.ids.length === 1) {
+      if (restoreBookmark(canvas.current, bookmark.current)) { execute('insertText', event.clipboardData.getData('text/plain')); commit(); }
+      return;
+    }
+    const replacing = bookmark.current?.collapsed ? 0 : Math.max(0, (bookmark.current?.ids.filter(id => !['$title', '$summary'].includes(id)).length || 1) - 1);
     if (article.blocks.length + blocks.length - 1 - replacing > 120) { setToast('粘贴后段落过多，请分批粘贴'); return; }
     if (restoreBookmark(canvas.current, bookmark.current)) {
       let html = editorHtml(blocks, assets, template);
@@ -275,7 +301,7 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     const index = article.blocks.findIndex(block => block.id === element.dataset.blockId);
     const rect = element.getBoundingClientRect();
     const after = event.clientY > rect.top + rect.height / 2;
-    return { index: Math.max(0, index) + (after ? 1 : 0), top: rect.top - sheet.current.getBoundingClientRect().top + (after ? rect.height : 0) };
+    return { index: index < 0 ? 0 : index + (after ? 1 : 0), top: rect.top - sheet.current.getBoundingClientRect().top + (after ? rect.height : 0) };
   };
   const dragOver = event => {
     if (!Array.from(event.dataTransfer.types).some(type => ['Files', 'application/x-weave-block', 'application/x-weave-asset'].includes(type))) return;
@@ -346,7 +372,8 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
   return <div className="document-editor">
     <div className="document-toolbar" role="toolbar" aria-label="文字与段落排版">
       <div className="document-toolbar-row">
-        <select aria-label="段落类型" value={imageBlock(current) ? 'image' : valueType} onChange={event => changeType(event.target.value)} disabled={imageBlock(current)}>
+        <select aria-label="段落类型" value={current?.field || (imageBlock(current) ? 'image' : valueType)} onChange={event => changeType(event.target.value)} disabled={imageBlock(current) || Boolean(current?.field)}>
+          <option value="title" disabled>文章标题</option><option value="summary" disabled>摘要</option>
           <option value="paragraph">正文</option><option value="heading1">一级标题</option><option value="heading2">二级标题</option><option value="quote">引用</option><option value="callout">重点提示</option><option value="list">要点列表</option><option value="ordered">有序列表</option><option value="divider">分隔线</option><option value="image" disabled>图片</option>
         </select>
         <button title="选中文字加粗 Ctrl+B" aria-label="加粗" onMouseDown={keepSelection} onClick={() => command('bold')} disabled={imageBlock(current)}><Bold size={16}/></button>
@@ -370,7 +397,7 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     {importCount > 0 && <p className="editor-uploading" role="status">正在识别 {importCount} 个图片链接，链接文字已保留…</p>}
     <div className="document-sheet" ref={sheet} onDragOver={dragOver} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDrop(null); }} onDrop={dropImage}>
       {drop && <div className="editor-drop-line" style={{ top: drop.top }} aria-hidden="true"/>}
-      <div ref={canvas} className="document-canvas" role="textbox" aria-label="文章正文，支持连续编辑和文字排版" aria-multiline="true" contentEditable suppressContentEditableWarning spellCheck={false} style={{ '--editor-primary': template.tokens.primary, '--editor-tint': template.tokens.tint, '--editor-line-height': template.tokens.lineHeight, '--editor-paragraph-gap': `${template.tokens.paraGap}px` }}
+      <div ref={canvas} className="document-canvas" role="textbox" aria-label="文章内容，标题摘要与正文连续编辑" aria-multiline="true" contentEditable suppressContentEditableWarning spellCheck={false} style={{ '--editor-primary': template.tokens.primary, '--editor-tint': template.tokens.tint, '--editor-line-height': template.tokens.lineHeight, '--editor-paragraph-gap': `${template.tokens.paraGap}px` }}
         onInput={commit} onPaste={paste} onKeyDown={splitParagraph} onMouseUp={captureReference} onKeyUp={event => { remember(); if (!event.shiftKey) captureReference(event); }} onFocus={event => {
           if (event.target.tagName === 'FIGURE') {
             bookmark.current = null;
