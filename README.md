@@ -18,6 +18,8 @@ npm run dev
 
 前端运行于 `http://localhost:5173`，API 运行于 `http://localhost:8787`。未配置 AI 服务时使用本地示例内容；可以在页面“AI 服务”中配置，也可以在 `.env` 中设置 `AI_BASE_URL`、`AI_API_KEY` 和 `AI_MODEL`。页面配置保存在服务端 `.local/ai-config.json`，密钥不会进入浏览器存储。复制会保留 HTML 排版，可粘贴到 135 编辑器或公众号后台；HTTPS 或 localhost 优先使用剪贴板 API，普通 HTTP 或接口不可用时尝试浏览器兼容复制。
 
+局域网访问使用 Vite 输出的 Network 地址。开发代理保留页面 Host，并传递原始地址与协议；通过前端的 `/api` 访问时，不需要将每次变化的局域网 IP 加入 `ALLOWED_ORIGIN`。修改 `vite.config.js` 后需重启开发服务。前后端分属不同来源时，仍需将前端完整地址加入 `ALLOWED_ORIGIN` 并重启后端。
+
 ## 生产启动
 
 ```powershell

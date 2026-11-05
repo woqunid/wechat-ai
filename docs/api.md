@@ -28,6 +28,8 @@
 
 前后端使用同一公网域名时，反向代理应传递正确的 `X-Forwarded-Host` 和 `X-Forwarded-Proto`，服务端据此识别 HTTPS 同源请求。前后端域名不同时，将前端完整来源（例如 `https://app.example.com`，不带末尾路径）加入 `ALLOWED_ORIGIN`，多个来源用逗号分隔。若出现“此来源不能修改 AI 配置”，表示请求来源未通过此校验，模型列表请求尚未转发到模型服务。
 
+Vite 开发代理显式设置 `changeOrigin: false` 与 `xfwd: true`，保留浏览器访问的 Host 并传递来源地址、端口与协议。本地和局域网经前端 `/api` 转发的请求按同源识别，不依赖固定 IP 白名单；避免字符串形式代理默认改写 Host 后触发 `ORIGIN_NOT_ALLOWED`。此修复保留现有来源校验与跨域白名单，不放行任意跨域请求。
+
 图片 URL 仅在复制时允许 HTTPS；本地地址和未完成真实公众号验证的公网图均标记为需手动检查。
 
 `GET /api/config/status` 会返回 Base URL、模型 ID 和 `hasApiKey`，但绝不返回密钥内容。
