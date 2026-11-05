@@ -31,7 +31,8 @@ import { uid } from "./core";
 import { bodyCharCount, bodyLengthStatus, CREATION_MODES, GENERATION_TIMEOUT_MS, TARGET_LENGTHS, WRITING_TONES } from "./creation.js";
 import { describeTemplateFit, recommendTemplates } from "./recommender";
 import { AIServiceSettings } from "./AIServiceSettings";
-import { ArticleEditor } from "./ArticleEditor";
+import { HtmlArticleEditor as ArticleEditor } from "./HtmlArticleEditor";
+import { reconcileHtmlArticle } from "./document-model.js";
 import { AIEditPanel, useAIEdit } from "./AIEditPanel";
 import { ImageLinkInput } from "./ImageLinkInput";
 import { clearArticleStyles, layoutSignature } from "./layout-design.js";
@@ -99,7 +100,8 @@ function App() {
   const [page, setPage] = useState("create");
   const [input, setInput] = useState(blank);
   const [generationInput, setGenerationInput] = useState(null);
-  const [article, setArticle] = useState(null);
+  const [article, storeArticle] = useState(null);
+  const setArticle = React.useCallback(value => storeArticle(previous => reconcileHtmlArticle(previous, typeof value === "function" ? value(previous) : value)), []);
   const latestArticle = useRef(null);
   latestArticle.current = article;
   const [selected, setSelected] = useState("T06");
@@ -810,7 +812,7 @@ function TemplateThumb({ article, template, assets, large = false }) {
   const container = useRef();
   const [scale, setScale] = useState(large ? 0.5 : 0.2);
   const html = useMemo(() => renderArticle(
-    { ...article, layoutDesign: undefined, blocks: article.blocks.slice(0, 12) },
+    { ...article, html: undefined, layoutDesign: undefined, blocks: article.blocks.slice(0, 12) },
     template,
     assets,
     { mode: "preview" },
@@ -1006,17 +1008,17 @@ function Edit({
   const canvasArticle = useMemo(() => aiPreview || (layoutTrial?.signature === layoutSignature(article)
     ? { ...clearArticleStyles(article), layoutDesign: layoutTrial.design } : article), [article, aiPreview, layoutTrial]);
   const canvasReadOnly = Boolean(aiPreview || layoutTrial || library || regenerating || aiEditor.busy === 'checking');
-  const preview = useMemo(() => renderArticle({ ...article, layoutDesign: undefined }, template, assets, { mode: 'preview' }).html, [article, template, assets]);
+  const preview = useMemo(() => renderArticle({ ...article, html: undefined, layoutDesign: undefined }, template, assets, { mode: 'preview' }).html, [article, template, assets]);
   const chooseTemplate = (id) => {
     resetLayoutTrial();
+    if (!library) {
+      setLibraryOriginal(article.templateId);
+      setLibraryView("templates");
+      setSelected(id);
+      setLibrary(true);
+      return;
+    }
     setSelected(id);
-    if (!library)
-      setArticle((a) => ({
-        ...a,
-        templateId: id,
-        layoutDesign: undefined,
-        updatedAt: new Date().toISOString(),
-      }));
   };
   const addBlock = (type) => {
     if (article.blocks.length >= 120) { setToast("段落数量已达上限"); return; }
@@ -1340,6 +1342,7 @@ function Edit({
                     ...a,
                     templateId: selected,
                     layoutDesign: undefined,
+                    html: undefined,
                     updatedAt: new Date().toISOString(),
                   }));
                   setLibrary(false);

@@ -23,6 +23,7 @@ import { renderArticle } from '../src/renderer.js';
 import { layoutInstructions } from './layout-rules.js';
 import { AIEditRequestSchema, AIEditResponseSchema, AI_EDIT_TIMEOUT_MS, buildAIEdit, describeAIEdit, isImageBlock } from '../src/ai-edit.js';
 import { editInstructions } from './edit-rules.js';
+import { htmlEditInstructions } from './html-edit-rules.js';
 import { normalizeUsage, usageMeta } from './ai-usage.js';
 
 dotenv.config();
@@ -39,7 +40,7 @@ let activeGenerations = 0;
 const resolvedApiStyles = new Map();
 let activeImageImports = 0;
 
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '4mb' }));
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   const allowedOrigins = process.env.ALLOWED_ORIGIN?.split(',').map(value => value.trim()) || ['http://localhost:5173', 'http://127.0.0.1:5173'];
@@ -627,7 +628,8 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
   if (!canWriteConfig(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
   const parsed = AIEditRequestSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: { code: 'INVALID_EDIT_INPUT', message: '请提供有效文章和1–4000字的修改要求' } });
-  const { article, prompt, references, messages, attachments } = parsed.data;
+  const { article, prompt, references, messages, attachments, scope } = parsed.data;
+  if (article.html && scope === 'selection' && !references.length) return res.status(400).json({ error: { code: 'INVALID_SELECTION', message: '请先选择需要修改的文字或图片，或切换到全文范围' } });
   if (new Set(article.blocks.map(block => block.id)).size !== article.blocks.length) return res.status(400).json({ error: { code: 'INVALID_CONTENT_REFS', message: '文章内容编号重复，请恢复草稿后重试' } });
   const controller = new AbortController();
   res.once('close', () => { if (!res.writableEnded) controller.abort(); });
@@ -658,18 +660,18 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
     if (!mime) return res.status(400).json({ error: { code: 'INVALID_ATTACHMENT_IMAGE', message: '附件图片格式无效，请重新上传' } });
     imageInputs.push({ name: attachments.flatMap(attachment => attachment.kind === 'image' ? [{ assetId: attachment.assetId, name: attachment.name }] : attachment.imageAssetIds.map((assetId, imageIndex) => ({ assetId, name: `${attachment.name} 图片 ${imageIndex + 1}` }))).find(item => item.assetId === imageAssetId)?.name || `附件图片 ${index + 1}`, mime, buffer });
   }
-  const input = { template: templates.find(template => template.id === article.templateId), article: { mode: article.mode, title: article.title, summary: article.summary, blocks: article.blocks, templateId: article.templateId, layoutDesign: article.layoutDesign, tone: article.settings.tone }, imageDimensions, ...(attachments.length ? { attachments } : {}), conversation: messages, prompt, references };
-  if (JSON.stringify(input).length > 450000) return res.status(400).json({ error: { code: 'CONTENT_TOO_LONG', message: '文章、附件文字或引用内容过长，请移除部分附件或减少引用后重试；正文不会被截断提交' } });
+  const input = { template: templates.find(template => template.id === article.templateId), scope, article: { html: article.html, mode: article.mode, title: article.title, summary: article.summary, blocks: article.blocks, templateId: article.templateId, layoutDesign: article.layoutDesign, tone: article.settings.tone }, imageDimensions, ...(attachments.length ? { attachments } : {}), conversation: messages, prompt, references };
+  if (JSON.stringify(input).length > 1_100_000) return res.status(400).json({ error: { code: 'CONTENT_TOO_LONG', message: '文章、附件文字或引用内容过长，请移除部分附件或减少引用后重试；正文不会被截断提交' } });
   const usages = res.locals.modelUsages = [];
   let lastError;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (signal.aborted) break;
     usages.push(normalizeUsage());
     try {
-      const output = await requestModel({ config, system: editInstructions, signal, inputData: { ...input, previousValidationError: lastError?.message.slice(0, 1200) }, imageInputs });
+      const output = await requestModel({ config, system: article.html ? htmlEditInstructions : editInstructions, signal, inputData: { ...input, previousValidationError: lastError?.message.slice(0, 1200) }, imageInputs });
       usages[attempt] = output.usage;
       const result = AIEditResponseSchema.parse(JSON.parse(output.text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/, '$1')));
-      const candidate = buildAIEdit(article, result.operations);
+      const candidate = buildAIEdit(article, result.operations, { references, scope });
       renderArticle(candidate, templates.find(template => template.id === candidate.templateId));
       if (!controller.signal.aborted) return res.json({ ...result, changes: describeAIEdit(article, candidate), meta: { model: config.model, retried: attempt > 0, ...usageMeta(usages) } });
       return;

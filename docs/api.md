@@ -66,3 +66,22 @@ Vite 开发代理显式设置 `changeOrigin: false` 与 `xfwd: true`，保留浏
 `GET /api/config/status` 会返回 Base URL、模型 ID 和 `hasApiKey`，但绝不返回密钥内容。
 
 模板推荐与微信 HTML 渲染是共享前端模块，避免 API 和预览复制出现两套实现。素材文本不会写入服务器日志；文档仅在内存解析，图片使用随机文件名并移除 EXIF。
+
+
+## 整篇 HTML 编辑
+
+编辑草稿的可选 `article.html` 为内容与版式保存源，最多600,000字符。`title/summary/blocks` 是从 HTML 提取的兼容摘要，供模板切换、字数和图片管理使用。旧结构仍被生成接口和原接口兼容；前端打开旧稿时转换为带稳定节点编号的 HTML。
+
+`POST /api/articles/edit` 增加 `scope: "selection" | "article"`。HTML 文章的操作为：
+
+```json
+{"type":"setHtml","intent":"layout","html":"完整文章 HTML 片段"}
+```
+
+```json
+{"type":"replaceHtml","intent":"layout","referenceId":"本轮选区编号","html":"替换选区的 HTML"}
+```
+
+`intent` 默认为 `layout`，文字序列变化会被拒绝；用户明确要求内容改写时使用 `content`。`selection` 范围禁止 `setHtml`。引用 `keys` 为单个 `html:节点编号`，对应 HTML 的 `data-node-id`；文字偏移按 UTF-16 计数，`br` 算一个换行，图片算一个 `U+FFFC`。整节点选区替换外层元素，部分文字选区替换内部片段并保留边界外结构；图片引用替换图片节点。选区失效或原稿变化时拒绝覆盖。
+
+HTML 只允许流式内容元素与内联样式，不接收脚本、事件、外部样式、定位、flex/grid、固定高度或隐藏内容。图片以 `data-asset-id` 引用当前文章已有资源，不接受 AI 指定 `src`。预览按资源映射补充地址，复制时去除内部 `data-*` 标记；本地图片的手动补图流程继续适用。模板更换和独立版式应用会重新生成 HTML，原稿可通过撤销恢复。

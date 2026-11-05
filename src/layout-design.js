@@ -54,10 +54,10 @@ export function layoutSource(article) {
   }
   return content;
 }
-export const layoutSignature = article => JSON.stringify(layoutSource(article));
+export const layoutSignature = article => JSON.stringify([article.html, layoutSource(article)]);
 export function clearArticleStyles(article) {
   const runs = values => values.map(run => ({ text: run.text }));
-  const { titleFormat, summaryFormat, ...plain } = article;
+  const { titleFormat, summaryFormat, html, ...plain } = article;
   return { ...plain, blocks: article.blocks.map(block => {
     const { style, ...content } = block;
     if (block.runs) content.runs = runs(block.runs);

@@ -2654,6 +2654,11 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
 .canvas-footer .add-block { width: 100%; }
 .canvas-footer .article-end-actions { margin-top: 8px; }
 .document-canvas { outline: none; overflow-wrap: anywhere; }
+.html-document { min-height: 180px; }
+.html-document img { cursor: grab; }
+.html-document[aria-readonly="true"] img { cursor: default; }
+.ai-edit-context > label { display: flex; align-items: center; gap: 5px; margin-left: auto; white-space: nowrap; }
+.ai-edit-context select { width: auto; padding: 3px 5px; font-size: 10px; }
 .document-canvas [data-editor-part] { outline: none; cursor: text; }
 .document-canvas [data-editor-part][contenteditable="true"] { min-height: 1em; }
 .document-canvas [data-editor-key].is-linked { outline: 1px solid var(--primary); outline-offset: 3px; }

@@ -16,6 +16,7 @@ const withAttachmentPreviews = attachment => attachment.kind === 'image'
   : { ...attachment, images: (attachment.images || []).map(image => ({ ...image, previewUrl: image.blob ? URL.createObjectURL(image.blob) : image.cacheUrl })) };
 export function useAIEdit({ article, setArticle, assets, disabled, onApplied, onCandidate, setToast }) {
   const [references, setReferences] = useState([]);
+  const [scope, setScope] = useState('selection');
   const [messages, setMessages] = useState([]);
   const [prompt, setPrompt] = useState('');
   const [busy, setBusy] = useState('');
@@ -82,6 +83,7 @@ export function useAIEdit({ article, setArticle, assets, disabled, onApplied, on
   const changes = useMemo(() => candidate ? describeAIEdit(resolved.article ? article : candidate.base, resolved.article || candidate.next) : [], [article, candidate, resolved]);
   const invalidReferences = references.filter(reference => !validAIReference(article, reference));
   const addReference = value => {
+    setScope('selection');
     let reference;
     try { reference = createAIReference(latest.current.article, value); }
     catch { setError('所选内容过长，请缩小选区；AI仍会读取全文'); return; }
@@ -210,7 +212,7 @@ export function useAIEdit({ article, setArticle, assets, disabled, onApplied, on
         : { kind: 'document', name: attachment.name, text: attachment.text, imageAssetIds: attachment.images.map(image => image.assetId) });
       const responsePromise = fetch('/api/articles/edit', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ article: working, prompt: instruction, references: selected.map(({ snapshot, assetId, ...reference }) => reference), messages: messages.slice(-16).map(message => ({ role: message.role, text: message.text.slice(0, 4000) })), attachments: requestAttachments }),
+        body: JSON.stringify({ scope: selected.length ? scope : 'article', article: working, prompt: instruction, references: selected.map(({ snapshot, assetId, ...reference }) => reference), messages: messages.slice(-16).map(message => ({ role: message.role, text: message.text.slice(0, 4000) })), attachments: requestAttachments }),
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(AI_EDIT_TIMEOUT_MS + 10000)]),
       });
       const sentReferenceIds = new Set(selected.map(reference => reference.id));
@@ -223,7 +225,7 @@ export function useAIEdit({ article, setArticle, assets, disabled, onApplied, on
         throw issue;
       }
       const result = AIEditResponseSchema.parse({ message: data.message, operations: data.operations });
-      const next = buildAIEdit(working, result.operations);
+      const next = buildAIEdit(working, result.operations, { references: selected, scope: selected.length ? scope : 'article' });
       const changed = describeAIEdit(working, next).length > 0;
       const hasChanges = describeAIEdit(original, next).length > 0;
       if (changed && hasChanges) {
@@ -268,7 +270,7 @@ export function useAIEdit({ article, setArticle, assets, disabled, onApplied, on
     } catch (cause) { if (!controller.signal.aborted) setError(cause.message || '方案检查失败，原稿已保留'); }
     finally { if (request.current === controller) { request.current = null; setBusy(''); } }
   };
-  return { references, messages, prompt, setPrompt, busy, error, attachments, attachmentsReady, attachmentBusy, addAttachments, removeAttachment, candidate, problem: resolved.problem, changes, invalidReferences, showCandidate, setShowCandidate, previewArticle: showCandidate && !disabled ? resolved.article : null, addReference, restoreReferences, removeReference: referenceId => setReferences(previous => previous.filter(reference => reference.id !== referenceId)), submit, stop, discard, apply };
+  return { references, scope, setScope, messages, prompt, setPrompt, busy, error, attachments, attachmentsReady, attachmentBusy, addAttachments, removeAttachment, candidate, problem: resolved.problem, changes, invalidReferences, showCandidate, setShowCandidate, previewArticle: showCandidate && !disabled ? resolved.article : null, addReference, restoreReferences, removeReference: referenceId => setReferences(previous => previous.filter(reference => reference.id !== referenceId)), submit, stop, discard, apply };
 }
 
 export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
@@ -278,7 +280,7 @@ export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
   const lastInstruction = lastUserMessage?.text;
   useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }); }, [editor.messages, editor.busy]);
   return <section className="ai-edit-panel" aria-label="AI修改对话">
-    <div className="ai-edit-context"><span><span className="connection-dot connected"/>全文上下文</span><small title="引用用于提示关注点">选中内容可添加引用</small></div>
+    <div className="ai-edit-context"><span><span className="connection-dot connected"/>全文上下文</span><label>修改范围 <select aria-label="AI修改范围" value={editor.references.length ? editor.scope : 'article'} disabled={disabled || Boolean(editor.busy)} onChange={event => editor.setScope(event.target.value)}><option value="selection" disabled={!editor.references.length}>仅选区</option><option value="article">全文</option></select></label></div>
     <div className="ai-edit-messages" role="log" aria-label="修改对话记录" aria-live="polite" aria-relevant="additions text">
       {!editor.messages.length && <div className="ai-edit-empty"><span className="ai-empty-icon"><Sparkles size={23}/></span><h3>让文章更进一步</h3><p>调整文字、图片或排版。</p><div className="ai-prompt-suggestions">{['精简表达，保留关键信息', '优化开头，更快切入主题', '统一段落间距与文字样式'].map(text => <button type="button" key={text} disabled={disabled} onClick={() => editor.setPrompt(text)}>{text}<ArrowUp size={13}/></button>)}</div></div>}
       {editor.messages.map(message => <div key={message.id} className={`ai-edit-message ${message.role}`}><strong>{message.role === 'user' ? '你' : <><Sparkles size={12}/>Weave AI</>}</strong><p>{message.text}</p>{message.referenceCount > 0 && <details className="ai-edit-message-references"><summary>{message.referenceCount} 处引用</summary><div>{message.references?.map((reference, index) => <p key={index}>{reference.text || '图片引用'}</p>)}</div></details>}{message.attachmentNames?.length > 0 && <small>附件：{message.attachmentNames.join('、')}</small>}{message.status && <small className={`ai-message-status ${message.status}`}>{({ pending: editor.problem ? '方案已失效' : '待应用', applied: '已应用', discarded: '已取消', superseded: '已有新方案' })[message.status]}</small>}</div>)}

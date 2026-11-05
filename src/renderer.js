@@ -1,5 +1,6 @@
 import { articleField, BlockStyleSchema, blockText } from './core.js';
 import { renderLayoutArticle } from './layout-renderer.js';
+import { renderHtmlDocument, htmlPlainText } from './html-document.js';
 
 const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fonts = {
@@ -384,6 +385,11 @@ export function assertSafeHtml(html, { interactive = false, editing = false } = 
 }
 
 export function renderArticle(article, template, assets = new Map(), opts = {}) {
+  if (article.html) {
+    const mode = opts.mode || 'wechat';
+    const html = renderHtmlDocument(article.html, assets, { mode, interactive: mode === 'preview' && (opts.interactive || opts.editing) });
+    return { html, text: htmlPlainText(article.html), images: article.blocks.filter(block => block.type === 'image' || block.type === 'imageCard').map(block => ({ assetId: block.assetId, caption: block.caption || block.title || '' })) };
+  }
   const mode = opts.mode || 'wechat';
   const editing = mode === 'preview' && opts.editing === true;
   if (editing) template = { ...template, editing: true };

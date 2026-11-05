@@ -4,6 +4,7 @@ import { LayoutDesignSchema, validateLayoutDesign } from './layout-design.js';
 import { renderArticle } from './renderer.js';
 import { getTemplate } from './templates.js';
 import { unreadableText } from './readability.js';
+import { articleWithHtml, findHtmlNode, htmlElements, htmlTree, nodeText, outerHtml, renderHtmlDocument, replaceHtmlReference, sanitizeHtml } from './html-document.js';
 
 export const AI_EDIT_TIMEOUT_MS = 180_000;
 const id = z.string().min(1).max(80);
@@ -20,10 +21,13 @@ export const AIEditRequestSchema = z.object({
     z.object({ kind: z.literal('image'), name: text(240).min(1), assetId: id }).strict(),
     z.object({ kind: z.literal('document'), name: text(240).min(1), text: text(200_000), imageAssetIds: z.array(id).max(10).default([]) }).strict(),
   ])).max(5).default([]),
+  scope: z.enum(['selection', 'article']).default('article'),
 });
 export const AIEditResponseSchema = z.object({
   message: text(4000).min(1),
   operations: z.array(z.discriminatedUnion('type', [
+    z.object({ type: z.literal('setHtml'), html: z.string().max(600_000).min(1), intent: z.enum(['layout', 'content']).default('layout') }).strict(),
+    z.object({ type: z.literal('replaceHtml'), referenceId: id, html: z.string().max(600_000), intent: z.enum(['layout', 'content']).default('layout') }).strict(),
     z.object({ type: z.literal('setTitle'), text: text(80) }).strict(),
     z.object({ type: z.literal('setSummary'), text: text(120) }).strict(),
     z.object({ type: z.literal('updateBlock'), block: BlockSchema }).strict(),
@@ -38,7 +42,7 @@ const ordered = value => Array.isArray(value) ? value.map(ordered) : value && ty
 const fingerprint = value => JSON.stringify(ordered(value));
 const same = (a, b) => fingerprint(a) === fingerprint(b);
 export const isImageBlock = block => ['image', 'imageCard'].includes(block?.type);
-const part = (article, key) => key === 'title' || key === 'summary' ? article[key] : article.blocks.find(block => `block:${block.id}` === key);
+const part = (article, key) => key.startsWith('html:') ? (findHtmlNode(article.html, key.slice(5)) ? outerHtml(findHtmlNode(article.html, key.slice(5))) : undefined) : key === 'title' || key === 'summary' ? article[key] : article.blocks.find(block => `block:${block.id}` === key);
 const referenceSnapshot = (article, keys) => {
   const values = keys.map(key => part(article, key));
   return values.some(value => value === undefined) ? null : fingerprint(values);
@@ -47,7 +51,7 @@ export function createAIReference(article, value) {
   const snapshot = referenceSnapshot(article, value.keys);
   if (!snapshot || !value.text?.trim()) return null;
   const reference = AIReferenceSchema.parse({ ...value, id: uid('ref') });
-  return { ...reference, snapshot, ...(value.kind === 'image' ? { assetId: part(article, value.keys[0])?.assetId } : {}) };
+  return { ...reference, snapshot, ...(value.kind === 'image' ? { assetId: value.keys[0]?.startsWith('html:') ? findHtmlNode(article.html, value.keys[0].slice(5))?.attribs['data-asset-id'] : part(article, value.keys[0])?.assetId } : {}) };
 }
 export const validAIReference = (article, reference) => reference.snapshot === referenceSnapshot(article, reference.keys);
 export const sameAIReference = (a, b) => a.kind === 'image' && b.kind === 'image' ? same(a.keys, b.keys) : same([a.kind, a.keys, a.text, a.startOffset, a.endOffset], [b.kind, b.keys, b.text, b.startOffset, b.endOffset]);
@@ -72,7 +76,30 @@ function checkReadability(before, after) {
   return after;
 }
 
-export function buildAIEdit(article, operations) {
+export function buildAIEdit(article, operations, { references = [], scope = 'article' } = {}) {
+  if (article.html) {
+    let html = article.html;
+    const used = new Set();
+    for (const op of operations) {
+      const before = html;
+      if (op.type === 'setHtml') {
+        if (scope === 'selection') throw new Error('当前只允许修改选区，请使用 replaceHtml');
+        html = op.html;
+      } else if (op.type === 'replaceHtml') {
+        const reference = references.find(item => item.id === op.referenceId);
+        if (!reference || used.has(reference.id)) throw new Error('请使用本轮真实选区编号，且每个选区只修改一次');
+        html = replaceHtmlReference(html, reference, op.html);
+        used.add(reference.id);
+      } else throw new Error('当前文章以 HTML 保存，请使用 setHtml 或 replaceHtml 操作');
+      if (op.intent !== 'content' && nodeText(htmlTree(before)).replace(/\s/g, '') !== nodeText(htmlTree(html)).replace(/\s/g, '')) throw new Error('排版修改必须保留原文；只有用户明确要求改写时才可使用 intent:content');
+    }
+    if (!operations.length) return structuredClone(article);
+    const safe = sanitizeHtml(html);
+    if (renderHtmlDocument(safe, new Map(), { mode: 'source' }) === renderHtmlDocument(article.html, new Map(), { mode: 'source' })) throw new Error('方案没有产生有效变化，请修改实际生效的内联样式或内容');
+    const allowed = new Set(htmlElements(htmlTree(article.html)).filter(node => node.name === 'img').map(node => node.attribs['data-asset-id']));
+    for (const node of htmlElements(htmlTree(safe))) if (node.name === 'img' && !allowed.has(node.attribs['data-asset-id'])) throw new Error('只能使用当前文章已有图片，请先从图片库插入图片');
+    return checkReadability(article, ArticleSchema.parse(articleWithHtml(article, safe)));
+  }
   const next = structuredClone(article);
   const indexOf = blockId => {
     const index = next.blocks.findIndex(block => block.id === blockId);
@@ -128,6 +155,10 @@ function reorderedBlocks(before, after) {
 
 export function mergeAIEdit(base, candidate, current) {
   const conflict = () => { throw new Error('修改对象或相关排版已变化，此方案已失效，请取消方案后重新生成'); };
+  if (base.html || candidate.html || current.html) {
+    if (base.id !== current.id || base.html !== current.html || base.templateId !== current.templateId) conflict();
+    return { ...current, ...articleWithHtml(current, candidate.html), settings: current.settings };
+  }
   if (base.id !== current.id || base.templateId !== current.templateId || !same(base.layoutDesign, current.layoutDesign)) conflict();
   const merged = structuredClone(current);
   for (const field of ['title', 'summary']) if (base[field] !== candidate[field]) {
@@ -187,6 +218,18 @@ function layoutDescription(design) {
   return [design.name, styleText(design.page), ...Object.entries(design.rules).map(([type, style]) => `${({ title: '标题', summary: '摘要', heading: '小标题', paragraph: '正文', quote: '引用', list: '列表', image: '图片', callout: '重点', divider: '分隔线' })[type]}：${styleText(style)}`), ...nodes(design.nodes)].join('\n');
 }
 export function describeAIEdit(base, candidate) {
+  if (base.html || candidate.html) {
+    if (base.html === candidate.html) return [];
+    const before = new Map(htmlElements(htmlTree(base.html)).map(node => [node.attribs['data-node-id'], node]));
+    const after = new Map(htmlElements(htmlTree(candidate.html)).map(node => [node.attribs['data-node-id'], node]));
+    const ownContent = node => node ? fingerprint([node.name, node.attribs, (node.children || []).map(child => child.type === 'text' ? child.data : child.attribs?.['data-node-id'])]) : '';
+    const changed = [...new Set([...before.keys(), ...after.keys()])].filter(id => ownContent(before.get(id)) !== ownContent(after.get(id)));
+    const top = changed.filter(id => { const node = after.get(id) || before.get(id); return !changed.includes(node.parent?.attribs?.['data-node-id']); });
+    return top.slice(0, 30).map(id => {
+      const original = nodeText(before.get(id) || htmlTree('')), proposed = nodeText(after.get(id) || htmlTree(''));
+      return { key: `html:${id}`, label: original === proposed ? '调整自定义版式' : '修改内容与版式', before: original.slice(0, 800) || '空', after: `${proposed.slice(0, 800) || '空'}${original === proposed ? '\n（样式已调整，请在画布对比）' : ''}` };
+    });
+  }
   const changes = [];
   for (const [key, label] of [['title', '修改文章标题'], ['summary', '修改摘要']]) if (base[key] !== candidate[key]) changes.push({ key, label, before: base[key], after: candidate[key] });
   const moved = reorderedBlocks(base.blocks, candidate.blocks);
