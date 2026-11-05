@@ -1207,8 +1207,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .ai-edit-pane .side-panel-tabs { margin-bottom: 12px; }
 .ai-edit-slot { flex: 1; min-height: 0; display: flex; }
 .ai-edit-panel { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; gap: 12px; overflow-y: auto; overscroll-behavior: contain; }
-.ai-edit-context { color: var(--primary-deep); font-size: 12px; }
-.ai-edit-context small { display: block; margin-top: 4px; color: var(--text-secondary); font-size: 10px; }
 .ai-edit-messages { flex: 1; min-height: 80px; overflow-y: auto; overscroll-behavior: contain; padding-right: 3px; }
 .ai-edit-empty { padding: 24px 6px; color: var(--text-secondary); font-size: 12px; line-height: 1.9; }
 .ai-edit-empty svg { color: var(--primary); }
@@ -2412,9 +2410,6 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
 
 .ai-edit-pane .side-panel-tabs { margin-bottom: 8px; }
 .ai-edit-panel { gap: 9px; overflow: hidden; }
-.ai-edit-context { align-items: center; gap: 5px; padding: 1px 0 7px; color: var(--text-secondary); font-size: 10px; }
-.ai-edit-context > span { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
-.ai-edit-context small { font-size: 9px; }
 .ai-edit-messages { flex: 1 1 120px; min-height: 65px; padding-right: 3px; scrollbar-width: thin; }
 .ai-edit-empty { padding: 18px 5px; font-size: 11px; line-height: 1.7; }
 .ai-empty-icon { display: grid; place-items: center; width: 39px; height: 39px; margin-bottom: 14px; border: 1px solid var(--border-subtle); border-radius: 9px; color: var(--primary); background: #f9faf7; }
