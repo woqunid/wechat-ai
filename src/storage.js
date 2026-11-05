@@ -1,12 +1,16 @@
 const DB = 'weave-local';
 
 const openDb = () => new Promise((resolve, reject) => {
-  const request = indexedDB.open(DB, 3);
+  const request = indexedDB.open(DB, 4);
   request.onupgradeneeded = () => {
     const db = request.result;
     if (!db.objectStoreNames.contains('assets')) db.createObjectStore('assets', { keyPath: 'id' });
     for (const name of ['drafts', 'inputs', 'snapshots', 'aiEditAttachments']) {
       if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' });
+    }
+    if (!db.objectStoreNames.contains('history')) {
+      const history = db.createObjectStore('history', { keyPath: 'id' });
+      history.createIndex('expiresAt', 'expiresAt');
     }
   };
   request.onsuccess = () => resolve(request.result);
@@ -45,6 +49,63 @@ export const clearDrafts = async () => {
   await transact('aiEditAttachments', 'clear');
 };
 export const clearInputs = () => transact('inputs', 'clear');
+
+export const HISTORY_LIFETIME = 30 * 86_400_000;
+
+export async function pruneArticleHistory(now = Date.now()) {
+  const db = await openDb();
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction('history', 'readwrite');
+      const store = transaction.objectStore('history');
+      const request = store.index('expiresAt').openCursor(IDBKeyRange.upperBound(now));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        cursor.delete();
+        cursor.continue();
+      };
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error || new Error('历史记录清理失败'));
+    });
+  } finally { db.close(); }
+}
+
+export async function listArticleHistory() {
+  await pruneArticleHistory();
+  const db = await openDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction('history').objectStore('history').getAll();
+      request.onsuccess = () => resolve(request.result.sort((a, b) => b.savedAt - a.savedAt));
+      request.onerror = () => reject(request.error);
+    });
+  } finally { db.close(); }
+}
+
+export async function saveArticleHistory(article, assets) {
+  const savedAt = Date.now();
+  const assetIds = new Set(article.blocks.filter(block => block.assetId).map(block => block.assetId));
+  const record = {
+    id: article.id,
+    title: article.title || '未命名文章',
+    article,
+    assets: [...assetIds].flatMap(id => {
+      const asset = assets.get(id);
+      if (!asset) return [];
+      const { blob, previewUrl, ...metadata } = asset;
+      return [metadata];
+    }),
+    savedAt,
+    expiresAt: savedAt + HISTORY_LIFETIME,
+  };
+  await pruneArticleHistory(savedAt);
+  await transact('history', 'put', record);
+  return record;
+}
+
+export const deleteArticleHistory = id => transact('history', 'delete', { id });
 
 const cachedAttachment = ({ previewUrl, images, ...attachment }) => ({
   ...attachment,

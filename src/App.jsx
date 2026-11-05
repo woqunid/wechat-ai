@@ -8,6 +8,7 @@ import {
   ChevronUp,
   Copy,
   FileText,
+  History,
   ImagePlus,
   LayoutGrid,
   Plus,
@@ -18,6 +19,7 @@ import {
   RefreshCw,
   Search,
   Settings2,
+  Save,
   Sparkles,
   Upload,
   X,
@@ -50,7 +52,11 @@ import {
   clearSnapshot,
   clearDrafts,
   clearInputs,
+  listArticleHistory,
+  saveArticleHistory,
+  pruneArticleHistory,
 } from "./storage";
+import { ArticleHistory } from "./ArticleHistory";
 import "./styles.css";
 
 const API = "";
@@ -117,7 +123,16 @@ function App() {
   const [canvasWidth, setCanvasWidth] = useState(375);
   const [saved, setSaved] = useState("");
   const [savedSnapshot, setSavedSnapshot] = useState(null);
+  const [editorSession, setEditorSession] = useState(0);
   const fileRef = useRef();
+  useEffect(() => {
+    const prune = () => pruneArticleHistory().catch(() => setToast("历史记录清理失败"));
+    const onVisible = () => { if (document.visibilityState === "visible") prune(); };
+    prune();
+    const timer = setInterval(prune, 60_000);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, []);
   useEffect(() => {
     loadAssets()
       .then(async (items) => {
@@ -142,7 +157,7 @@ function App() {
         if (storedInput?.input) setInput({ ...blank(), ...storedInput.input });
         if (draft?.article) {
           setArticle(draft.article);
-          const sourceInput = draft.generationInput || storedInput?.input;
+          const sourceInput = Object.hasOwn(draft, "generationInput") ? draft.generationInput : storedInput?.input;
           setGenerationInput(sourceInput ? { ...blank(), ...sourceInput } : null);
           const recoveredSnapshot = Object.hasOwn(draft, "snapshot") ? draft.snapshot : snapshotRecord?.snapshot || null;
           setSavedSnapshot(recoveredSnapshot);
@@ -295,12 +310,17 @@ function App() {
     }
   };
   const cancelGeneration = () => requestAbort.current?.abort();
+  const removeUnusedAssets = async (ids) => {
+    let records;
+    try { records = await listArticleHistory(); } catch { return; }
+    const protectedIds = new Set(records.flatMap(record => record.assets.map(asset => asset.id)));
+    for (const id of ids) {
+      if (protectedIds.has(id)) continue;
+      try { await fetch(`/api/assets/${encodeURIComponent(id)}`, { method: "DELETE" }); } catch {}
+    }
+  };
   const removeImage = async (id) => {
-    try {
-      await fetch(`/api/assets/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      });
-    } catch {}
+    try { await removeUnusedAssets([id]); } catch { setToast("图片删除失败"); return; }
     await deleteAsset(id).catch(() => {});
     setAssets((m) => {
       const n = new Map(m);
@@ -342,11 +362,7 @@ function App() {
       };
       await saveAsset(next, previous.blob);
       await deleteAsset(id);
-      try {
-        await fetch(`/api/assets/${encodeURIComponent(id)}`, {
-          method: "DELETE",
-        });
-      } catch {}
+      await removeUnusedAssets([id]);
       setAssets((current) => {
         const assets = new Map(current);
         assets.delete(id);
@@ -487,13 +503,7 @@ function App() {
     }
   };
   const clear = async () => {
-    for (const id of assets.keys()) {
-      try {
-        await fetch(`/api/assets/${encodeURIComponent(id)}`, {
-          method: "DELETE",
-        });
-      } catch {}
-    }
+    await removeUnusedAssets(assets.keys());
     await clearAssets();
     await clearDrafts();
     await clearInputs();
@@ -574,13 +584,7 @@ function App() {
     return result;
   };
   const newDraft = async () => {
-    for (const id of assets.keys()) {
-      try {
-        await fetch(`/api/assets/${encodeURIComponent(id)}`, {
-          method: "DELETE",
-        });
-      } catch {}
-    }
+    await removeUnusedAssets(assets.keys());
     await clearAssets();
     await clearDrafts();
     await clearInputs();
@@ -592,8 +596,36 @@ function App() {
     setPage("create");
     setModal(null);
   };
+  const openHistory = async (record) => {
+    if (record.expiresAt <= Date.now()) throw new Error("历史记录已过期");
+    const restoredAssets = new Map(assets);
+    for (const asset of record.assets) {
+      const expired = Date.parse(asset.expiresAt) <= Date.now();
+      let broken = expired;
+      if (!expired) {
+        try { broken = !(await fetch(asset.cacheUrl || asset.url, { method: "HEAD", signal: AbortSignal.timeout(10_000) })).ok; } catch {}
+      }
+      const restored = broken
+        ? { ...asset, url: undefined, cacheUrl: undefined, pasteStatus: "broken" }
+        : { ...asset, previewUrl: asset.cacheUrl || asset.url };
+      await saveAsset(restored);
+      restoredAssets.set(asset.id, restored);
+    }
+    setAssets(restoredAssets);
+    setArticle(structuredClone(record.article));
+    setSelected(record.article.templateId);
+    setGenerationInput(null);
+    setSavedSnapshot(null);
+    clearSnapshot().catch(() => {});
+    setEditorSession(value => value + 1);
+    setModal(null);
+    setPage("edit");
+  };
   return (
     <Edit
+      key={editorSession}
+      onHistorySaved={() => saveArticleHistory(article, assets)}
+      onHistoryOpened={openHistory}
       savedSnapshot={savedSnapshot}
       onSnapshotSaved={saveArticleSnapshot}
       onSnapshotCleared={() => {
@@ -845,6 +877,8 @@ function TemplateThumb({ article, template, assets, large = false }) {
   );
 }
 function Edit({
+  onHistorySaved,
+  onHistoryOpened,
   rawPending,
   confirmRaw,
   copyFailure,
@@ -872,6 +906,8 @@ function Edit({
   setToast,
   toast,
 }) {
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [savingHistory, setSavingHistory] = useState(false);
   const [serviceOpen, setServiceOpen] = useState(false);
   const [library, setLibrary] = useState(false);
   const [libraryView, setLibraryView] = useState("templates");
@@ -960,6 +996,7 @@ function Edit({
   };
   useEffect(() => {
     const key = (e) => {
+      if (historyOpen) return;
       if (
         !(e.ctrlKey || e.metaKey) ||
         e.key.toLowerCase() !== "z" ||
@@ -972,7 +1009,7 @@ function Edit({
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [article]);
+  }, [article, historyOpen]);
   useEffect(() => {
     if (lastArticle.current !== article) {
       if (!historyMove.current) {
@@ -1134,6 +1171,15 @@ function Edit({
   const original = () => {
     setPage("create");
   };
+  const saveHistory = async () => {
+    if (savingHistory || canvasReadOnly) return;
+    setSavingHistory(true);
+    try {
+      await onHistorySaved();
+      setToast("已保存到历史记录");
+    } catch { setToast("历史记录保存失败，请检查浏览器存储空间"); }
+    finally { setSavingHistory(false); }
+  };
   return (
     <div className="edit-shell">
       <header className="edit-topbar">
@@ -1165,12 +1211,19 @@ function Edit({
           <button className="ghost-action" onClick={() => setModal("clear")}>
             清空草稿
           </button>
+          <button className="ghost-action article-history-action" onClick={() => setHistoryOpen(true)} disabled={canvasReadOnly || Boolean(aiEditor.busy) || savingHistory} title="历史记录" aria-label="历史记录">
+            <History size={16}/><span>历史记录</span>
+          </button>
+          <button className="ghost-action article-history-action" onClick={saveHistory} disabled={canvasReadOnly || savingHistory || imageUploads > 0} title="保存历史" aria-label="保存历史">
+            <Save size={16}/><span>{savingHistory ? "保存中" : "保存历史"}</span>
+          </button>
           <button className="publish-action" disabled={Boolean(layoutTrial || aiPreview)} title={layoutTrial || aiPreview ? '应用当前方案后再复制' : undefined} onClick={() => copy()}>
             <Copy size={16} />
             复制排版
           </button>
         </div>
       </header>
+      {historyOpen && <ArticleHistory onClose={() => setHistoryOpen(false)} onOpen={async record => { await onHistoryOpened(record); setHistoryOpen(false); }} setToast={setToast}/>}
       <AIServiceSettings
         open={serviceOpen}
         onClose={() => setServiceOpen(false)}

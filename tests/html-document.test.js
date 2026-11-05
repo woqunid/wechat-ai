@@ -141,6 +141,19 @@ test('AI 图片尺寸修改可应用，复制时使用登记的 HTTPS 地址', (
   assert.equal(articleWithHtml(next, loading).blocks.filter(block => block.assetId === 'img_test').length, 1);
 });
 
+test('历史图片失效后显示补图占位，保留正文和已保存样式', () => {
+  const current = articleWithHtml(base(), '<section style="padding:24px;"><p style="color:#334455;">保留正文</p><img data-asset-id="img_test" alt="配图" style="width:65%;"></section>');
+  const savedHtml = current.html;
+  const assets = new Map([['img_test', { id: 'img_test', pasteStatus: 'broken' }]]);
+  const preview = renderArticle(current, templates[0], assets, { mode: 'preview' }).html;
+  assert.match(preview, /保留正文/);
+  assert.match(preview, /padding:24px/);
+  assert.match(preview, /color:#334455/);
+  assert.match(preview, /图片待补充：配图/);
+  assert.ok(!preview.includes('<img'));
+  assert.equal(current.html, savedHtml);
+});
+
 test('AI 无需选区可定位节点，连续修改保留目标编号与边界外内容', () => {
   const original = document();
   const operations = [{ type: 'replaceHtml', nodeId: 'first', html: '<p style="margin:0 0 4px;">保留<strong>选中文字</strong>结尾</p>' }];

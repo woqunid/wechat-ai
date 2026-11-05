@@ -1120,6 +1120,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--text-main);
 }
 
+.top-actions > .ghost-action.article-history-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.small-modal.article-history-modal { display: flex; flex-direction: column; width: min(600px, 100%); }
+.article-history-modal > h2 { padding-right: 30px; }
+.article-history-modal > .article-history-retention { margin: 0 0 18px; color: var(--text-secondary); font-size: 11px; font-weight: 400; }
+.article-history-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.article-history-list ul { list-style: none; }
+.article-history-list li { display: flex; align-items: center; gap: 16px; padding: 15px 0; border-top: 1px solid var(--border-subtle); }
+.article-history-meta { flex: 1; min-width: 0; }
+.article-history-meta strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; }
+.article-history-meta time { display: block; margin-top: 5px; color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.article-history-row-actions { display: flex; flex-shrink: 0; align-items: center; gap: 12px; }
+.article-history-row-actions > .text-link { white-space: nowrap; font-size: 12px; }
+.article-history-delete:hover:not(:disabled) { color: var(--rose); background: var(--rose-subtle); }
+.article-history-empty { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 40px 0; color: var(--text-secondary); font-size: 12px; }
+
 [data-editor-key] {
   scroll-margin-block: 24px;
 }
@@ -1303,6 +1318,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .layout-design-modal .layout-design-error { margin-top: 14px; color: var(--rose); }
 .layout-design-progress { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--primary-deep); }
 @media (max-width: 600px) {
+  .top-actions > .ghost-action.article-history-action { width: 32px; padding: 0; gap: 0; }
+  .article-history-action > span { display: none; }
   .layout-design-modal { padding: 26px 20px; }
   .layout-design-modal h2 { font-size: 19px; }
 }

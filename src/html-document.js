@@ -79,7 +79,7 @@ export function renderHtmlDocument(html, assets = new Map(), { mode = 'wechat', 
       const url = candidates.find(value => typeof value === 'string' && (mode === 'preview' ? /^(https:\/\/|\/uploads\/|blob:|data:image\/(png|jpeg|webp);base64,)/i : /^https:\/\//i).test(value));
       if (asset?.pasteStatus === 'broken' && mode !== 'preview') { DomUtils.removeElement(node); continue; }
       if (url) node.attribs.src = url;
-      else if (mode !== 'preview') {
+      else if (mode !== 'preview' || asset?.pasteStatus === 'broken') {
         DomUtils.replaceElement(node, htmlTree(`<p style="margin:0;padding:24px 10px;text-align:center;font-size:13px;">[图片待补充：${escapeHtml(node.attribs.alt || '文章图片')}]</p>`).children[0]);
         continue;
       }
