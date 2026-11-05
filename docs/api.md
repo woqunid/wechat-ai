@@ -12,6 +12,7 @@
 | GET | `/api/templates` | v2.1.0，40 套模板元数据、视觉配置与内容适配信息（公众号真实回归完成前状态为 `draft`） |
 | POST | `/api/materials/parse` | `multipart/form-data`，字段 `files`，最多 5 份 DOCX/PDF/TXT/MD |
 | POST | `/api/assets` | `multipart/form-data`，字段 `file`，图片最多 10 MB |
+| POST | `/api/assets/import` | `{url}`，读取公网 HTTPS 图片并返回与本地上传一致的素材 |
 | DELETE | `/api/assets/:id` | 删除图片资源 |
 | POST | `/api/articles/generate` | create/polish 模式生成结构化文章；raw 模式由共享解析器在前端完成 |
 | POST | `/api/articles/rewrite` | 仅修改所选文字，支持润色、缩短与扩写，响应为待用户预览的修改结果 |
@@ -37,6 +38,12 @@
 Vite 开发代理显式设置 `changeOrigin: false` 与 `xfwd: true`，保留浏览器访问的 Host 并传递来源地址、端口与协议。本地和局域网经前端 `/api` 转发的请求按同源识别，不依赖固定 IP 白名单；避免字符串形式代理默认改写 Host 后触发 `ORIGIN_NOT_ALLOWED`。此修复保留现有来源校验与跨域白名单，不放行任意跨域请求。
 
 图片 URL 仅在复制时允许 HTTPS；本地地址和未完成真实公众号验证的公网图均标记为需手动检查。
+
+图片链接导入仅接受不带账号密码、默认 HTTPS 端口的公网地址，最多三次重定向、总下载时间 15 秒、原图和规范化结果均不超过 10MB；仅接收实际可解码的 JPG/PNG/WebP，单边不超过 8000px。下载前校验全部 DNS 结果并固定连接地址，跳转后重新校验；拒绝本机、私网、链路本地及保留地址。实现使用 Node.js 内置的 [HTTPS 请求](https://nodejs.org/api/https.html#httpsrequesturl-options-callback)和 [BlockList](https://nodejs.org/api/net.html#class-netblocklist)，不新增依赖。每来源默认每分钟 20 次（`RATE_IMPORT_PER_MIN` 可覆盖），全局同时最多处理两张远程图片，客户端断开时中止下载。
+
+导入响应的 `asset` 在原有字段上增加 `cacheUrl`（本站缓存路径）和 `sourceUrl`（原始链接）；本地上传也返回 `cacheUrl`。`url` 优先使用配置的公网 HTTPS 缓存地址，否则链接图片使用原始 HTTPS 地址供复制。前端从缓存读取 Blob 保存草稿，重载按 `cacheUrl` 检查缓存，避免跨域 HEAD 误判；图片仍保持 `pasteStatus: needs-manual`，公众号端实际显示需检查。重新上传缓存时保留原图链接；删除仅移除本应用缓存，不请求删除图床资源。
+
+导入错误包括 `INVALID_IMAGE_URL`、`IMAGE_URL_NOT_PUBLIC`、`IMAGE_TOO_LARGE`、`DIMENSION_EXCEEDED`、`INVALID_IMAGE`、`IMAGE_IMPORT_FAILED`、`IMAGE_IMPORT_TIMEOUT`。弹窗读取失败保留链接输入；正文粘贴先生成普通链接段落，验证成功后只转换仍保持原链接文字的段落。失败保留链接，正文已修改或图片数量达上限时只登记为素材，不覆盖内容。最多 10 张图片与 120 个内容块的限制与本地图片共用；AI 继续只引用登记 ID，原文排版不会调用模型。
 
 `GET /api/config/status` 会返回 Base URL、模型 ID 和 `hasApiKey`，但绝不返回密钥内容。
 

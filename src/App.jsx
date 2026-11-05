@@ -27,6 +27,7 @@ import { bodyCharCount, bodyLengthStatus, CREATION_MODES, GENERATION_TIMEOUT_MS,
 import { describeTemplateFit, recommendTemplates } from "./recommender";
 import { AIServiceSettings } from "./AIServiceSettings";
 import { ArticleEditor } from "./ArticleEditor";
+import { ImageLinkInput } from "./ImageLinkInput";
 import {
   saveAsset,
   loadAssets,
@@ -112,7 +113,7 @@ function App() {
         const checked = await Promise.all(
           items.map(async (asset) => {
             try {
-              const response = await fetch(asset.url, { method: "HEAD" });
+              const response = await fetch(asset.cacheUrl || asset.url, { method: "HEAD" });
               return [
                 asset.id,
                 response.ok ? asset : { ...asset, pasteStatus: "broken" },
@@ -330,7 +331,8 @@ function App() {
         throw new Error(data.error?.message || "图片重新上传失败");
       const next = {
         ...data.asset,
-        url: new URL(data.asset.url, window.location.origin).href,
+        ...(previous.sourceUrl ? { sourceUrl: previous.sourceUrl } : {}),
+        url: /^https:\/\//i.test(data.asset.url) ? data.asset.url : previous.sourceUrl || new URL(data.asset.url, window.location.origin).href,
         previewUrl: URL.createObjectURL(previous.blob),
         blob: previous.blob,
       };
@@ -1141,6 +1143,8 @@ function Edit({
   const imageInput = useRef();
   const [insertAt, setInsertAt] = useState(0);
   const [replaceBlockId, setReplaceBlockId] = useState(null);
+  const [imageSource, setImageSource] = useState('local');
+  useEffect(() => { if (modal === 'gallery') setImageSource('local'); }, [modal]);
   const [articleHeight, setArticleHeight] = useState("");
   const undo = () => {
     const prev = history.current.pop();
@@ -1323,6 +1327,31 @@ function Edit({
         `${t.id} ${t.name} ${t.series} ${t.visual} ${t.fit.description || ""} ${t.styleTags.join(" ")}`
           .toLowerCase().includes(term)),
   );
+  const registerImageAsset = async asset => {
+    const stored = { ...asset, previewUrl: URL.createObjectURL(asset.blob) };
+    try { await saveAsset(stored, stored.blob); }
+    catch (error) { URL.revokeObjectURL(stored.previewUrl); throw error; }
+    setAssets(current => new Map(current).set(stored.id, stored));
+  };
+  const placeImageAsset = (asset, index, blockId, beforeId, caption = '') => {
+    const current = lastArticle.current;
+    if (!current || current.id !== article.id) throw new Error('文章已切换，请重新插入图片');
+    if (!blockId && current.blocks.length >= 120) throw new Error('段落数量已达上限，请先合并部分内容');
+    if (!blockId && current.blocks.filter(block => block.type === 'image' || block.type === 'imageCard').length >= 10) throw new Error('最多添加 10 张图片');
+    if (blockId && !current.blocks.some(block => block.id === blockId)) throw new Error('原图片已删除，请重新插入');
+    const id = blockId || uid('b');
+    setArticle(a => {
+      if (!a || a.id !== article.id) return a;
+      if (blockId) return { ...a, blocks: a.blocks.map(block => block.id === blockId ? { ...block, assetId: asset.id } : block), updatedAt: new Date().toISOString() };
+      if (a.blocks.length >= 120 || a.blocks.filter(block => block.type === 'image' || block.type === 'imageCard').length >= 10) return a;
+      const blocks = [...a.blocks];
+      const anchor = beforeId === null ? blocks.length : blocks.findIndex(block => block.id === beforeId);
+      blocks.splice(anchor >= 0 ? anchor : Math.min(index, blocks.length), 0, { id, type: 'imageCard', assetId: asset.id, caption });
+      return { ...a, blocks, updatedAt: new Date().toISOString() };
+    });
+    setReplaceBlockId(null);
+    return id;
+  };
   const uploadImage = async (
     file,
     index = article.blocks.length,
@@ -1349,32 +1378,10 @@ function Edit({
       const asset = {
         ...d.asset,
         url: new URL(d.asset.url, window.location.origin).href,
-        previewUrl: URL.createObjectURL(file),
         blob: file,
       };
-      setAssets(current => new Map(current).set(asset.id, asset));
-      await saveAsset(asset, file);
-      const insertedId = blockId || uid("b");
-      setArticle((a) => {
-        if (!a || a.id !== article.id) return a;
-        const blocks = [...a.blocks];
-        if (blockId) {
-          const updated = blocks.map((block) =>
-            block.id === blockId ? { ...block, assetId: d.asset.id } : block,
-          );
-          setReplaceBlockId(null);
-          return { ...a, blocks: updated };
-        }
-        const anchoredIndex = beforeId === null ? blocks.length : blocks.findIndex(block => block.id === beforeId);
-        blocks.splice(anchoredIndex >= 0 ? anchoredIndex : Math.min(index, blocks.length), 0, {
-          id: insertedId,
-          type: "imageCard",
-          assetId: d.asset.id,
-          caption: file.name,
-        });
-        return { ...a, blocks };
-      });
-      return insertedId;
+      await registerImageAsset(asset);
+      return placeImageAsset(asset, index, blockId, beforeId, file.name);
     } catch (e) {
       setToast(e.message);
     }
@@ -1549,6 +1556,7 @@ function Edit({
               activeKey={activeKey}
               onSelect={key => locateContent(key, 'editor')}
               onUpload={uploadImage}
+              onRegisterAsset={registerImageAsset}
               onGallery={(index, blockId = null) => {
                 setInsertAt(index);
                 setReplaceBlockId(blockId);
@@ -1882,11 +1890,26 @@ function Edit({
               <>
                 <span className="eyebrow">图片素材</span>
                 <h2>{replaceBlockId ? "替换图片" : "插入图片"}</h2>
+                <div className="image-source-tabs" role="tablist" aria-label="图片来源">
+                  <button role="tab" aria-selected={imageSource === 'local'} onClick={() => setImageSource('local')}>本地图片</button>
+                  <button role="tab" aria-selected={imageSource === 'link'} onClick={() => setImageSource('link')}>图片链接</button>
+                </div>
+                {imageSource === 'link' ? <ImageLinkInput replacing={Boolean(replaceBlockId)} onInsert={async asset => {
+                  await registerImageAsset(asset);
+                  return placeImageAsset(asset, insertAt, replaceBlockId);
+                }} onDone={id => {
+                  setModal(null);
+                  locateContent(`block:${id}`, 'preview');
+                  locateContent(`block:${id}`, 'editor');
+                }}/> : <>
                 <div className="asset-gallery">
                   {[...assets.values()].map((asset) => (
                     <button
                       key={asset.id}
                       onClick={() => {
+                        if (!replaceBlockId && article.blocks.length >= 120) { setToast("段落数量已达上限，请先合并部分内容"); return; }
+                        if (!replaceBlockId && article.blocks.filter(block => block.type === "image" || block.type === "imageCard").length >= 10) { setToast("最多添加 10 张图片"); return; }
+                        const id = replaceBlockId || uid("b");
                         if (replaceBlockId) {
                           setArticle((a) => ({
                             ...a,
@@ -1904,7 +1927,7 @@ function Edit({
                               Math.min(insertAt, blocks.length),
                               0,
                               {
-                                id: uid("b"),
+                                id,
                                 type: "imageCard",
                                 assetId: asset.id,
                                 caption: "",
@@ -1913,9 +1936,11 @@ function Edit({
                             return { ...a, blocks };
                           });
                         setModal(null);
+                        locateContent(`block:${id}`, 'preview');
+                        locateContent(`block:${id}`, 'editor');
                       }}
                     >
-                      <img src={asset.previewUrl} alt="" />
+                      <img src={asset.previewUrl || asset.url} alt="" />
                       <span>{asset.filename || asset.id}</span>
                     </button>
                   ))}
@@ -1934,12 +1959,19 @@ function Edit({
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
                   onChange={(e) => {
+                    const file = e.target.files?.[0];
                     const blockId = replaceBlockId;
-                    uploadImage(e.target.files?.[0], insertAt, blockId);
-                    setModal(null);
                     e.target.value = "";
+                    if (!file) return;
+                    setModal(null);
+                    uploadImage(file, insertAt, blockId).then(id => {
+                      if (!id) return;
+                      locateContent(`block:${id}`, 'preview');
+                      locateContent(`block:${id}`, 'editor');
+                    });
                   }}
                 />
+                </>}
                 <div className="modal-buttons">
                   <button
                     className="ghost-action"

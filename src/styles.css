@@ -1398,6 +1398,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .writing-warnings p { margin: 5px 0 0; }
 
+.image-source-tabs { display: flex; gap: 8px; margin: 16px 0; }
+.image-source-tabs button { padding: 8px 14px; border-radius: 6px; color: var(--text-secondary); background: var(--bg-subtle); }
+.image-source-tabs button[aria-selected="true"] { color: var(--primary-deep); background: var(--primary-subtle); }
+.image-link-input form > label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 600; }
+.image-link-input input { width: 100%; padding: 11px 12px; border: 1px solid var(--border-subtle); border-radius: var(--r-sm); }
+.image-link-input p { margin: 10px 0; font-size: 12px; line-height: 1.7; }
+.image-link-input form > p { color: var(--text-secondary); }
+.image-link-input .ghost-action { display: inline-flex; align-items: center; gap: 6px; }
+.image-link-preview { display: grid; justify-items: start; gap: 12px; margin-top: 16px; }
+.image-link-preview img { width: 100%; max-height: 240px; object-fit: contain; background: var(--bg-subtle); }
+.image-link-preview small { color: var(--text-secondary); }
+
 .mock-origin {
   color: var(--amber);
   background: var(--amber-subtle);

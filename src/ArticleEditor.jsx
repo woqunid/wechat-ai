@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, Eraser, Highlighter, ImagePlus, IndentIncrease, RefreshCw, Trash2, Underline, WandSparkles, X } from 'lucide-react';
-import { uid } from './core.js';
+import { blockText, uid } from './core.js';
 import { GENERATION_TIMEOUT_MS } from './creation.js';
+import { imageLink, readImageLink } from './image-assets.js';
 import { bookmarkRange, clipboardBlocks, editorBookmark, editorHtml, readEditorBlocks, restoreBookmark } from './editor-dom.js';
 
 const imageBlock = block => block?.type === 'image' || block?.type === 'imageCard';
@@ -12,10 +13,9 @@ const selectionFingerprint = (blocks, saved) => {
   return from < 0 || to < from ? null : JSON.stringify(blocks.slice(from, to + 1));
 };
 
-export function ArticleEditor({ article, setArticle, template, assets, activeKey, onSelect, onUpload, onGallery, setToast }) {
+export function ArticleEditor({ article, setArticle, template, assets, activeKey, onSelect, onUpload, onRegisterAsset, onGallery, setToast }) {
   const canvas = useRef();
   const sheet = useRef();
-  const fileInput = useRef();
   const bookmark = useRef(null);
   const localBlocks = useRef(null);
   const visualSource = useRef(null);
@@ -27,9 +27,12 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
   const request = useRef(null);
   const aiDialog = useRef();
   const [selection, setSelection] = useState(null);
-  const [showAssets, setShowAssets] = useState(false);
   const [drop, setDrop] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [importCount, setImportCount] = useState(0);
+  const pendingImages = useRef(new Map());
+  const latestArticle = useRef(article);
+  latestArticle.current = article;
   const [ai, setAi] = useState(null);
   const selectedId = activeKey?.startsWith('block:') ? activeKey.slice(6) : activeKey ? null : selection?.startId;
   const current = article.blocks.find(block => block.id === selectedId) || (!activeKey ? article.blocks[0] : undefined);
@@ -54,6 +57,11 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     return () => document.removeEventListener('selectionchange', listener);
   });
   useEffect(() => () => request.current?.abort(), []);
+  useEffect(() => () => {
+    for (const controller of pendingImages.current.values()) controller.abort();
+    pendingImages.current.clear();
+  }, [article.id]);
+  useEffect(() => { setImportCount(0); }, [article.id]);
   useEffect(() => {
     if (ai) (aiDialog.current?.querySelector('textarea') || aiDialog.current)?.focus({ preventScroll: true });
   }, [ai?.busy]);
@@ -182,7 +190,7 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     commit();
   };
   const insertIndex = () => {
-    const index = article.blocks.findIndex(block => block.id === (bookmark.current?.endId || current?.id));
+    const index = article.blocks.findIndex(block => block.id === (bookmark.current?.endId || selectedId));
     return index < 0 ? article.blocks.length : index + 1;
   };
   const uploadFiles = async (files, index) => {
@@ -206,9 +214,50 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     blocks.splice(index, 0, { id, type: 'imageCard', assetId, caption: '' });
     if (publish(blocks)) onSelect(`block:${id}`);
   };
+  const pasteImageLink = async (url, text) => {
+    const blocks = [...article.blocks];
+    const index = insertIndex();
+    const previous = blocks[index - 1];
+    const blank = previous?.type === 'paragraph' && !blockText(previous).trim();
+    const id = blank ? previous.id : uid('b');
+    const placeholder = { id, type: 'paragraph', runs: [{ text }] };
+    if (blank) blocks[index - 1] = { ...previous, runs: placeholder.runs };
+    else blocks.splice(index, 0, placeholder);
+    if (!publish(blocks)) return;
+    onSelect(`block:${id}`);
+    const controller = new AbortController();
+    pendingImages.current.set(id, controller);
+    setImportCount(pendingImages.current.size);
+    let asset;
+    try {
+      asset = await readImageLink(url, controller.signal);
+      if (controller.signal.aborted || latestArticle.current.id !== article.id) return;
+      await onRegisterAsset(asset);
+      if (controller.signal.aborted || latestArticle.current.id !== article.id) return;
+      const current = latestArticle.current;
+      const target = current.blocks.find(block => block.id === id);
+      if (target?.type !== 'paragraph' || blockText(target) !== text) { setToast('图片已加入素材，原位置已有修改，未覆盖正文'); return; }
+      if (current.blocks.filter(imageBlock).length >= 10) { setToast('图片已加入素材，正文最多添加 10 张图片，链接文字已保留'); return; }
+      setArticle(a => {
+        if (a.id !== article.id || a.blocks.filter(imageBlock).length >= 10) return a;
+        return { ...a, blocks: a.blocks.map(block => block.id === id && block.type === 'paragraph' && blockText(block) === text ? { id, type: 'imageCard', assetId: asset.id, caption: '', ...(block.style?.align ? { style: { align: block.style.align } } : {}) } : block), updatedAt: new Date().toISOString() };
+      });
+    } catch (error) {
+      if (!controller.signal.aborted) setToast(`${error.name === 'TimeoutError' ? '图片读取超时' : error.message}，链接文字已保留`);
+    } finally {
+      if (asset) URL.revokeObjectURL(asset.previewUrl);
+      if (pendingImages.current.get(id) === controller) {
+        pendingImages.current.delete(id);
+        setImportCount(pendingImages.current.size);
+      }
+    }
+  };
   const paste = event => {
     event.preventDefault();
     if (event.clipboardData.files.length) { uploadFiles(event.clipboardData.files, insertIndex()); return; }
+    const text = event.clipboardData.getData('text/plain').trim();
+    const url = imageLink(text);
+    if (url) { remember(); pasteImageLink(url, text); return; }
     const blocks = clipboardBlocks(event.clipboardData.getData('text/html'), event.clipboardData.getData('text/plain'), assets);
     remember();
     const replacing = bookmark.current?.collapsed ? 0 : Math.max(0, (bookmark.current?.ids.length || 1) - 1);
@@ -347,7 +396,7 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
         <button title="清除选中文字的样式" aria-label="清除文字样式" onMouseDown={keepSelection} onClick={() => command('removeFormat')} disabled={imageBlock(current)}><Eraser size={16}/></button>
         <label className="editor-color" title="选中文字颜色">A<input aria-label="文字颜色" type="color" defaultValue="#0f766e" onChange={event => command('foreColor', event.target.value)} disabled={imageBlock(current)}/></label>
         <label className="editor-color editor-highlight" title="选中文字高亮"><Highlighter size={16}/><input aria-label="文字高亮颜色" type="color" defaultValue="#fff2a8" onChange={event => command('hiliteColor', event.target.value)} disabled={imageBlock(current)}/></label>
-        <button title="打开图片素材，可拖入正文" aria-label="图片素材" aria-pressed={showAssets} onMouseDown={keepSelection} onClick={() => setShowAssets(value => !value)}><ImagePlus size={17}/></button>
+        <button title="在当前段落后插入图片" aria-label="插入图片" aria-haspopup="dialog" onMouseDown={keepSelection} onClick={() => onGallery(insertIndex())}><ImagePlus size={17}/></button>
         <button className="editor-reset" title="清除所选段落的手动样式，恢复模板" onMouseDown={keepSelection} onClick={resetStyle}>恢复模板</button>
       </div>
       {!imageBlock(current) && <div className="document-toolbar-row paragraph-controls">
@@ -359,9 +408,9 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
       </div>}
       <div className="editor-ai-tools"><span>{article.mode === 'raw' ? '原文排版不调用 AI，可手动编辑正文' : hasSelection ? `已选 ${selection.text.length} 字` : '选中文字后可局部修改'}</span>{article.mode !== 'raw' && [['polish','润色'],['shorten','缩短'],['expand','扩写']].map(([action,label]) => <button key={action} disabled={!hasSelection || Boolean(ai)} onMouseDown={keepSelection} onClick={() => rewrite(action)}><WandSparkles size={12}/>{label}</button>)}</div>
     </div>
-    {showAssets && <div className="editor-assets"><div className="editor-assets-heading"><span>点击插图，或拖到正文指定位置</span><button onClick={() => fileInput.current.click()} disabled={uploading}>上传图片</button></div><div className="editor-asset-strip">{[...assets.values()].map(asset => <button key={asset.id} title="点击插入，拖动可选择位置" draggable onDragStart={event => { event.dataTransfer.setData('application/x-weave-asset', asset.id); event.dataTransfer.effectAllowed = 'copy'; }} onMouseDown={keepSelection} onClick={() => insertAsset(asset.id)}><img src={asset.previewUrl || asset.url} alt={asset.filename || '图片素材'}/></button>)}{assets.size === 0 && <small>还没有图片，也可以直接粘贴截图或拖入文件。</small>}</div></div>}
     {imageBlock(current) && <div className="editor-image-controls"><label>图片宽度 <input aria-label="图片宽度" type="range" min="20" max="100" step="5" value={currentStyle.imageWidth || 100} onChange={event => patchStyle({ imageWidth: Number(event.target.value) })}/><span>{currentStyle.imageWidth || 100}%</span></label><div>{[['left','靠左'],['center','居中'],['right','靠右']].map(([align,label]) => <button key={align} aria-pressed={(currentStyle.align || 'left') === align} onClick={() => patchStyle({ align })}>{label}</button>)}<button onClick={() => onGallery(article.blocks.findIndex(block => block.id === current.id), current.id)}>替换图片</button><button title="删除当前图片，可撤销" aria-label="删除图片" onClick={() => publish(article.blocks.filter(block => block.id !== current.id))}><Trash2 size={14}/></button></div></div>}
     {uploading && <p className="editor-uploading" role="status">图片上传中…</p>}
+    {importCount > 0 && <p className="editor-uploading" role="status">正在识别 {importCount} 个图片链接，链接文字已保留…</p>}
     <div className="document-sheet" ref={sheet} onDragOver={dragOver} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDrop(null); }} onDrop={dropImage}>
       {drop && <div className="editor-drop-line" style={{ top: drop.top }} aria-hidden="true"/>}
       <div ref={canvas} className="document-canvas" role="textbox" aria-label="文章正文，支持连续编辑和文字排版" aria-multiline="true" contentEditable suppressContentEditableWarning spellCheck={false} style={{ '--editor-primary': template.tokens.primary, '--editor-tint': template.tokens.tint, '--editor-line-height': template.tokens.lineHeight, '--editor-paragraph-gap': `${template.tokens.paraGap}px` }}
@@ -378,7 +427,6 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
         onPointerDown={resizeImage} onDragStart={event => { const figure = event.target.closest('figure[data-block-id]'); draggingText.current = !figure; if (figure) { event.dataTransfer.setData('application/x-weave-block', figure.dataset.blockId); event.dataTransfer.effectAllowed = 'move'; } }} onDragEnd={() => { draggingText.current = false; setDrop(null); }}/>
     </div>
     <p className="editor-help">回车换段 · Shift+回车换行 · 拖动图片可调整位置，拖动图片角落可缩放</p>
-    <input ref={fileInput} type="file" hidden multiple accept="image/jpeg,image/png,image/webp" onChange={event => { uploadFiles(event.target.files, insertIndex()); event.target.value = ''; }}/>
     {ai && <div className="modal-backdrop editor-ai-backdrop" onClick={cancelRewrite}><div ref={aiDialog} tabIndex={-1} onKeyDown={dialogKeys} className="small-modal editor-ai-dialog" role="dialog" aria-modal="true" aria-labelledby="rewrite-title" onClick={event => event.stopPropagation()}><button className="modal-close" aria-label="取消局部修改" onClick={cancelRewrite}><X size={18}/></button><span className="eyebrow">局部修改</span><h2 id="rewrite-title">{({ polish:'润色',shorten:'缩短',expand:'扩写' })[ai.action]}选中文字</h2><label>原文</label><p className="editor-ai-original">{ai.original}</p>{ai.busy ? <p role="status" className="editor-ai-pending"><RefreshCw className="spin" size={16}/>正在修改，原文已保留…</p> : <><label htmlFor="rewrite-result">修改结果，可继续编辑</label><textarea id="rewrite-result" value={ai.result} maxLength={12000} onChange={event => setAi(previous => ({ ...previous, result: event.target.value }))}/></>}<div className="modal-buttons"><button className="ghost-action" onClick={cancelRewrite}>取消</button><button className="publish-action" disabled={ai.busy || !ai.result.trim()} onClick={applyRewrite}>替换选中文字</button></div></div></div>}
   </div>;
 }

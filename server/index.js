@@ -16,6 +16,7 @@ import { draftWarnings, generationInstructions, inspectDraft, missingProtectedPa
 import { recommendTemplates } from '../src/recommender.js';
 import { DomUtils, parseDocument } from 'htmlparser2';
 import { fetchModels, getAIConfig, getAIStatus, resetAIConfig, resolveAIConfig, resolveCredentials, saveAIConfig } from './ai-config.js';
+import { fetchRemoteImage, MAX_IMAGE_BYTES } from './remote-image.js';
 
 dotenv.config();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -26,6 +27,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 const oneMinute = new Map();
 let activeGenerations = 0;
 const resolvedApiStyles = new Map();
+let activeImageImports = 0;
 
 app.use(express.json({ limit: '2mb' }));
 app.use((req, res, next) => {
@@ -228,6 +230,37 @@ app.post('/api/materials/parse', rateLimit(20, 'RATE_PARSE_PER_MIN'), upload.arr
   res.json({ files });
 });
 
+async function cacheImage(buffer, sourceUrl) {
+  if (!buffer.length || buffer.length > MAX_IMAGE_BYTES) throw Object.assign(new Error('图片为空或超过 10MB'), { code: 'IMAGE_TOO_LARGE', status: 400 });
+  const metadata = await sharp(buffer, { failOn: 'error' }).metadata();
+  const format = { jpeg: { mime: 'image/jpeg', extension: 'jpg' }, png: { mime: 'image/png', extension: 'png' }, webp: { mime: 'image/webp', extension: 'webp' } }[metadata.format];
+  if (!format) throw Object.assign(new Error('仅支持 JPG、PNG 和 WebP 图片'), { code: 'INVALID_IMAGE', status: 400 });
+  if (!metadata.width || !metadata.height || metadata.width > 8000 || metadata.height > 8000) throw Object.assign(new Error('图片尺寸过大'), { code: 'DIMENSION_EXCEEDED', status: 400 });
+  const id = uid('img');
+  const filename = `${id}.${format.extension}`;
+  const normalized = await sharp(buffer).rotate().toBuffer({ resolveWithObject: true });
+  if (normalized.info.size > MAX_IMAGE_BYTES) throw Object.assign(new Error('图片处理后超过 10MB'), { code: 'IMAGE_TOO_LARGE', status: 400 });
+  await fs.promises.writeFile(path.join(uploadDir, filename), normalized.data);
+  const cacheUrl = `/uploads/${filename}`;
+  const publicUrl = publicAssetUrl(filename);
+  return { id, filename, mime: format.mime, width: normalized.info.width, height: normalized.info.height, bytes: normalized.info.size, cacheUrl, url: sourceUrl && !/^https:\/\//i.test(publicUrl) ? sourceUrl : publicUrl, ...(sourceUrl ? { sourceUrl } : {}), expiresAt: new Date(Date.now() + Number(process.env.ASSET_TTL_DAYS || 7) * 86_400_000).toISOString(), pasteStatus: 'needs-manual' };
+}
+
+app.post('/api/assets/import', rateLimit(20, 'RATE_IMPORT_PER_MIN'), async (req, res) => {
+  if (!canWriteConfig(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '此来源不能导入图片' } });
+  if (activeImageImports >= 2) return res.status(429).json({ error: { code: 'RATE_LIMITED', message: '正在读取其他图片，请稍后重试' } });
+  const controller = new AbortController();
+  res.once('close', () => { if (!res.writableEnded) controller.abort(); });
+  activeImageImports++;
+  try {
+    const { buffer, sourceUrl } = await fetchRemoteImage(req.body?.url, controller.signal);
+    const asset = await cacheImage(buffer, sourceUrl);
+    if (!controller.signal.aborted) res.json({ asset });
+  } catch (error) {
+    if (!controller.signal.aborted) res.status(error.status || 400).json({ error: { code: error.code || 'INVALID_IMAGE', message: error.status ? error.message : '图片无法处理，请使用 JPG、PNG 或 WebP 直链' } });
+  } finally { activeImageImports--; }
+});
+
 app.post('/api/assets', rateLimit(60, 'RATE_ASSETS_PER_MIN'), upload.single('file'), async (req, res) => {
   try {
     const imageExtension = req.file ? path.extname(req.file.originalname).toLowerCase() : '';
@@ -235,26 +268,9 @@ app.post('/api/assets', rateLimit(60, 'RATE_ASSETS_PER_MIN'), upload.single('fil
     if (!req.file || req.file.size > 10 * 1024 * 1024 || !supportedExtensions.includes(imageExtension)) {
       return res.status(400).json({ error: { code: req.file?.size > 10 * 1024 * 1024 ? 'IMAGE_TOO_LARGE' : 'INVALID_IMAGE', message: '图片格式不支持或超过 10MB' } });
     }
-    const metadata = await sharp(req.file.buffer, { failOn: 'error' }).metadata();
-    const imageFormats = {
-      jpeg: { mime: 'image/jpeg', extension: 'jpg' },
-      png: { mime: 'image/png', extension: 'png' },
-      webp: { mime: 'image/webp', extension: 'webp' },
-    };
-    const format = imageFormats[metadata.format];
-    if (!format) {
-      return res.status(400).json({ error: { code: 'INVALID_IMAGE', message: '图片内容与文件格式不一致' } });
-    }
-    if (!metadata.width || !metadata.height || metadata.width > 8000 || metadata.height > 8000) {
-      return res.status(400).json({ error: { code: 'DIMENSION_EXCEEDED', message: '图片尺寸过大' } });
-    }
-    const id = uid('img');
-    const filename = `${id}.${format.extension}`;
-    const normalized = await sharp(req.file.buffer).rotate().toBuffer({ resolveWithObject: true });
-    await fs.promises.writeFile(path.join(uploadDir, filename), normalized.data);
-    res.json({ asset: { id, filename, mime: format.mime, width: normalized.info.width, height: normalized.info.height, bytes: normalized.info.size, url: publicAssetUrl(filename), expiresAt: new Date(Date.now() + Number(process.env.ASSET_TTL_DAYS || 7) * 86_400_000).toISOString(), pasteStatus: 'needs-manual' } });
-  } catch {
-    res.status(400).json({ error: { code: 'INVALID_IMAGE', message: '图片无法处理' } });
+    res.json({ asset: await cacheImage(req.file.buffer) });
+  } catch (error) {
+    res.status(error.status || 400).json({ error: { code: error.code || 'INVALID_IMAGE', message: error.status ? error.message : '图片无法处理' } });
   }
 });
 

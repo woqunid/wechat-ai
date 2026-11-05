@@ -65,7 +65,7 @@ export async function loadAssets() {
     request.onerror = () => reject(request.error);
   });
   db.close();
-  return rows.map(row => ({ ...row.asset, previewUrl: URL.createObjectURL(row.blob), blob: row.blob }));
+  return rows.map(row => ({ ...row.asset, previewUrl: row.blob ? URL.createObjectURL(row.blob) : row.asset.cacheUrl || row.asset.url, blob: row.blob }));
 }
 
 export async function deleteAsset(id) {
