@@ -1,13 +1,28 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { AlignCenter, AlignJustify, AlignLeft, AlignRight, ArrowDown, ArrowUp, Bold, Eraser, Highlighter, ImagePlus, IndentIncrease, Trash2, Underline } from 'lucide-react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { AlignCenter, AlignJustify, AlignLeft, AlignRight, ArrowDown, ArrowUp, Bold, Eraser, Highlighter, ImagePlus, IndentIncrease, Paintbrush, RotateCcw, Trash2, Underline } from 'lucide-react';
 import { articleWithHtml, escapeHtml, findHtmlNode, nodeText, replaceHtmlNode } from './html-document.js';
 import { uid } from './core.js';
 import { imageLink, readImageLink } from './image-assets.js';
 import { renderArticle } from './renderer.js';
+import { applyTextStyle, colorHex, formatNumber, paragraphHost as hostOf, readSelectionFormat, selectedParagraphs } from './editor-format.js';
+
+function FormatNumber({ label, value, mixed, min = 0, max = 256, unit = 'px', presets, onChange }) {
+  const id = useId();
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value, mixed]);
+  return <label>{label}<span className="editor-number"><input aria-label={label} type="number" min={min} max={max} step="any" list={presets ? id : undefined} value={draft} placeholder={mixed ? '多种' : '—'}
+    onChange={event => setDraft(event.target.value)} onBlur={event => {
+      const next = Number(event.target.value);
+      if (event.target.value !== '' && Number.isFinite(next) && next >= min && next <= max) { if (next !== value) onChange(next); }
+      else setDraft(String(value));
+    }} onKeyDown={event => {
+      if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); }
+      if (event.key === 'Escape') { event.currentTarget.value = String(value); setDraft(String(value)); event.currentTarget.blur(); }
+    }}/><span>{unit}</span></span>{presets && <datalist id={id}>{presets.map(number => <option key={number} value={number}/>)}</datalist>}</label>;
+}
 
 const domText = node => node.nodeType === 3 ? node.data : node.nodeName === 'BR' ? '\n' : node.nodeName === 'IMG' ? '\uFFFC' : [...node.childNodes].map(domText).join('');
 const elementOf = node => node?.nodeType === 1 ? node : node?.parentElement;
-const hostOf = node => elementOf(node)?.closest('p,li,h1,h2,h3,h4,blockquote,section,div');
 const imageUnit = img => img?.closest('[data-block-type="imageCard"],[data-block-type="image"]') || img;
 const offsetIn = (root, node, offset) => {
   const range = document.createRange(); range.selectNodeContents(root); range.setEnd(node, offset);
@@ -50,11 +65,17 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
   latest.current = article;
   const [currentId, setCurrentId] = useState('');
   const [revision, setRevision] = useState(0);
+  const [format, setFormat] = useState(null);
+  const [copiedFormat, setCopiedFormat] = useState(null);
   const display = displayArticle || article;
   useEffect(() => () => { for (const controller of pendingImages.current) controller.abort(); pendingImages.current.clear(); }, [article.id]);
   const selected = canvas.current?.querySelector(`[data-node-id="${CSS.escape(currentId)}"]`);
   const image = selected?.tagName === 'IMG' ? selected : null;
-  const currentStyle = selected?.style;
+
+  const refreshFormat = () => {
+    const next = readSelectionFormat(canvas.current, savedRange.current);
+    setFormat(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
+  };
 
   const remember = () => {
     const selection = window.getSelection();
@@ -62,6 +83,7 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     savedRange.current = selection.getRangeAt(0).cloneRange();
     const host = hostOf(selection.anchorNode);
     if (host && host !== canvas.current) { setCurrentId(host.dataset.nodeId || ''); onSelect?.(`html:${host.dataset.nodeId}`); }
+    refreshFormat();
   };
   useEffect(() => {
     const listener = () => { if (canvas.current?.contains(document.activeElement)) remember(); };
@@ -73,12 +95,19 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     const html = renderArticle(display, template, assets, { mode: 'preview', interactive: true }).html;
     const signature = `${readOnly}:${html}`;
     if (visual.current === signature || composing.current) return;
-    const focused = root.contains(document.activeElement), cursor = focused ? saveCursor(root) : null;
+    const focused = root.contains(document.activeElement);
+    const previousRange = savedRange.current;
+    const cursor = focused ? saveCursor(root) : previousRange && root.contains(previousRange.commonAncestorContainer)
+      ? { start: offsetIn(root, previousRange.startContainer, previousRange.startOffset), end: offsetIn(root, previousRange.endContainer, previousRange.endOffset) } : null;
     root.innerHTML = html;
     for (const node of root.querySelectorAll('[data-node-id]')) node.dataset.editorKey = `html:${node.dataset.nodeId}`;
     for (const img of root.querySelectorAll('img')) { img.draggable = !readOnly; img.contentEditable = 'false'; }
     for (const change of changes) root.querySelector(`[data-node-id="${CSS.escape(change.key.replace(/^html:/, ''))}"]`)?.classList.add('ai-proposed-change');
-    if (focused && !readOnly) { restoreCursor(root, cursor); remember(); }
+    savedRange.current = null;
+    if (cursor && !readOnly) {
+      const range = document.createRange(); range.setStart(...cursorPoint(root, cursor.start)); range.setEnd(...cursorPoint(root, cursor.end)); savedRange.current = range;
+      if (focused) { restoreCursor(root, cursor); remember(); } else refreshFormat();
+    } else setFormat(null);
     visual.current = signature;
     setRevision(value => value + 1);
   }, [display, assets, template, readOnly]);
@@ -99,6 +128,7 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
         font.replaceWith(span);
       }
       const next = articleWithHtml(latest.current, root.innerHTML || '<p><br></p>');
+      refreshFormat();
       if (next.html === latest.current.html) return;
       const updated = { ...next, updatedAt: new Date().toISOString() };
       latest.current = updated;
@@ -109,7 +139,7 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
       rootRestore();
     }
   };
-  const rootRestore = () => { canvas.current.innerHTML = renderArticle(latest.current, template, assets, { mode: 'preview', interactive: true }).html; savedRange.current = null; };
+  const rootRestore = () => { canvas.current.innerHTML = renderArticle(latest.current, template, assets, { mode: 'preview', interactive: true }).html; savedRange.current = null; setFormat(null); };
   const restoreSelection = () => {
     const range = savedRange.current;
     if (!range || !canvas.current.contains(range.commonAncestorContainer)) return false;
@@ -127,30 +157,25 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     if (image) return [image];
     const range = savedRange.current;
     if (!range || !canvas.current.contains(range.commonAncestorContainer)) return selected ? [selected] : [];
-    const nodes = [...canvas.current.querySelectorAll('p,li,h1,h2,h3,h4,blockquote')].filter(node => range.intersectsNode(node));
-    return nodes.length ? nodes.filter(node => !nodes.some(child => child !== node && node.contains(child))) : [hostOf(range.startContainer)].filter(node => node && node !== canvas.current);
+    return selectedParagraphs(canvas.current, range);
   };
   const patchStyle = patch => {
     if (readOnly) return;
-    if (patch.fontSize && savedRange.current && !savedRange.current.collapsed && restoreSelection()) {
-      const range = window.getSelection().getRangeAt(0), span = document.createElement('span');
-      span.append(range.extractContents());
-      for (const child of span.querySelectorAll('*')) child.style.fontSize = '';
-      span.style.fontSize = patch.fontSize; range.insertNode(span); range.selectNodeContents(span);
-      window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
-      remember(); commit(); return;
+    if ((patch.fontSize || patch.letterSpacing !== undefined) && savedRange.current && !savedRange.current.collapsed && restoreSelection()) {
+      applyTextStyle(canvas.current, savedRange.current, patch);
+      restoreSelection(); remember(); commit(); return;
     }
     const nodes = targets();
     if (!nodes.length) { setToast('请先选择需要设置的段落或图片'); return; }
     for (const node of nodes) {
       Object.assign(node.style, patch);
-      for (const key of ['fontSize', 'lineHeight']) if (patch[key]) for (const child of node.querySelectorAll('*')) child.style[key] = '';
+      for (const key of ['fontSize', 'lineHeight', 'letterSpacing']) if (patch[key] !== undefined) for (const child of node.querySelectorAll('*:not(img)')) child.style[key] = '';
     }
     restoreSelection(); commit();
   };
-  const changeType = value => {
+  const changeType = (value, reset = false) => {
     if (readOnly) return;
-    const nodes = targets();
+    const nodes = targets().filter(node => node.tagName !== 'IMG');
     if (!nodes.length) { setToast('请先选择需要设置的段落'); return; }
     for (const node of nodes) {
       const wrapper = node.closest('[data-preview-key^="block:"]');
@@ -169,9 +194,21 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     } else for (const node of nodes) {
       const replacement = document.createElement(value);
       for (const attr of [...node.attributes]) if (!['data-block-type', 'data-heading-level', 'data-list-ordered'].includes(attr.name)) replacement.setAttribute(attr.name, attr.value);
-      replacement.innerHTML = node.innerHTML;
+      replacement.innerHTML = reset ? (node.querySelector('[data-editor-part="item"]') || node).innerHTML : node.innerHTML;
       Object.assign(replacement.style, { fontSize: value === 'h1' ? '24px' : value === 'h2' ? '20px' : '16px', fontWeight: /^h/.test(value) ? '700' : '400', lineHeight: /^h/.test(value) ? '1.6' : '1.9', marginBottom: '18px' });
       if (value === 'blockquote') Object.assign(replacement.style, { borderLeft: '3px solid #64748B', paddingLeft: '12px' });
+      if (reset) {
+        const page = article.layoutDesign?.page;
+        replacement.removeAttribute('style');
+        Object.assign(replacement.style, { fontSize: `${page?.fontSize || template.tokens.bodySize}px`, color: page?.color || template.tokens.text,
+          fontWeight: '400', fontStyle: 'normal', textDecoration: 'none', backgroundColor: 'transparent',
+          lineHeight: String(page?.lineHeight || template.tokens.lineHeight), letterSpacing: `${template.tokens.letterSpacing || 0}px`,
+          textAlign: 'left', textIndent: '0', margin: `0 0 ${page?.paragraphGap ?? template.tokens.paraGap}px`, padding: '0', border: '0' });
+        for (const child of replacement.querySelectorAll('*:not(img)')) {
+          child.removeAttribute('style');
+          Object.assign(child.style, { fontSize: 'inherit', fontWeight: 'inherit', fontStyle: 'normal', textDecoration: 'none', color: 'inherit', backgroundColor: 'transparent' });
+        }
+      }
       if (node.tagName === 'LI' && ['UL', 'OL'].includes(node.parentElement.tagName)) {
         const list = node.parentElement, tail = list.cloneNode(false);
         while (node.nextSibling) tail.append(node.nextSibling);
@@ -188,11 +225,35 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     }
     remember(); commit();
   };
+  const copyFormat = () => {
+    if (readOnly || image || !format) return;
+    setCopiedFormat({ inline: Object.fromEntries(Object.entries(format.inline).filter(([, value]) => value !== null)),
+      paragraph: Object.fromEntries(Object.entries(format.paragraph).filter(([, value]) => value !== null)) });
+    setToast('已复制格式，请选择目标文字或段落后点击“应用格式”');
+  };
+  const applyFormat = () => {
+    if (readOnly || image || !copiedFormat) return;
+    const nodes = targets();
+    if (!nodes.length || !restoreSelection()) { setToast('请先选择目标文字或段落'); return; }
+    const range = savedRange.current;
+    const cursor = saveCursor(canvas.current);
+    if (!range.collapsed) applyTextStyle(canvas.current, range, copiedFormat.inline);
+    for (const node of nodes) {
+      Object.assign(node.style, copiedFormat.paragraph);
+      if (range.collapsed) {
+        const fullRange = document.createRange(); fullRange.selectNodeContents(node);
+        applyTextStyle(canvas.current, fullRange, copiedFormat.inline);
+        Object.assign(node.style, copiedFormat.inline);
+      }
+      if (copiedFormat.paragraph.lineHeight !== undefined) for (const child of node.querySelectorAll('*:not(img)')) child.style.lineHeight = '';
+    }
+    restoreCursor(canvas.current, cursor); remember(); commit();
+  };
   const captureReference = event => {
     const img = event.target.closest('img');
     if (img) {
       window.getSelection()?.removeAllRanges();
-      setCurrentId(img.dataset.nodeId); savedRange.current = null;
+      setCurrentId(img.dataset.nodeId); savedRange.current = null; setFormat(null);
       onSelect?.(`html:${img.dataset.nodeId}`);
       onReference?.({ kind: 'image', keys: [`html:${img.dataset.nodeId}`], text: img.alt || '文章图片' });
       return;
@@ -281,25 +342,36 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     if (event.type === 'cut' && !readOnly) { selection.deleteFromDocument(); remember(); commit(); }
   };
   const keepSelection = event => event.preventDefault();
+  const inline = format?.inline || {}, paragraph = format?.paragraph || {};
+  const textScope = image ? '当前图片' : !format ? '请在文章中放置光标或选择文字' : format.hasText ? '选中文字' : '光标处';
+  const paragraphScope = format?.count > 1 ? `${format.count} 个段落` : '当前段落';
   return <div className="document-editor">
     <div className="document-editor-body">
       <aside className="document-editor-sidebar">
         <fieldset className="document-toolbar" role="toolbar" aria-label="文字与段落排版" disabled={readOnly}>
+          <p className="editor-format-scope" role="status" title="未选中文字时，加粗、下划线和颜色作用于后续输入，字号、字间距和格式刷作用于当前段落。">{image || !format ? textScope : `文字：${textScope} · 段落：${paragraphScope}`}</p>
           <div className="document-toolbar-row">
-            <select aria-label="段落类型" value="" disabled={Boolean(image)} onChange={event => changeType(event.target.value)}><option value="" disabled>段落类型</option><option value="p">正文</option><option value="h1">一级标题</option><option value="h2">二级标题</option><option value="blockquote">引用</option><option value="ul">要点列表</option><option value="ol">有序列表</option></select>
-            <button aria-label="加粗" title="加粗 Ctrl+B" onMouseDown={keepSelection} onClick={() => command('bold')}><Bold size={16}/></button>
-            <button aria-label="下划线" title="下划线 Ctrl+U" onMouseDown={keepSelection} onClick={() => command('underline')}><Underline size={16}/></button>
-            <button aria-label="清除文字样式" title="清除文字样式" onMouseDown={keepSelection} onClick={() => command('removeFormat')}><Eraser size={16}/></button>
-            <label className="editor-color" title="文字颜色">A<input aria-label="文字颜色" type="color" defaultValue="#26332f" onChange={event => command('foreColor', event.target.value)}/></label>
-            <label className="editor-color editor-highlight" title="高亮颜色"><Highlighter size={16}/><input aria-label="文字高亮颜色" type="color" defaultValue="#fff2a8" onChange={event => command('hiliteColor', event.target.value)}/></label>
+            <select aria-label="段落类型" value={format?.type || ''} disabled={Boolean(image) || !format} onChange={event => changeType(event.target.value)}><option value="" disabled>{format?.type === null ? '多种段落类型' : '段落类型'}</option><option value="p">正文</option><option value="h1">一级标题</option><option value="h2">二级标题</option><option value="h3">三级标题</option><option value="h4">四级标题</option><option value="blockquote">引用</option><option value="ul">要点列表</option><option value="ol">有序列表</option></select>
+            <button aria-label="加粗" aria-pressed={inline.fontWeight === null ? 'mixed' : inline.fontWeight === '700'} disabled={Boolean(image) || !format} title="加粗 Ctrl+B" onMouseDown={keepSelection} onClick={() => command('bold')}><Bold size={16}/></button>
+            <button aria-label="下划线" aria-pressed={inline.textDecoration === null ? 'mixed' : inline.textDecoration === 'underline'} disabled={Boolean(image) || !format} title="下划线 Ctrl+U" onMouseDown={keepSelection} onClick={() => command('underline')}><Underline size={16}/></button>
+            <button aria-label="清除文字样式" title="清除选中文字的样式，保留段落排版" disabled={Boolean(image) || !format?.hasText} onMouseDown={keepSelection} onClick={() => command('removeFormat')}><Eraser size={16}/></button>
+            <label className="editor-color" data-mixed={inline.color === null} style={{ textDecorationColor: inline.color || undefined }} title={inline.color === null ? '文字颜色：多种' : '文字颜色'}>A<input aria-label="文字颜色" type="color" disabled={Boolean(image) || !format} value={colorHex(inline.color) || '#26332f'} onChange={event => command('foreColor', event.target.value)}/></label>
+            <label className="editor-color editor-highlight" data-mixed={inline.backgroundColor === null} style={{ backgroundColor: inline.backgroundColor || 'transparent' }} title={inline.backgroundColor === null ? '高亮颜色：多种' : '高亮颜色'}><Highlighter size={16}/><input aria-label="文字高亮颜色" type="color" disabled={Boolean(image) || !format} value={colorHex(inline.backgroundColor) || '#fff2a8'} onChange={event => command('hiliteColor', event.target.value)}/></label>
             <button aria-label="插入图片" title="插入图片" onMouseDown={keepSelection} onClick={() => onGallery(insertIndex())}><ImagePlus size={17}/></button>
           </div>
           {!image && <div className="document-toolbar-row paragraph-controls">
-            <label>字号<select aria-label="段落字号" value={parseFloat(currentStyle?.fontSize) || ''} onChange={event => patchStyle({ fontSize: `${event.target.value}px` })}><option value="" disabled>当前</option>{[12,14,15,16,17,18,20,22,24,28,32,36,40].map(size => <option key={size}>{size}</option>)}</select></label>
-            <span className="editor-alignments">{[['left', AlignLeft, '左对齐'], ['center', AlignCenter, '居中'], ['right', AlignRight, '右对齐'], ['justify', AlignJustify, '两端对齐']].map(([align, Icon, title]) => <button key={align} aria-label={title} title={title} onMouseDown={keepSelection} onClick={() => patchStyle({ textAlign: align })}><Icon size={15}/></button>)}</span>
-            <label>行距<select aria-label="段落行距" value={Number(currentStyle?.lineHeight) || ''} onChange={event => patchStyle({ lineHeight: event.target.value })}><option value="" disabled>当前</option>{[1.2,1.5,1.8,2,2.5,3].map(value => <option key={value}>{value}</option>)}</select></label>
-            <label>段距<select aria-label="段后间距" value={currentStyle?.marginBottom ? parseFloat(currentStyle.marginBottom) : ''} onChange={event => patchStyle({ marginBottom: `${event.target.value}px` })}><option value="" disabled>当前</option>{[0,4,8,12,16,18,24,32,48,64].map(value => <option key={value}>{value}</option>)}</select></label>
-            <button aria-label="首行缩进" title="首行缩进" onMouseDown={keepSelection} onClick={() => patchStyle({ textIndent: currentStyle?.textIndent === '2em' ? '0' : '2em' })}><IndentIncrease size={16}/></button>
+            <FormatNumber label="字号" min={1} max={200} value={formatNumber(inline.fontSize)} mixed={inline.fontSize === null} presets={[12,14,15,16,17,18,20,22,24,28,32,36,40]} onChange={value => patchStyle({ fontSize: `${value}px` })}/>
+            <span className="editor-alignments">{[['left', AlignLeft, '左对齐'], ['center', AlignCenter, '居中'], ['right', AlignRight, '右对齐'], ['justify', AlignJustify, '两端对齐']].map(([align, Icon, title]) => <button key={align} aria-label={title} aria-pressed={paragraph.textAlign === null ? 'mixed' : paragraph.textAlign === align} title={title} onMouseDown={keepSelection} onClick={() => patchStyle({ textAlign: align })}><Icon size={15}/></button>)}</span>
+            <FormatNumber label="行距" min={0.5} max={10} unit="倍" value={formatNumber(paragraph.lineHeight)} mixed={paragraph.lineHeight === null} presets={[1.2,1.5,1.8,1.9,2,2.5,3]} onChange={value => patchStyle({ lineHeight: String(value) })}/>
+            {[['marginTop','段前间距'],['marginBottom','段后间距'],['paddingLeft','左缩进'],['paddingRight','右缩进']].map(([key, label]) => <FormatNumber key={key} label={label} value={formatNumber(paragraph[key])} mixed={paragraph[key] === null} presets={[0,4,8,12,16,18,24,32,48,64]} onChange={value => patchStyle({ [key]: `${value}px` })}/>)}
+            <FormatNumber label="字间距" max={20} value={formatNumber(inline.letterSpacing)} mixed={inline.letterSpacing === null} presets={[0,0.5,1,1.5,2,3,4]} onChange={value => patchStyle({ letterSpacing: `${value}px` })}/>
+            <button aria-label="首行缩进" aria-pressed={paragraph.textIndent === null ? 'mixed' : parseFloat(paragraph.textIndent) > 0} title="切换首行缩进两字符" onMouseDown={keepSelection} onClick={() => patchStyle({ textIndent: parseFloat(paragraph.textIndent) > 0 ? '0' : '2em' })}><IndentIncrease size={16}/></button>
+          </div>}
+          {!image && <div className="document-toolbar-row editor-format-actions">
+            <button disabled={!format} title="复制当前选区共有的文字和段落格式" onMouseDown={keepSelection} onClick={copyFormat}><Paintbrush size={14}/>复制格式</button>
+            <button disabled={!format || !copiedFormat} title="将已复制格式应用到当前选区及所在段落" onMouseDown={keepSelection} onClick={applyFormat}>应用格式</button>
+            <button disabled={!format} title="将选中段落恢复为正文，重置文字样式、间距、缩进、背景和边框" onMouseDown={keepSelection} onClick={() => changeType('p', true)}><RotateCcw size={14}/>恢复正文格式</button>
+            {copiedFormat && <span className="editor-format-hint">已复制格式，选择目标后应用；混合项保留目标原样式。</span>}
           </div>}
         </fieldset>
         {image && <fieldset className="editor-image-controls" disabled={readOnly}>

@@ -2678,6 +2678,15 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
 .document-editor-sidebar .editor-image-controls > div { flex-direction: column; align-items: stretch; }
 .document-editor-sidebar .editor-image-controls button { min-height: 29px; }
 .document-editor-sidebar .editor-uploading { margin: 8px 12px; }
+.editor-format-scope { margin: 0 0 8px; color: var(--text-secondary); font-size: 11px; line-height: 1.6; }
+.editor-number { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); }
+.editor-number input { width: 76px; height: 28px; padding: 2px 4px; border: 1px solid var(--border-subtle); border-radius: 4px; background: #fff; color: var(--text-regular); font-size: 12px; }
+.editor-number input::placeholder { color: var(--text-secondary); }
+.editor-format-actions { margin-top: 8px; border-top: 1px solid var(--border-subtle); padding-top: 8px; }
+.editor-format-actions button { gap: 4px; padding-inline: 6px; font-size: 11px; }
+.editor-format-hint { color: var(--text-secondary); font-size: 10px; line-height: 1.6; }
+.document-toolbar button[aria-pressed="mixed"], .editor-color[data-mixed="true"] { outline: 1px dashed var(--text-secondary); outline-offset: -2px; }
+.editor-color[data-mixed="true"]::after { content: '多种'; position: absolute; top: -8px; right: -8px; z-index: 1; padding: 0 2px; background: #fff; color: var(--text-secondary); font-size: 8px; font-weight: 400; text-decoration: none; pointer-events: none; }
 
 @media (max-width: 760px) {
   .document-editor-body { flex-direction: column; }
@@ -2689,6 +2698,7 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
   .document-editor-sidebar .paragraph-controls { align-items: center; flex-direction: row; gap: 5px 9px; }
   .document-editor-sidebar .paragraph-controls label { justify-content: initial; width: auto; }
   .document-editor-sidebar .paragraph-controls select { max-width: 55px; }
+  .editor-number input { width: 60px; }
   .document-editor-sidebar .editor-alignments { align-self: auto; }
   .document-editor-sidebar .editor-image-controls > label { flex-wrap: nowrap; }
   .document-editor-sidebar .editor-image-controls input[type="range"] { min-width: 60px; order: initial; }
