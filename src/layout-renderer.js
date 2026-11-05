@@ -71,7 +71,7 @@ export function renderLayoutArticle(article, assets, { mode, anchor, imageUrl, e
         + (url ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(item.caption || item.title || '文章图片')}" style="display:block;width:100%;max-width:100%;height:auto;border-radius:${style.borderRadius || 0}px;" />` : `<p style="padding:24px 0;text-align:center;">${escapeHtml(`[图片待补充：${item.caption || item.title || '请重新上传图片'}]`)}</p>`)
         + (item.caption || editing ? paragraph(item.caption, 'font-size:13px;line-height:1.8;margin-top:10px;', null, 'caption') : '');
     } else if (item.type === 'list') {
-      content = item.items.map((value, index) => `<p style="margin:${index ? '10px' : '0'} 0 0;white-space:pre-wrap;"><span>${item.ordered ? `${index + 1}.` : '•'} </span><span${part('item', index)}>${styledText(block.items[index], node.emphasis)}</span></p>`).join('');
+      content = item.items.map((value, index) => `<p style="margin:${index ? `${manual.itemSpacing ?? 10}px` : '0'} 0 0;white-space:pre-wrap;"><span>${item.ordered ? `${index + 1}.` : '•'} </span><span${part('item', index)}>${styledText(block.items[index], node.emphasis)}</span></p>`).join('');
     } else if (item.type === 'quote') {
       content = paragraph(item.text, '', block.runs) + (item.cite || editing ? `<p style="font-size:13px;margin:10px 0 0;">— <span${part('cite')}>${escapeHtml(item.cite)}</span></p>` : '');
     } else if (item.type === 'divider') {

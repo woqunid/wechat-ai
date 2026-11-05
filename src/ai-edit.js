@@ -172,7 +172,7 @@ export function mergeAIEdit(base, candidate, current) {
   return checkReadability(current, checkedArticle(merged, new Set(current.blocks.filter(isImageBlock).map(block => block.assetId))));
 }
 
-const styleNames = { fontSize: '字号', align: '对齐', lineHeight: '行距', paragraphSpacing: '段距', indent: '首行缩进', imageWidth: '图片宽度', color: '文字颜色', backgroundColor: '背景色', fontFamily: '字体', fontWeight: '字重', letterSpacing: '字间距', textAlign: '对齐', marginTop: '上方间距', marginBottom: '下方间距', paddingX: '左右留白', paddingY: '上下留白', borderSide: '边框位置', borderWidth: '边框宽度', borderColor: '边框颜色', borderStyle: '边框样式', borderRadius: '圆角', paragraphGap: '段距' };
+const styleNames = { fontSize: '字号', align: '对齐', lineHeight: '行距', paragraphSpacing: '段距', itemSpacing: '列表项间距', indent: '首行缩进', imageWidth: '图片宽度', color: '文字颜色', backgroundColor: '背景色', fontFamily: '字体', fontWeight: '字重', letterSpacing: '字间距', textAlign: '对齐', marginTop: '上方间距', marginBottom: '下方间距', paddingX: '左右留白', paddingY: '上下留白', borderSide: '边框位置', borderWidth: '边框宽度', borderColor: '边框颜色', borderStyle: '边框样式', borderRadius: '圆角', paragraphGap: '段距' };
 const styleValues = { left: '左', center: '居中', right: '右', justify: '两端', sans: '无衬线', serif: '衬线', mono: '等宽', all: '四周', top: '上', bottom: '下', solid: '实线', dashed: '虚线', double: '双线' };
 const styleText = style => Object.entries(style || {}).map(([key, value]) => `${styleNames[key] || key}：${styleValues[value] || value}${key === 'imageWidth' ? '%' : ''}`).join('；');
 function blockDescription(block) {

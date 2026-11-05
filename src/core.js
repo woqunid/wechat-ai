@@ -9,6 +9,7 @@ export const BlockStyleSchema = z.object({
   align: z.enum(['left','center','right','justify']).optional(),
   lineHeight: z.number().min(1.2).max(3).optional(),
   paragraphSpacing: z.number().int().min(0).max(64).optional(),
+  itemSpacing: z.number().int().min(0).max(64).optional(),
   indent: z.number().int().min(0).max(4).optional(),
   imageWidth: z.number().int().min(20).max(100).optional(),
 });

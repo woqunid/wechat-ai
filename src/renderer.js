@@ -256,12 +256,14 @@ function renderQuote(block, t) {
 function renderList(block, t) {
   const { primary, accent, tint, border } = t.tokens;
   const style = t.layout.listStyle;
+  const itemSpacing = manualStyle(block).itemSpacing;
   const items = block.items.map((runs, index) => {
     const marker = block.ordered ? number(index + 1) : style === 'checklist' ? '□' : '•';
     const badge = style === 'steps' || style === 'tiles';
     const markerCss = badge ? `background-color:${primary};color:${t.tokens.onPrimary};border-radius:${style === 'steps' ? '99' : '3'}px;padding:2px 7px;` : `color:${accent};font-weight:700;`;
     const itemCss = style === 'tiles' ? `padding:14px;background-color:${tint};border-radius:${t.tokens.radius}px;` : style === 'ruled' ? `padding:12px 0;border-bottom:1px solid ${border};` : style === 'steps' ? `padding:12px;border-left:2px solid ${border};` : 'padding:7px 0;';
-    return `<p style="margin:0 0 8px;${itemCss}white-space:pre-wrap;"><span style="display:inline-block;font-size:13px;line-height:1.8;margin-right:9px;vertical-align:baseline;${markerCss}">${escapeHtml(marker)}</span><span${editPart(t, 'item', index)}>${textRuns(runs, t)}</span></p>`;
+    const gapCss = itemSpacing !== undefined ? `margin:0 0 ${index < block.items.length - 1 ? itemSpacing : 0}px;padding-top:0;padding-bottom:0;` : '';
+    return `<p style="margin:0 0 8px;${itemCss}${gapCss}white-space:pre-wrap;"><span style="display:inline-block;font-size:13px;line-height:1.8;margin-right:9px;vertical-align:baseline;${markerCss}">${escapeHtml(marker)}</span><span${editPart(t, 'item', index)}>${textRuns(runs, t)}</span></p>`;
   }).join('');
   return `<section style="${base(t)}margin:18px 0 ${spacing(block, 22)}px;${textStyle(block)}">${items}</section>`;
 }
