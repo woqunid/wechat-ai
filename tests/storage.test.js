@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
-import { clearAssets, clearDrafts, deleteArticleHistory, HISTORY_LIFETIME, listArticleHistory, loadDraft, pruneArticleHistory, saveArticleHistory, saveDraft } from '../src/storage.js';
+import { clearAssets, clearDrafts, deleteArticleHistory, deleteDraft, DRAFT_LIFETIME, HISTORY_LIFETIME, listArticleHistory, listDrafts, loadAIEditAttachments, loadDraft, loadInputs, loadWorkspaceSession, pruneArticleHistory, saveAIEditAttachments, saveArticleHistory, saveDraft, saveInputs } from '../src/storage.js';
 
 globalThis.indexedDB = indexedDB;
 globalThis.IDBKeyRange = IDBKeyRange;
@@ -112,4 +112,115 @@ test('第 30 天到期边界自动清理，未到期记录保留', async () => {
     now += 1000;
     assert.deepEqual(await listArticleHistory(), []);
   } finally { Date.now = originalNow; }
+});
+
+test('升级旧草稿保留原始素材、快照和附件，首页默认空白且不强制进入编辑', async () => {
+  const db = await new Promise((resolve, reject) => {
+    const request = indexedDB.open('weave-local', 4);
+    request.onupgradeneeded = () => {
+      for (const name of ['assets', 'drafts', 'inputs', 'snapshots', 'aiEditAttachments']) request.result.createObjectStore(name, { keyPath: 'id' });
+      request.result.createObjectStore('history', { keyPath: 'id' }).createIndex('expiresAt', 'expiresAt');
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const source = { ...article(), updatedAt: new Date(Date.now() - 60 * 86_400_000).toISOString() };
+  const input = { topic: '旧版创作素材', text: '原文', files: [], images: [] };
+  await new Promise((resolve, reject) => {
+    const transaction = db.transaction(['drafts', 'inputs', 'snapshots', 'aiEditAttachments'], 'readwrite');
+    transaction.objectStore('drafts').put({ id: 'current', article: source });
+    transaction.objectStore('inputs').put({ id: 'current', input });
+    transaction.objectStore('snapshots').put({ id: 'current', snapshot: article('snapshot') });
+    transaction.objectStore('aiEditAttachments').put({ id: source.id, attachments: [{ id: 'attachment' }] });
+    transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error);
+  });
+  db.close();
+  const [record] = await listDrafts();
+  assert.equal(record.id, source.id);
+  assert.ok(record.expiresAt > Date.now());
+  assert.deepEqual(record.article, source);
+  assert.deepEqual(record.generationInput, input);
+  assert.equal(record.snapshot.id, 'snapshot');
+  assert.deepEqual(await loadAIEditAttachments(source.id), [{ id: 'attachment' }]);
+  assert.equal(await loadInputs(), undefined);
+  assert.equal(await loadWorkspaceSession(), undefined);
+});
+
+test('新文章先保存正文和素材再清空表单，失败则保留输入和页面', async () => {
+  const input = { topic: '新文章素材', text: '原文', files: [], images: [] };
+  await saveInputs(input);
+  const record = await saveDraft({ article: article(), generationInput: input, snapshot: null }, { page: 'edit', clearInput: true });
+  assert.equal(record.expiresAt - record.updatedAt, DRAFT_LIFETIME);
+  assert.equal(await loadInputs(), undefined);
+  assert.deepEqual((await loadDraft(record.id)).generationInput, input);
+  assert.deepEqual(await loadWorkspaceSession(), { id: 'current', page: 'edit', articleId: record.id });
+  await saveInputs(input);
+  const previous = await loadWorkspaceSession();
+  await assert.rejects(saveDraft({ article: { ...article(), id: undefined } }, { page: 'edit', clearInput: true }));
+  assert.deepEqual((await loadInputs()).input, input);
+  assert.deepEqual(await loadWorkspaceSession(), previous);
+});
+
+test('多篇草稿独立保存，返回首页保存最后修改且刷新不再自动进入编辑', async () => {
+  const first = await saveDraft({ article: article('first'), generationInput: { text: '第一篇素材' } }, { page: 'edit', clearInput: true });
+  await saveDraft({ ...first, article: { ...first.article, html: '<p>最后一刻修改</p>' } }, { page: 'create' });
+  assert.equal((await loadWorkspaceSession()).page, 'create');
+  assert.equal((await loadDraft('first')).article.html, '<p>最后一刻修改</p>');
+  await saveDraft({ article: article('second'), generationInput: { text: '第二篇素材' } }, { page: 'edit', clearInput: true });
+  assert.deepEqual(new Set((await listDrafts()).map(record => record.id)), new Set(['first', 'second']));
+  assert.equal((await loadWorkspaceSession()).articleId, 'second');
+  assert.equal((await loadDraft('first')).generationInput.text, '第一篇素材');
+});
+
+test('读取、继续编辑、返回和保存快照不续期，修改文章内容后重新计时', async () => {
+  const originalNow = Date.now;
+  let now = originalNow(); Date.now = () => now;
+  try {
+    const saved = await saveDraft({ article: article(), generationInput: { text: '素材' }, snapshot: null });
+    now += 86_400_000;
+    const reopened = await saveDraft(await loadDraft(saved.id), { page: 'edit' });
+    const returned = await saveDraft({ ...reopened, snapshot: article('snapshot') }, { page: 'create' });
+    assert.equal(returned.updatedAt, saved.updatedAt);
+    assert.equal(returned.expiresAt, saved.expiresAt);
+    assert.equal((await listDrafts())[0].expiresAt, saved.expiresAt);
+    const changed = await saveDraft({ ...returned, article: { ...returned.article, title: '新的标题' } });
+    assert.equal(changed.updatedAt, now);
+    assert.equal(changed.expiresAt, now + DRAFT_LIFETIME);
+  } finally { Date.now = originalNow; }
+});
+
+test('草稿到期边界清理附件和编辑位置，保留未到期草稿与手动历史', async () => {
+  const originalNow = Date.now;
+  let now = originalNow(); Date.now = () => now;
+  try {
+    const first = await saveDraft({ article: article('first') }, { page: 'edit' });
+    await saveAIEditAttachments('first', [{ id: 'first-attachment' }]);
+    now += 1000;
+    await saveDraft({ article: article('second') });
+    await saveArticleHistory(article('first'), assets());
+    assert.equal((await listDrafts(first.expiresAt - 1)).length, 2);
+    now = first.expiresAt;
+    assert.deepEqual((await listDrafts()).map(record => record.id), ['second']);
+    assert.deepEqual(await loadAIEditAttachments('first'), []);
+    assert.equal((await loadWorkspaceSession()).page, 'create');
+    assert.equal((await listArticleHistory()).length, 1);
+  } finally { Date.now = originalNow; }
+});
+
+test('删除单篇草稿只移除对应附件，不影响其他文章、输入和历史', async () => {
+  await saveDraft({ article: article('first') });
+  await saveDraft({ article: article('second') }, { page: 'edit' });
+  await saveAIEditAttachments('first', [{ id: 'one' }]);
+  await saveAIEditAttachments('second', [{ id: 'two' }]);
+  await saveInputs({ topic: '尚未提交的第三篇' });
+  await saveArticleHistory(article('first'), assets());
+  await deleteDraft('first');
+  assert.deepEqual((await listDrafts()).map(record => record.id), ['second']);
+  assert.deepEqual(await loadAIEditAttachments('first'), []);
+  assert.deepEqual(await loadAIEditAttachments('second'), [{ id: 'two' }]);
+  assert.equal((await loadWorkspaceSession()).articleId, 'second');
+  assert.equal((await loadInputs()).input.topic, '尚未提交的第三篇');
+  assert.equal((await listArticleHistory()).length, 1);
+  await deleteDraft('second');
+  assert.equal((await loadWorkspaceSession()).page, 'create');
 });

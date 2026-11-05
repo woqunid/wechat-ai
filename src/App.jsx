@@ -41,22 +41,20 @@ import { clearArticleStyles, layoutSignature } from "./layout-design.js";
 import {
   saveAsset,
   loadAssets,
-  clearAssets,
   deleteAsset,
   saveDraft,
   loadDraft,
+  listDrafts,
+  deleteDraft,
+  loadWorkspaceSession,
   saveInputs,
   loadInputs,
-  saveSnapshot,
-  loadSnapshot,
-  clearSnapshot,
-  clearDrafts,
-  clearInputs,
   listArticleHistory,
   saveArticleHistory,
   pruneArticleHistory,
 } from "./storage";
 import { ArticleHistory } from "./ArticleHistory";
+import { ArticleDrafts } from "./ArticleDrafts";
 import "./styles.css";
 
 const API = "";
@@ -124,9 +122,36 @@ function App() {
   const [saved, setSaved] = useState("");
   const [savedSnapshot, setSavedSnapshot] = useState(null);
   const [editorSession, setEditorSession] = useState(0);
+  const [ready, setReady] = useState(false);
+  const [startupError, setStartupError] = useState(false);
+  const [drafts, setDrafts] = useState([]);
+  const [navigating, setNavigating] = useState(false);
+  const navigationLock = useRef(false);
+  const inputTimer = useRef(null);
+  const draftTimer = useRef(null);
+  const draftWrites = useRef(Promise.resolve());
   const fileRef = useRef();
+  const rememberDraft = record => {
+    setDrafts(values => [record, ...values.filter(value => value.id !== record.id)].sort((a, b) => b.updatedAt - a.updatedAt));
+    setSaved(new Date(record.updatedAt).toLocaleTimeString());
+  };
+  const persistDraft = async (draft, options) => {
+    const write = draftWrites.current.catch(() => {}).then(() => saveDraft(draft, options));
+    draftWrites.current = write;
+    const record = await write;
+    rememberDraft(record);
+    return record;
+  };
+  const storageFailure = () => {
+    setSaved("");
+    setToast("本地保存失败，内容仍在当前页面，请检查浏览器存储空间");
+    setModal("storage-error");
+  };
   useEffect(() => {
-    const prune = () => pruneArticleHistory().catch(() => setToast("历史记录清理失败"));
+    const prune = () => {
+      pruneArticleHistory().catch(() => setToast("历史记录清理失败"));
+      listDrafts().then(setDrafts).catch(() => setToast("草稿列表读取失败"));
+    };
     const onVisible = () => { if (document.visibilityState === "visible") prune(); };
     prune();
     const timer = setInterval(prune, 60_000);
@@ -134,67 +159,82 @@ function App() {
     return () => { clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
   }, []);
   useEffect(() => {
-    loadAssets()
-      .then(async (items) => {
-        const checked = await Promise.all(
-          items.map(async (asset) => {
-            try {
-              const response = await fetch(asset.cacheUrl || asset.url, { method: "HEAD" });
-              return [
-                asset.id,
-                response.ok ? asset : { ...asset, pasteStatus: "broken" },
-              ];
-            } catch {
-              return [asset.id, asset];
-            }
-          }),
-        );
-        setAssets(new Map(checked));
-      })
-      .catch(() => setToast("图片草稿无法读取"));
-    Promise.all([loadDraft(), loadInputs(), loadSnapshot()])
-      .then(([draft, storedInput, snapshotRecord]) => {
-        if (storedInput?.input) setInput({ ...blank(), ...storedInput.input });
-        if (draft?.article) {
-          setArticle(draft.article);
-          const sourceInput = Object.hasOwn(draft, "generationInput") ? draft.generationInput : storedInput?.input;
-          setGenerationInput(sourceInput ? { ...blank(), ...sourceInput } : null);
-          const recoveredSnapshot = Object.hasOwn(draft, "snapshot") ? draft.snapshot : snapshotRecord?.snapshot || null;
-          setSavedSnapshot(recoveredSnapshot);
-          setSelected(draft.article.templateId);
-          setPage("edit");
-          setModal("recover");
+    Promise.all([listDrafts(), loadInputs(), loadWorkspaceSession(), loadAssets()])
+      .then(([records, storedInput, session, items]) => {
+        setAssets(new Map(items.map(asset => [asset.id, asset])));
+        for (const asset of items) {
+          if (!asset.cacheUrl && !asset.url) continue;
+          fetch(asset.cacheUrl || asset.url, { method: "HEAD", signal: AbortSignal.timeout(10_000) })
+            .then(response => {
+              if (!response.ok) setAssets(current => current.get(asset.id) === asset ? new Map(current).set(asset.id, { ...asset, pasteStatus: "broken" }) : current);
+            }).catch(() => {});
         }
+        setDrafts(records);
+        if (storedInput?.input) setInput({ ...blank(), ...storedInput.input });
+        const draft = session?.page === "edit" ? records.find(record => record.id === session.articleId) : null;
+        if (draft) {
+          setArticle(draft.article);
+          const sourceInput = draft.generationInput;
+          setGenerationInput(sourceInput || null);
+          setSavedSnapshot(draft.snapshot || null);
+          setSelected(draft.article.templateId);
+          setSaved(new Date(draft.updatedAt).toLocaleTimeString());
+          setPage("edit");
+        }
+        setReady(true);
       })
-      .catch(() => {
-        setToast("本地草稿读取失败");
-      });
+      .catch(() => setStartupError(true));
   }, []);
   useEffect(() => {
-    const timer = setTimeout(() => {
+    if (!ready || page !== "create") return;
+    inputTimer.current = setTimeout(() => {
       saveInputs(input).catch(() => {
         setToast("浏览器空间不足，输入内容未能保存");
         setModal("storage-error");
       });
     }, 800);
-    return () => clearTimeout(timer);
-  }, [input]);
+    return () => clearTimeout(inputTimer.current);
+  }, [input, ready, page]);
   useEffect(() => {
-    if (!article) return;
-    const timer = setTimeout(() => {
-      saveDraft({ article, generationInput, snapshot: savedSnapshot })
-        .then(() => setSaved(new Date().toLocaleTimeString()))
-        .catch(() => {
-          setToast("浏览器空间不足，草稿未能保存");
-          setModal("storage-error");
-        });
+    if (!ready || page !== "edit" || !article) return;
+    setSaved("");
+    draftTimer.current = setTimeout(() => {
+      persistDraft({ article, generationInput, snapshot: savedSnapshot }, { page: "edit" }).catch(storageFailure);
     }, 800);
-    return () => clearTimeout(timer);
-  }, [article, generationInput, savedSnapshot]);
+    return () => clearTimeout(draftTimer.current);
+  }, [article, generationInput, savedSnapshot, ready, page]);
+  useEffect(() => {
+    if (!ready) return;
+    const flush = () => {
+      if (navigationLock.current) return;
+      clearTimeout(inputTimer.current);
+      clearTimeout(draftTimer.current);
+      if (page === "edit" && article) persistDraft({ article, generationInput, snapshot: savedSnapshot }, { page: "edit" }).catch(storageFailure);
+      else saveInputs(input).catch(storageFailure);
+    };
+    const onHidden = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onHidden);
+    return () => { window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", onHidden); };
+  }, [ready, page, article, generationInput, savedSnapshot, input]);
   const template = getTemplate(selected);
   const saveArticleSnapshot = (snapshot) => {
     setSavedSnapshot(snapshot);
-    saveSnapshot(snapshot).catch(() => {});
+  };
+  const enterEditor = async draft => {
+    clearTimeout(inputTimer.current);
+    clearTimeout(draftTimer.current);
+    const next = { ...draft, article: reconcileHtmlArticle(null, draft.article) };
+    await persistDraft(next, { page: "edit", clearInput: true });
+    setArticle(next.article);
+    setGenerationInput(next.generationInput || null);
+    setSavedSnapshot(next.snapshot || null);
+    setSelected(next.article.templateId);
+    setInput(blank());
+    setUploads([]);
+    setEditorSession(value => value + 1);
+    setPage("edit");
+    setModal(null);
   };
   const recs = useMemo(
     () => (article ? recommendTemplates(article) : []),
@@ -209,9 +249,9 @@ function App() {
     const rawSourceHash = [...new Uint8Array(digest)]
       .map((x) => x.toString(16).padStart(2, "0"))
       .join("");
-    setArticle({
+    const nextArticle = {
       schemaVersion: 1,
-      id: uid("article"),
+      id: resetSnapshot ? uid("article") : article.id,
       mode: "raw",
       title: parsed.title,
       summary: parsed.summary,
@@ -219,20 +259,16 @@ function App() {
       templateId,
       settings: {},
       rawSourceHash,
-      createdAt: now,
+      createdAt: resetSnapshot ? now : article.createdAt,
       updatedAt: now,
-    });
-    setGenerationInput(structuredClone(sourceInput));
-    if (resetSnapshot) {
-      setSavedSnapshot(null);
-      clearSnapshot().catch(() => {});
-    }
-    setSelected(templateId);
-    setPage("edit");
+    };
+    if (resetSnapshot) await enterEditor({ article: nextArticle, generationInput: structuredClone(sourceInput), snapshot: null });
+    else setArticle(nextArticle);
     setModal(null);
     setRawPending(null);
   };
   const generate = async () => {
+    if (loading || navigationLock.current) return;
     const mode = input.mode;
     const source =
       input.text ||
@@ -252,7 +288,9 @@ function App() {
         setModal("raw-mismatch");
         return;
       }
-      await enterRaw(parsed, source);
+      setLoading(true);
+      try { await enterRaw(parsed, source); } catch { storageFailure(); return; }
+      finally { setLoading(false); }
       if (parsed.ignoredImages)
         setToast(
           `${parsed.ignoredImages} 张 Markdown 图片未导入，请在编辑器中插入原图`,
@@ -290,12 +328,8 @@ function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message || "生成失败");
-      setArticle(data.article);
-      setGenerationInput(submittedInput);
-      setSelected(data.article.templateId);
-      setSavedSnapshot(null);
-      clearSnapshot().catch(() => {});
-      setPage("edit");
+      try { await enterEditor({ article: data.article, generationInput: submittedInput, snapshot: null }); }
+      catch { storageFailure(); }
     } catch (e) {
       setToast(
         e.name === "AbortError"
@@ -310,24 +344,28 @@ function App() {
     }
   };
   const cancelGeneration = () => requestAbort.current?.abort();
-  const removeUnusedAssets = async (ids) => {
-    let records;
-    try { records = await listArticleHistory(); } catch { return; }
-    const protectedIds = new Set(records.flatMap(record => record.assets.map(asset => asset.id)));
+  const removeUnusedAssets = async (ids, removedInputs = []) => {
+    let history, records;
+    try { [history, records] = await Promise.all([listArticleHistory(), listDrafts()]); } catch { return; }
+    const protectedIds = new Set([
+      ...history.flatMap(record => record.assets.map(asset => asset.id)),
+      ...records.flatMap(record => [
+        ...record.article.blocks.map(block => block.assetId),
+        ...(record.snapshot?.blocks || []).map(block => block.assetId),
+        ...(record.generationInput?.images || []).map(image => image.id),
+      ]),
+      ...input.images.map(image => image.id).filter(id => !removedInputs.includes(id)),
+    ]);
     for (const id of ids) {
       if (protectedIds.has(id)) continue;
       try { await fetch(`/api/assets/${encodeURIComponent(id)}`, { method: "DELETE" }); } catch {}
+      await deleteAsset(id);
+      setAssets(current => { const next = new Map(current); next.delete(id); return next; });
     }
   };
   const removeImage = async (id) => {
-    try { await removeUnusedAssets([id]); } catch { setToast("图片删除失败"); return; }
-    await deleteAsset(id).catch(() => {});
-    setAssets((m) => {
-      const n = new Map(m);
-      n.delete(id);
-      return n;
-    });
     setInput((v) => ({ ...v, images: v.images.filter((x) => x.id !== id) }));
+    removeUnusedAssets([id], [id]).catch(() => setToast("图片清理失败"));
   };
   const moveImage = (i, delta) =>
     setInput((v) => {
@@ -361,11 +399,9 @@ function App() {
         blob: previous.blob,
       };
       await saveAsset(next, previous.blob);
-      await deleteAsset(id);
-      await removeUnusedAssets([id]);
+      await removeUnusedAssets([id], [id]);
       setAssets((current) => {
         const assets = new Map(current);
-        assets.delete(id);
         assets.set(next.id, next);
         return assets;
       });
@@ -503,18 +539,61 @@ function App() {
     }
   };
   const clear = async () => {
-    await removeUnusedAssets(assets.keys());
-    await clearAssets();
-    await clearDrafts();
-    await clearInputs();
-    setArticle(null);
-    setGenerationInput(null);
-    setSavedSnapshot(null);
-    setInput(blank());
-    setAssets(new Map());
-    setPage("create");
-    setToast("草稿已清空");
+    if (navigationLock.current) return;
+    navigationLock.current = true; setNavigating(true);
+    clearTimeout(draftTimer.current);
+    try {
+      await draftWrites.current.catch(() => {});
+      await deleteDraft(article.id);
+      setDrafts(values => values.filter(record => record.id !== article.id));
+      setArticle(null); setGenerationInput(null); setSavedSnapshot(null);
+      setPage("create"); setModal(null); setToast("当前草稿已删除");
+      removeUnusedAssets(assets.keys()).catch(() => {});
+    } catch { storageFailure(); }
+    finally { navigationLock.current = false; setNavigating(false); }
   };
+  const returnToCreate = async () => {
+    if (navigationLock.current) return;
+    navigationLock.current = true; setNavigating(true);
+    clearTimeout(draftTimer.current);
+    try {
+      await persistDraft({ article, generationInput, snapshot: savedSnapshot }, { page: "create" });
+      setArticle(null); setGenerationInput(null); setSavedSnapshot(null);
+      setPage("create"); setModal(null);
+    } catch { storageFailure(); }
+    finally { navigationLock.current = false; setNavigating(false); }
+  };
+  const openDraft = async id => {
+    if (navigationLock.current) return;
+    navigationLock.current = true; setNavigating(true);
+    try {
+      const record = await loadDraft(id);
+      if (!record) { setDrafts(await listDrafts()); throw new Error("草稿已过期或被删除"); }
+      await enterEditor(record);
+    } catch (error) { setToast(error.message || "草稿打开失败"); }
+    finally { navigationLock.current = false; setNavigating(false); }
+  };
+  const removeDraft = async id => {
+    if (navigationLock.current) return;
+    navigationLock.current = true; setNavigating(true);
+    try {
+      await deleteDraft(id);
+      setDrafts(values => values.filter(record => record.id !== id));
+      removeUnusedAssets(assets.keys()).catch(() => {});
+    } catch { setToast("草稿删除失败"); }
+    finally { navigationLock.current = false; setNavigating(false); }
+  };
+  const confirmRaw = async () => {
+    if (navigationLock.current) return;
+    navigationLock.current = true; setNavigating(true);
+    try {
+      await enterRaw(rawPending, rawPending?.source || "", rawPending?.generationInput || input, rawPending?.templateId || "T01", !rawPending?.isRegeneration);
+      if (rawPending?.beforeArticle) saveArticleSnapshot(rawPending.beforeArticle);
+      if (rawPending?.ignoredImages) setToast(`${rawPending.ignoredImages} 张 Markdown 图片未导入，请在编辑器中插入原图`);
+    } catch { storageFailure(); }
+    finally { navigationLock.current = false; setNavigating(false); }
+  };
+  if (!ready) return <main className="create-shell workspace-loading" role="status">{startupError ? <>本地草稿读取失败<button className="text-link" onClick={() => window.location.reload()}>重新加载</button></> : "正在读取本地草稿…"}</main>;
   if (page === "create")
     return (
       <Create
@@ -522,7 +601,11 @@ function App() {
         setInput={setInput}
         modal={modal}
         setModal={setModal}
-        loading={loading}
+        loading={loading || navigating}
+        drafts={drafts}
+        openDraft={openDraft}
+        removeDraft={removeDraft}
+        confirmRaw={confirmRaw}
         cancelGeneration={cancelGeneration}
         generate={generate}
         addFiles={addFiles}
@@ -579,22 +662,9 @@ function App() {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error?.message || "重新生成失败");
     if (latestArticle.current !== article) throw new Error("生成期间正文或设置已修改，本次结果未覆盖，请重新生成");
-    setArticle({ ...result.article, settings: { ...result.article.settings, accountName: article.settings?.accountName } });
+    setArticle({ ...result.article, id: article.id, createdAt: article.createdAt, settings: { ...result.article.settings, accountName: article.settings?.accountName } });
     setSelected(result.article.templateId);
     return result;
-  };
-  const newDraft = async () => {
-    await removeUnusedAssets(assets.keys());
-    await clearAssets();
-    await clearDrafts();
-    await clearInputs();
-    setArticle(null);
-    setGenerationInput(null);
-    setSavedSnapshot(null);
-    setInput(blank());
-    setAssets(new Map());
-    setPage("create");
-    setModal(null);
   };
   const openHistory = async (record) => {
     if (record.expiresAt <= Date.now()) throw new Error("历史记录已过期");
@@ -612,14 +682,10 @@ function App() {
       restoredAssets.set(asset.id, restored);
     }
     setAssets(restoredAssets);
-    setArticle(structuredClone(record.article));
-    setSelected(record.article.templateId);
-    setGenerationInput(null);
-    setSavedSnapshot(null);
-    clearSnapshot().catch(() => {});
-    setEditorSession(value => value + 1);
-    setModal(null);
-    setPage("edit");
+    clearTimeout(draftTimer.current);
+    await persistDraft({ article, generationInput, snapshot: savedSnapshot });
+    const previous = await loadDraft(record.id);
+    await enterEditor({ article: structuredClone(record.article), generationInput: previous?.generationInput || null, snapshot: null });
   };
   return (
     <Edit
@@ -630,20 +696,13 @@ function App() {
       onSnapshotSaved={saveArticleSnapshot}
       onSnapshotCleared={() => {
         setSavedSnapshot(null);
-        clearSnapshot().catch(() => {});
       }}
       copyFailure={copyFailure}
-      onNewDraft={newDraft}
+      onReturnToCreate={returnToCreate}
+      navigating={navigating}
       onRegenerate={regenerate}
       rawPending={rawPending}
-      confirmRaw={async () => {
-        await enterRaw(rawPending, rawPending?.source || "", rawPending?.generationInput || input, rawPending?.templateId || "T01", !rawPending?.isRegeneration);
-        if (rawPending?.beforeArticle) saveArticleSnapshot(rawPending.beforeArticle);
-        if (rawPending?.ignoredImages)
-          setToast(
-            `${rawPending.ignoredImages} 张 Markdown 图片未导入，请在编辑器中插入原图`,
-          );
-      }}
+      confirmRaw={confirmRaw}
       article={article}
       setArticle={setArticle}
       template={template}
@@ -657,7 +716,6 @@ function App() {
       copy={copy}
       clear={clear}
       saved={saved}
-      setPage={setPage}
       setModal={setModal}
       modal={modal}
       setToast={setToast}
@@ -676,6 +734,10 @@ function Toast({ message, onClose }) {
 }
 
 function Create({
+  drafts,
+  openDraft,
+  removeDraft,
+  confirmRaw,
   input,
   setInput,
   modal,
@@ -754,12 +816,16 @@ function Create({
         <div><p className="eyebrow">WORKSPACE</p><h1>新建文章<span>.</span></h1></div>
         <div className="hero-index" aria-label="创作流程"><span className="hero-step active">01 素材</span><ArrowRight size={13}/><span className="hero-step">02 编辑</span><ArrowRight size={13}/><span className="hero-step">03 导出</span></div>
       </section>
+      <ArticleDrafts records={drafts} onOpen={id => {
+        const hasMaterials = input.topic.trim() || input.text.trim() || input.files.length || input.images.length;
+        if (!hasMaterials || window.confirm('继续编辑草稿将清空当前尚未生成的新文章素材，是否继续？')) openDraft(id);
+      }} onDelete={removeDraft} disabled={loading || isUploading}/>
       <section className="create-grid">
         <div className="input-column">
           <div className="section-caption"><span>文章素材</span><span>自动保存</span></div>
           <div className="field-block">
             <label htmlFor="article-topic">主题<small>{input.mode === 'create' ? '或直接添加素材' : '选填'}</small></label>
-            <input id="article-topic" maxLength={64} value={input.topic} onChange={event => setInput({ ...input, topic: event.target.value })} placeholder="想写点什么？"/>
+            <input id="article-topic" maxLength={64} value={input.topic} disabled={loading} onChange={event => setInput({ ...input, topic: event.target.value })} placeholder="想写点什么？"/>
             {input.topic.trim() && <div className="field-meta"><span>{input.topic.trim().length}/64</span></div>}
           </div>
           <div className="field-block material-field">
@@ -797,6 +863,7 @@ function Create({
         </aside>
       </section>
       {toast && <Toast message={toast} onClose={() => setToast('')}/>}
+      {modal === "raw-mismatch" && <div className="modal-backdrop"><section className="small-modal" role="dialog" aria-modal="true" aria-labelledby="raw-mismatch-title"><h2 id="raw-mismatch-title">原文解析需要确认</h2><p>解析后的正文与原文存在差异，请进入编辑后核对内容。</p><div className="modal-buttons"><button className="ghost-action" onClick={() => setModal(null)}>返回修改</button><button className="publish-action" onClick={confirmRaw}>仍然继续</button></div></section></div>}
       {previewImage && assets.get(previewImage) && <div className="modal-backdrop" onClick={() => setPreviewImage(null)}><div className="asset-lightbox" role="dialog" aria-modal="true" aria-label="图片预览" onClick={event => event.stopPropagation()}><button className="modal-close" aria-label="关闭图片预览" onClick={() => setPreviewImage(null)}><X size={20}/></button><img src={assets.get(previewImage).previewUrl || assets.get(previewImage).cacheUrl || assets.get(previewImage).url} alt="素材预览"/></div></div>}
       {modal === "storage-error" && (
         <div className="modal-backdrop">
@@ -886,7 +953,8 @@ function Edit({
   onSnapshotSaved,
   onSnapshotCleared,
   onRegenerate,
-  onNewDraft,
+  onReturnToCreate,
+  navigating,
   article,
   setArticle,
   template,
@@ -900,7 +968,6 @@ function Edit({
   copy,
   clear,
   saved,
-  setPage,
   setModal,
   modal,
   setToast,
@@ -1044,7 +1111,7 @@ function Edit({
   const aiPreview = !library && !layoutTrial ? aiEditor.previewArticle : null;
   const canvasArticle = useMemo(() => aiPreview || (layoutTrial?.signature === layoutSignature(article)
     ? { ...clearArticleStyles(article), layoutDesign: layoutTrial.design } : article), [article, aiPreview, layoutTrial]);
-  const canvasReadOnly = Boolean(aiPreview || layoutTrial || library || regenerating || aiEditor.busy === 'checking');
+  const canvasReadOnly = Boolean(navigating || aiPreview || layoutTrial || library || regenerating || aiEditor.busy === 'checking');
   const preview = useMemo(() => renderArticle({ ...article, html: undefined, layoutDesign: undefined }, template, assets, { mode: 'preview' }).html, [article, template, assets]);
   const chooseTemplate = (id) => {
     resetLayoutTrial();
@@ -1168,9 +1235,6 @@ function Edit({
       setRegenerating(false);
     }
   };
-  const original = () => {
-    setPage("create");
-  };
   const saveHistory = async () => {
     if (savingHistory || canvasReadOnly) return;
     setSavingHistory(true);
@@ -1183,9 +1247,9 @@ function Edit({
   return (
     <div className="edit-shell">
       <header className="edit-topbar">
-        <button className="back-button" onClick={original}>
+        <button className="back-button" disabled={navigating || imageUploads > 0 || regenerating || savingHistory || Boolean(aiEditor.busy)} onClick={onReturnToCreate}>
           <ArrowLeft size={17} />
-          <span>创作</span>
+          <span>{navigating ? "保存中…" : "新建文章"}</span>
         </button>
         <div className="edit-brand">
           <span className="mark small">W</span>
@@ -1208,7 +1272,7 @@ function Edit({
           >
             <Settings2 size={16} />
           </button>
-          <button className="ghost-action" onClick={() => setModal("clear")}>
+          <button className="ghost-action" disabled={navigating || regenerating || imageUploads > 0 || savingHistory || Boolean(aiEditor.busy)} onClick={() => setModal("clear")}>
             清空草稿
           </button>
           <button className="ghost-action article-history-action" onClick={() => setHistoryOpen(true)} disabled={canvasReadOnly || Boolean(aiEditor.busy) || savingHistory} title="历史记录" aria-label="历史记录">
@@ -1249,7 +1313,7 @@ function Edit({
             header={<div className="canvas-account"><input maxLength={64} value={account} disabled={canvasReadOnly} onChange={event => { setAccount(event.target.value); setArticle(a => ({ ...a, settings: { ...a.settings, accountName: event.target.value } })); }} aria-label="公众号名称"/><span>{new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}</span></div>}
             footer={<div className="canvas-footer" style={{ width: canvasWidth }}>
               <button className="add-block" disabled={canvasReadOnly} onClick={() => { setInsertAt(article.blocks.length); setModal('add'); }}><Plus size={15}/>添加内容</button>
-              <div className="article-end-actions"><button className="text-link" disabled={regenerating || canvasReadOnly} onClick={requestRegenerate}><RefreshCw size={14} className={regenerating ? 'spin' : ''}/>重新生成</button><button className="text-link" onClick={original}>修改素材</button>{snapshot && <button className="text-link" disabled={canvasReadOnly} onClick={() => { setArticle(snapshot); setSelected(snapshot.templateId); onSnapshotCleared?.(); }}>撤销重新生成</button>}</div>
+              <div className="article-end-actions"><button className="text-link" disabled={regenerating || canvasReadOnly} onClick={requestRegenerate}><RefreshCw size={14} className={regenerating ? 'spin' : ''}/>重新生成</button>{snapshot && <button className="text-link" disabled={canvasReadOnly} onClick={() => { setArticle(snapshot); setSelected(snapshot.templateId); onSnapshotCleared?.(); }}>撤销重新生成</button>}</div>
             </div>}
           />
         </main>
@@ -1428,7 +1492,7 @@ function Edit({
                   <button
                     className="publish-action"
                     onClick={() => {
-                      const payload = { article, input };
+                      const payload = { article };
                       const url = URL.createObjectURL(
                         new Blob([JSON.stringify(payload, null, 2)], {
                           type: "application/json",
@@ -1443,22 +1507,6 @@ function Edit({
                     }}
                   >
                     导出草稿
-                  </button>
-                </div>
-              </>
-            ) : modal === "recover" ? (
-              <>
-                <span className="eyebrow">未完成的文章</span>
-                <h2>继续上次编辑？</h2>
-                <div className="modal-buttons">
-                  <button className="ghost-action" onClick={onNewDraft}>
-                    新建文章
-                  </button>
-                  <button
-                    className="publish-action"
-                    onClick={() => setModal(null)}
-                  >
-                    继续编辑
                   </button>
                 </div>
               </>
@@ -1612,7 +1660,7 @@ function Edit({
                   >
                     取消
                   </button>
-                  <button className="danger-action" onClick={clear}>
+                  <button className="danger-action" disabled={navigating} onClick={clear}>
                     清空草稿
                   </button>
                 </div>
