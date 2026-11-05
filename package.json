@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --test --test-reporter=spec tests/*.test.js",
     "dev": "concurrently \"vite --host 0.0.0.0\" \"node server/index.js\"",
     "build": "vite build",
     "start": "node server/index.js"

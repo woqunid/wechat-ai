@@ -8,6 +8,14 @@
 
 前端在沙箱中检查320/375/414px下的实际横向溢出，通过后在主预览区试用，应用后写入文章 `layoutDesign` 并沿用草稿保存、撤销和复制。试用期间暂不复制，取消恢复原方案；正文发生变化时拒绝应用旧候选。结构增删或重排后按当前内容顺序复用样式，保证新增内容可见，提示重新设计以优化分组。浏览器检查不等于公众号真实粘贴回归。
 
+`edit` 请求为 `{article,prompt,references?,messages?}`，提交完整草稿与当前版式，修改要求1–4000字；`references`为关注点（最多100项），`messages`为最近最多16条临时对话（每条`{role:"user"|"assistant",text}`）。引用不限制修改范围，`raw`允许显式改写。图片只提交已有引用和服务端缓存读取的宽高，不提交画面或执行识图。对话和候选均不在服务端持久化。
+
+响应为`{message,operations,changes,meta:{model,retried}}`。操作支持`setTitle`、`setSummary`、`updateBlock`、`insertBlock`、`removeBlock`、`moveBlock`和`setLayout`，不接受任意HTML/CSS。`changes`由程序比较实际前后结果产生，不依赖模型自报；咨询可返回空操作。未配置AI返回`AI_NOT_CONFIGURED`，不使用示例结果；无效输出最多纠正一次，整体预算180秒，每来源默认每分钟20次（`RATE_EDIT_PER_MIN`），与生成/定制排版共享并发限制。客户端停止会中止上游模型请求。
+
+客户端检查手机布局后在中间预览候选，确认前不修改或保存正文。应用时按修改对象与相关版式检查冲突，保留无关手动编辑；失效引用保留卡片，失效方案拒绝应用。一次应用沿用文章撤销/重做，并保存`settings.aiEdited`标记；对话、引用、候选不进入草稿、复制或导出。
+
+全文允许编辑中的空段落、空标题和空列表项，空行原样保留。纯重排使用当前段落内容和样式，不将候选旧文本写回；内容并发修改及移动目标删除仍拒绝覆盖。普通文字操作与整篇版式均检查实际渲染后的对比度（至少4.5），包含继承底色与行内高亮；新引入的不可读样式按无效输出纠正一次，仍失败则返回`AI_EDIT_FAILED`。
+
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | GET | `/api/health` | 服务状态与版本 |
@@ -22,6 +30,7 @@
 | DELETE | `/api/assets/:id` | 删除图片资源 |
 | POST | `/api/articles/generate` | create/polish 模式生成结构化文章；raw 模式由共享解析器在前端完成 |
 | POST | `/api/articles/design` | 根据全文或用户风格要求生成独立版式，保留全部原文与图片 |
+| POST | `/api/articles/edit` | 基于全文、引用和临时对话返回待确认的内容与排版修改方案 |
 
 `generate` 请求字段：`mode`、`topic`、`text`、`materials[]`、`assetIds[]`、`tone`、`targetLength`，可选 `templateId`（T01–T40，重新生成时保留选中模板）。未指定模板时，根据规范化后的内容推荐初始模板。AI 服务配置齐全时按 `AI_API_STYLE` 调用 OpenAI 兼容 Responses 或 Chat Completions 接口；`auto` 默认先尝试 Responses，不支持时回退 Chat Completions。未配置时响应使用带 `mockGenerated` 标记的本地示例内容。响应带 `warnings` 和 `meta`（提示词/Schema 版本、模型、耗时、重试状态）。
 

@@ -3,7 +3,7 @@ import { LayoutDesignSchema } from './layout-design.js';
 
 const UserText = (max = 1200) => z.string().max(max).refine(value => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value));
 const TextColor = z.union([z.enum(['primary','accent','red','orange','green']), z.string().regex(/^#[0-9a-fA-F]{6}$/)]);
-export const RunSchema = z.object({ text: UserText().min(1), bold: z.boolean().optional(), underline: z.boolean().optional(), color: TextColor.optional(), highlight: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional() });
+export const RunSchema = z.object({ text: UserText(), bold: z.boolean().optional(), underline: z.boolean().optional(), color: TextColor.optional(), highlight: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional() });
 export const BlockStyleSchema = z.object({
   fontSize: z.number().int().min(12).max(40).optional(),
   align: z.enum(['left','center','right','justify']).optional(),
@@ -14,7 +14,7 @@ export const BlockStyleSchema = z.object({
 });
 const BlockBase = { id: z.string().max(80), style: BlockStyleSchema.optional() };
 export const BlockSchema = z.discriminatedUnion('type', [
-  z.object({...BlockBase, type:z.literal('heading'), level:z.union([z.literal(1),z.literal(2)]), text:UserText(120).min(1), runs:z.array(RunSchema).min(1).optional()}),
+  z.object({...BlockBase, type:z.literal('heading'), level:z.union([z.literal(1),z.literal(2)]), text:UserText(120), runs:z.array(RunSchema).min(1).optional()}),
   z.object({...BlockBase, type:z.literal('paragraph'), runs:z.array(RunSchema).min(1)}),
   z.object({...BlockBase, type:z.literal('callout'), runs:z.array(RunSchema).min(1)}),
   z.object({...BlockBase, type:z.literal('quote'), runs:z.array(RunSchema).min(1), cite:UserText(120).optional()}),
@@ -23,7 +23,7 @@ export const BlockSchema = z.discriminatedUnion('type', [
   z.object({...BlockBase, type:z.literal('imageCard'), assetId:z.string().regex(/^img_[a-zA-Z0-9_-]{3,80}$/), title:UserText(80).optional(), caption:UserText(300).optional()}),
   z.object({...BlockBase, type:z.literal('divider')})
 ]);
-export const ArticleSchema = z.object({schemaVersion:z.literal(1), id:z.string().max(100), mode:z.enum(['create','polish','raw']), title:UserText(80), summary:UserText(120), blocks:z.array(BlockSchema).max(120), layoutDesign:LayoutDesignSchema.optional(), templateId:z.string().regex(/^T(?:0[1-9]|[1-3][0-9]|40)$/), settings:z.object({tone:z.enum(['formal','plain','lively']).optional(), targetLength:z.union([z.literal(600),z.literal(1000),z.literal(1500),z.literal(2000)]).optional(), accountName:UserText(64).optional(), aiGenerated:z.boolean().optional(), mockGenerated:z.boolean().optional(), generationWarnings:z.array(UserText(500)).max(20).optional()}), rawSourceHash:z.string().regex(/^[a-f0-9]{64}$/).optional(), createdAt:z.string().datetime(), updatedAt:z.string().datetime()});
+export const ArticleSchema = z.object({schemaVersion:z.literal(1), id:z.string().max(100), mode:z.enum(['create','polish','raw']), title:UserText(80), summary:UserText(120), blocks:z.array(BlockSchema).max(120), layoutDesign:LayoutDesignSchema.optional(), templateId:z.string().regex(/^T(?:0[1-9]|[1-3][0-9]|40)$/), settings:z.object({tone:z.enum(['formal','plain','lively']).optional(), targetLength:z.union([z.literal(600),z.literal(1000),z.literal(1500),z.literal(2000)]).optional(), accountName:UserText(64).optional(), aiGenerated:z.boolean().optional(), aiEdited:z.boolean().optional(), mockGenerated:z.boolean().optional(), generationWarnings:z.array(UserText(500)).max(20).optional()}), rawSourceHash:z.string().regex(/^[a-f0-9]{64}$/).optional(), createdAt:z.string().datetime(), updatedAt:z.string().datetime()});
 export const uid = (prefix='id') => `${prefix}_${globalThis.crypto?.randomUUID?.().replaceAll('-', '').slice(0, 16) || Math.random().toString(36).slice(2, 12)}`;
 export const textOfRuns = (runs=[]) => runs.map(r=>r.text).join('');
 export const blockText = (b) => b.type==='heading'?b.text:b.type==='paragraph'||b.type==='callout'||b.type==='quote'?textOfRuns(b.runs):b.type==='list'?b.items.map(textOfRuns).join(' '):b.type==='image'||b.type==='imageCard'?[b.title,b.caption].filter(Boolean).join(' '):'';

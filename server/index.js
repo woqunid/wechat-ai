@@ -20,6 +20,8 @@ import { fetchRemoteImage, MAX_IMAGE_BYTES } from './remote-image.js';
 import { clearArticleStyles, layoutSource, LAYOUT_TIMEOUT_MS, validateLayoutDesign } from '../src/layout-design.js';
 import { renderArticle } from '../src/renderer.js';
 import { layoutInstructions } from './layout-rules.js';
+import { AIEditRequestSchema, AIEditResponseSchema, AI_EDIT_TIMEOUT_MS, buildAIEdit, describeAIEdit, isImageBlock } from '../src/ai-edit.js';
+import { editInstructions } from './edit-rules.js';
 
 dotenv.config();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -455,6 +457,50 @@ app.post('/api/articles/design', rateLimit(10, 'RATE_DESIGN_PER_MIN'), concurren
   if (controller.signal.aborted) return;
   const timeout = signal.aborted || ['TimeoutError', 'AbortError'].includes(lastError?.name);
   return res.status(timeout ? 504 : 502).json({ error: { code: timeout ? 'AI_TIMEOUT' : 'AI_DESIGN_FAILED', message: timeout ? '设计超时，当前排版已保留，请重试' : '新版式未通过完整性或适配检查，当前排版已保留，请重试' } });
+});
+
+app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGenerationLimit, async (req, res) => {
+  if (!canWriteConfig(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
+  const parsed = AIEditRequestSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: { code: 'INVALID_EDIT_INPUT', message: '请提供有效文章和1–4000字的修改要求' } });
+  const { article, prompt, references, messages } = parsed.data;
+  if (new Set(article.blocks.map(block => block.id)).size !== article.blocks.length) return res.status(400).json({ error: { code: 'INVALID_CONTENT_REFS', message: '文章内容编号重复，请恢复草稿后重试' } });
+  const controller = new AbortController();
+  res.once('close', () => { if (!res.writableEnded) controller.abort(); });
+  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(AI_EDIT_TIMEOUT_MS)]);
+  let config;
+  try { config = await resolveAIConfig(); }
+  catch (error) { return res.status(error.status || 502).json({ error: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '无法连接 AI 服务' } }); }
+  if (!config.baseUrl || !config.apiKey || !config.model) return res.status(400).json({ error: { code: 'AI_NOT_CONFIGURED', message: '请先在顶部设置中配置 AI 服务' } });
+  const assetIds = [...new Set(article.blocks.filter(isImageBlock).map(block => block.assetId))];
+  const imageDimensions = await Promise.all(assetIds.map(async assetId => {
+    const filename = fs.readdirSync(uploadDir).find(name => name.startsWith(`${assetId}.`));
+    try {
+      const metadata = filename && await sharp(path.join(uploadDir, filename)).metadata();
+      return { assetId, width: metadata?.width || null, height: metadata?.height || null };
+    } catch { return { assetId, width: null, height: null }; }
+  }));
+  const input = { article: { mode: article.mode, title: article.title, summary: article.summary, blocks: article.blocks, templateId: article.templateId, layoutDesign: article.layoutDesign, tone: article.settings.tone }, prompt, references, conversation: messages, imageDimensions, template: templates.find(template => template.id === article.templateId) };
+  if (JSON.stringify(input).length > 450000) return res.status(400).json({ error: { code: 'CONTENT_TOO_LONG', message: '全文及引用内容过长，请减少引用后重试；正文不会被截断提交' } });
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (signal.aborted) break;
+    try {
+      const output = await requestModel({ config, system: editInstructions, signal, inputData: { ...input, previousValidationError: lastError?.message.slice(0, 1200) } });
+      const result = AIEditResponseSchema.parse(JSON.parse(output.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/, '$1')));
+      const candidate = buildAIEdit(article, result.operations);
+      renderArticle(candidate, templates.find(template => template.id === candidate.templateId));
+      if (!controller.signal.aborted) return res.json({ ...result, changes: describeAIEdit(article, candidate), meta: { model: config.model, retried: attempt > 0 } });
+      return;
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      lastError = error;
+      if (error.status) break;
+    }
+  }
+  if (controller.signal.aborted) return;
+  const timeout = signal.aborted || ['TimeoutError', 'AbortError'].includes(lastError?.name);
+  return res.status(timeout ? 504 : 502).json({ error: { code: timeout ? 'AI_TIMEOUT' : 'AI_EDIT_FAILED', message: timeout ? '修改方案生成超时，原稿已保留，请重试' : '修改方案未通过内容或版式检查，原稿已保留，请重试' } });
 });
 
 app.use(express.static(path.join(root, 'dist')));

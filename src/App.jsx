@@ -24,6 +24,7 @@ import { bodyCharCount, bodyLengthStatus, CREATION_MODES, GENERATION_TIMEOUT_MS,
 import { describeTemplateFit, recommendTemplates } from "./recommender";
 import { AIServiceSettings } from "./AIServiceSettings";
 import { ArticleEditor } from "./ArticleEditor";
+import { AIEditPanel, useAIEdit } from "./AIEditPanel";
 import { ImageLinkInput } from "./ImageLinkInput";
 import { clearArticleStyles, layoutSignature } from "./layout-design.js";
 import {
@@ -1025,7 +1026,7 @@ function Create({
     </main>
   );
 }
-const previewDocument = (html, interactive = false) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><style>*{box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}p{overflow-wrap:anywhere}img{max-width:100%;height:auto}${interactive ? '[data-preview-key]{cursor:pointer;scroll-margin-top:28px}[data-preview-key]:hover{outline:1px dashed #0d9488;outline-offset:3px}[data-preview-key].preview-linked{outline:2px solid #0d9488;outline-offset:3px;animation:preview-locate 1s ease-out}@keyframes preview-locate{from{box-shadow:0 0 0 7px rgba(13,148,136,.2)}to{box-shadow:0 0 0 0 rgba(13,148,136,0)}}@media(prefers-reduced-motion:reduce){[data-preview-key].preview-linked{animation:none}}' : ''}</style></head><body>${html}</body></html>`;
+const previewDocument = (html, interactive = false) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><style>*{box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}p{overflow-wrap:anywhere}img{max-width:100%;height:auto}${interactive ? '[data-preview-key]{cursor:pointer;scroll-margin-top:28px}[data-preview-key].ai-proposed-change{outline:2px dashed #0284c7;outline-offset:3px}[data-preview-key]:hover{outline:1px dashed #0d9488;outline-offset:3px}[data-preview-key].preview-linked{outline:2px solid #0d9488;outline-offset:3px;animation:preview-locate 1s ease-out}@keyframes preview-locate{from{box-shadow:0 0 0 7px rgba(13,148,136,.2)}to{box-shadow:0 0 0 0 rgba(13,148,136,0)}}@media(prefers-reduced-motion:reduce){[data-preview-key].preview-linked{animation:none}}' : ''}</style></head><body>${html}</body></html>`;
 
 function TemplateThumb({ article, template, assets, large = false }) {
   const container = useRef();
@@ -1097,6 +1098,7 @@ function Edit({
   const [libraryOriginal, setLibraryOriginal] = useState(selected);
   const [layoutTrial, setLayoutTrial] = useState(null);
   const [layoutReset, setLayoutReset] = useState(0);
+  const [sideTab, setSideTab] = useState('templates');
   const resetLayoutTrial = () => { setLayoutTrial(null); setLayoutReset(value => value + 1); };
   const openLibrary = () => {
     resetLayoutTrial();
@@ -1123,6 +1125,7 @@ function Edit({
   }, [library, libraryOriginal, setSelected]);
   const snapshot = savedSnapshot;
   const [regenerating, setRegenerating] = useState(false);
+  const aiEditor = useAIEdit({ article, setArticle, assets, disabled: library || regenerating || Boolean(layoutTrial), onApplied: resetLayoutTrial, setToast });
   const history = useRef([]);
   const future = useRef([]);
   const [historySize, setHistorySize] = useState(0);
@@ -1234,15 +1237,22 @@ function Edit({
     const key = event.target.closest('[data-editor-key]')?.dataset.editorKey;
     if (key) locateContent(key, 'editor');
   };
+  const captureFieldReference = event => {
+    if (event.nativeEvent?.shiftKey) return;
+    const { selectionStart, selectionEnd, value, dataset } = event.target;
+    if (selectionStart === selectionEnd) return;
+    aiEditor.addReference({ kind: 'text', keys: [dataset.editorKey], text: value.slice(selectionStart, selectionEnd), startOffset: selectionStart, endOffset: selectionEnd });
+  };
+  const aiPreview = sideTab === 'ai' && !library && !layoutTrial ? aiEditor.previewArticle : null;
   const preview = useMemo(
     () =>
       renderArticle(
-        { ...(layoutTrial?.signature === layoutSignature(article) ? clearArticleStyles(article) : article), layoutDesign: library ? undefined : layoutTrial?.signature === layoutSignature(article) ? layoutTrial.design : article.layoutDesign, settings: { ...article.settings, accountName: account } },
+        { ...(aiPreview || (layoutTrial?.signature === layoutSignature(article) ? clearArticleStyles(article) : article)), layoutDesign: library ? undefined : aiPreview ? aiPreview.layoutDesign : layoutTrial?.signature === layoutSignature(article) ? layoutTrial.design : article.layoutDesign, settings: { ...article.settings, accountName: account } },
         template,
         assets,
         { mode: "preview", interactive: true },
       ).html,
-    [article, template, assets, account, library, layoutTrial],
+    [article, template, assets, account, library, layoutTrial, aiPreview],
   );
   useEffect(() => {
     let removeClick;
@@ -1261,6 +1271,9 @@ function Edit({
           previewDocument(preview, true),
         );
         doc.close();
+        if (aiPreview) for (const change of aiEditor.changes) {
+          if (change.key !== 'layout') doc.querySelector(`[data-preview-key="${CSS.escape(change.key)}"]`)?.classList.add('ai-proposed-change');
+        }
         const target = highlightPreview(doc, activeKeyRef.current);
         const targetTop = target ? target.getBoundingClientRect().top + frame.contentWindow.scrollY : 0;
         const top = target && pendingPreviewKey.current === activeKeyRef.current
@@ -1280,7 +1293,7 @@ function Edit({
       clearTimeout(t);
       removeClick?.();
     };
-  }, [preview]);
+  }, [preview, Boolean(aiPreview)]);
   const chooseTemplate = (id) => {
     resetLayoutTrial();
     setSelected(id);
@@ -1430,7 +1443,7 @@ function Edit({
           <button className="ghost-action" onClick={() => setModal("clear")}>
             清空草稿
           </button>
-          <button className="publish-action" disabled={Boolean(layoutTrial)} title={layoutTrial ? '应用新版式后再复制' : undefined} onClick={() => copy()}>
+          <button className="publish-action" disabled={Boolean(layoutTrial || aiPreview)} title={layoutTrial || aiPreview ? '应用当前方案后再复制' : undefined} onClick={() => copy()}>
             <Copy size={16} />
             复制到公众号
           </button>
@@ -1465,6 +1478,8 @@ function Edit({
             <textarea
               className={`title-edit${activeKey === 'title' ? ' is-linked' : ''}`}
               data-editor-key="title"
+              onSelect={captureFieldReference}
+              onKeyUp={event => { if (event.key === 'Shift') captureFieldReference(event); }}
               maxLength={80}
               value={article.title}
               onChange={(e) =>
@@ -1485,15 +1500,14 @@ function Edit({
             {article.settings?.mockGenerated && (
               <div className="content-origin mock-origin">本地示例 · 未执行语气和目标长度</div>
             )}
-            {article.settings?.aiGenerated &&
-              !article.settings?.mockGenerated && (
+            {(article.settings?.aiEdited || (article.settings?.aiGenerated && !article.settings?.mockGenerated)) && (
                 <div className="content-origin">
-                  内容由 AI 生成，请核对事实后发布
+                  {article.settings?.aiEdited ? '内容经 AI 修改，请核对事实后发布' : '内容由 AI 生成，请核对事实后发布'}
                 </div>
               )}
             <div className="writing-status" aria-label="当前文章创作设置">
               <span>{CREATION_MODES[article.mode]?.label}</span>
-              {article.mode === "raw" ? <span>保留原文 · 不使用 AI</span> : <>
+              {article.mode === "raw" ? <span>{article.settings?.aiEdited ? '原文导入 · 已通过 AI 修改' : '保留原文 · 不使用 AI'}</span> : <>
                 <span>{WRITING_TONES[article.settings?.tone]?.label || "通俗"}</span>
                 {bodyLength && <span>目标约 {bodyLength.target} 字</span>}
               </>}
@@ -1508,6 +1522,8 @@ function Edit({
               <textarea
                 className={`summary-edit${activeKey === 'summary' ? ' is-linked' : ''}`}
                 data-editor-key="summary"
+                onSelect={captureFieldReference}
+                onKeyUp={event => { if (event.key === 'Shift') captureFieldReference(event); }}
                 value={article.summary || ""}
                 maxLength={120}
                 placeholder="摘要"
@@ -1553,6 +1569,7 @@ function Edit({
               assets={assets}
               activeKey={activeKey}
               onSelect={key => locateContent(key, 'editor')}
+              onReference={aiEditor.addReference}
               onUpload={uploadImage}
               onRegisterAsset={registerImageAsset}
               onGallery={(index, blockId = null) => {
@@ -1605,7 +1622,7 @@ function Edit({
         </aside>
         <main className="preview-pane">
           <div className="preview-toolbar">
-            <span className="preview-label">{layoutTrial ? '新版式试用' : '实时预览'}<small>{layoutTrial ? '应用后即可复制' : '点击内容，双向定位'}</small></span>
+            <span className="preview-label">{aiPreview ? 'AI修改预览 · 未应用' : layoutTrial ? '新版式试用' : '实时预览'}<small>{aiPreview ? '虚线标记修改处，应用后即可复制' : layoutTrial ? '应用后即可复制' : '点击内容，双向定位'}</small></span>
             <div className="width-switch">
               {[320, 375, 414].map((w) => (
                 <button
@@ -1624,6 +1641,7 @@ function Edit({
               </button>
             </div>
           </div>
+          {sideTab === 'ai' && aiEditor.candidate && !aiEditor.problem && <div className="ai-edit-preview-bar"><span>{aiPreview ? '当前为候选效果，正文尚未修改' : '当前为原稿'}</span><button className="text-link" onClick={() => aiEditor.setShowCandidate(value => !value)}>{aiEditor.showCandidate ? '查看原稿' : '预览方案'}</button></div>}
           <div className="phone-stage">
             <div
               className={
@@ -1673,7 +1691,12 @@ function Edit({
             </div>
           </div>
         </main>
-        <aside className="template-pane">
+        <aside className={`template-pane${sideTab === 'ai' ? ' ai-edit-pane' : ''}`}>
+          <div className="side-panel-tabs" role="tablist" aria-label="右侧工具">
+            <button id="templates-tab" role="tab" aria-selected={sideTab === 'templates'} aria-controls="templates-panel" onClick={() => setSideTab('templates')}>模板</button>
+            <button id="ai-edit-tab" role="tab" aria-selected={sideTab === 'ai'} aria-controls="ai-edit-panel" onClick={() => setSideTab('ai')}>AI修改{aiEditor.references.length > 0 && <span>{aiEditor.references.length}</span>}</button>
+          </div>
+          <div className="side-panel-content" id="templates-panel" role="tabpanel" aria-labelledby="templates-tab" hidden={sideTab !== 'templates'}>
           <div className="pane-heading template-heading">
             <div>
               <span className="eyebrow">视觉风格</span>
@@ -1681,7 +1704,7 @@ function Edit({
             </div>
             <span className="template-total">{templates.length}</span>
           </div>
-          <React.Suspense fallback={null}><LayoutDesigner key={article.id} article={article} setArticle={setArticle} onTrial={setLayoutTrial} resetKey={layoutReset} disabled={library || regenerating} setToast={setToast} /></React.Suspense>
+          <React.Suspense fallback={null}><LayoutDesigner key={article.id} article={article} setArticle={setArticle} onTrial={setLayoutTrial} resetKey={layoutReset} disabled={library || regenerating || Boolean(aiEditor.busy)} setToast={setToast} /></React.Suspense>
           <div className="recommend-label">
             <span>为这篇文章挑选</span>
             <small>随内容实时匹配</small>
@@ -1718,6 +1741,10 @@ function Edit({
             </strong>
             <p>{article.layoutDesign ? article.layoutDesign.description : template.visual}</p>
             <small>{article.layoutDesign ? 'AI 定制排版 · 全文保留' : describeTemplateFit(article, template)}</small>
+          </div>
+          </div>
+          <div className="side-panel-content ai-edit-slot" id="ai-edit-panel" role="tabpanel" aria-labelledby="ai-edit-tab" hidden={sideTab !== 'ai'}>
+            <AIEditPanel editor={aiEditor} article={article} assets={assets} disabled={library || regenerating || Boolean(layoutTrial)} onLocate={key => locateContent(key, 'editor')}/>
           </div>
         </aside>
       </div>

@@ -7,7 +7,7 @@ import { bookmarkRange, clipboardBlocks, editorBookmark, editorHtml, readEditorB
 const imageBlock = block => block?.type === 'image' || block?.type === 'imageCard';
 const plainRuns = runs => runs.map(run => ({ text: run.text }));
 
-export function ArticleEditor({ article, setArticle, template, assets, activeKey, onSelect, onUpload, onRegisterAsset, onGallery, setToast }) {
+export function ArticleEditor({ article, setArticle, template, assets, activeKey, onSelect, onReference, onUpload, onRegisterAsset, onGallery, setToast }) {
   const canvas = useRef();
   const sheet = useRef();
   const bookmark = useRef(null);
@@ -41,6 +41,19 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
       lastSelected.current = next.startId;
       onSelect(`block:${next.startId}`);
     }
+  };
+  const referenceImage = id => {
+    const block = article.blocks.find(block => block.id === id);
+    if (imageBlock(block)) onReference?.({ kind: 'image', keys: [`block:${id}`], text: blockText(block) || '文章图片' });
+  };
+  const captureReference = event => {
+    remember();
+    const figure = event.target.closest('figure[data-block-id]');
+    if (figure) { referenceImage(figure.dataset.blockId); return; }
+    const saved = editorBookmark(canvas.current);
+    if (!saved || saved.collapsed) return;
+    if (saved.text.trim()) onReference?.({ kind: 'text', keys: saved.ids.map(id => `block:${id}`), text: saved.text, startOffset: saved.startOffset, endOffset: saved.endOffset });
+    saved.ids.forEach(referenceImage);
   };
   useEffect(() => {
     const listener = () => { if (canvas.current?.contains(document.activeElement)) remember(); };
@@ -358,13 +371,14 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     <div className="document-sheet" ref={sheet} onDragOver={dragOver} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDrop(null); }} onDrop={dropImage}>
       {drop && <div className="editor-drop-line" style={{ top: drop.top }} aria-hidden="true"/>}
       <div ref={canvas} className="document-canvas" role="textbox" aria-label="文章正文，支持连续编辑和文字排版" aria-multiline="true" contentEditable suppressContentEditableWarning spellCheck={false} style={{ '--editor-primary': template.tokens.primary, '--editor-tint': template.tokens.tint, '--editor-line-height': template.tokens.lineHeight, '--editor-paragraph-gap': `${template.tokens.paraGap}px` }}
-        onInput={commit} onPaste={paste} onKeyDown={splitParagraph} onMouseUp={remember} onKeyUp={remember} onFocus={event => {
+        onInput={commit} onPaste={paste} onKeyDown={splitParagraph} onMouseUp={captureReference} onKeyUp={event => { remember(); if (!event.shiftKey) captureReference(event); }} onFocus={event => {
           if (event.target.tagName === 'FIGURE') {
             bookmark.current = null;
             setSelection(null);
             window.getSelection()?.removeAllRanges();
             lastSelected.current = event.target.dataset.blockId;
             onSelect(`block:${event.target.dataset.blockId}`);
+            referenceImage(event.target.dataset.blockId);
           } else remember();
         }}
         onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; commit(); }}
