@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, Eraser, Highlighter, ImagePlus, IndentIncrease, RefreshCw, Trash2, Underline, WandSparkles, X } from 'lucide-react';
 import { uid } from './core.js';
+import { GENERATION_TIMEOUT_MS } from './creation.js';
 import { bookmarkRange, clipboardBlocks, editorBookmark, editorHtml, readEditorBlocks, restoreBookmark } from './editor-dom.js';
 
 const imageBlock = block => block?.type === 'image' || block?.type === 'imageCard';
@@ -291,6 +292,7 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     handle.addEventListener('pointercancel', finish);
   };
   const rewrite = async action => {
+    if (article.mode === 'raw') { setToast('原文排版不调用 AI，可手动编辑正文'); return; }
     const saved = bookmark.current;
     if (!saved?.text.trim() || saved.collapsed || saved.text.length > 6000 || saved.ids.some(id => imageBlock(article.blocks.find(block => block.id === id)))) { setToast('请在正文中选择 1–6000 字文字'); return; }
     const fingerprint = selectionFingerprint(article.blocks, saved);
@@ -299,7 +301,7 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
     request.current?.abort(); request.current = controller;
     setAi({ action, bookmark: { ...saved }, original: saved.text, fingerprint, busy: true, result: '' });
     try {
-      const response = await fetch('/api/articles/rewrite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, text: saved.text }), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(100000)]) });
+      const response = await fetch('/api/articles/rewrite', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, text: saved.text, mode: article.mode, tone: article.settings?.tone || 'plain' }), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(GENERATION_TIMEOUT_MS + 10000)]) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error?.message || 'AI 修改失败');
       if (!controller.signal.aborted) setAi(previous => previous && { ...previous, busy: false, result: data.text });
@@ -355,7 +357,7 @@ export function ArticleEditor({ article, setArticle, template, assets, activeKey
         <label>段距<select aria-label="段后间距" value={currentStyle.paragraphSpacing ?? ''} onChange={event => patchStyle({ paragraphSpacing: Number(event.target.value) })}><option value="" disabled>模板</option>{[0,8,12,16,18,24,32,48,64].map(value => <option key={value}>{value}</option>)}</select></label>
         <button title="切换首行缩进两字" aria-label="首行缩进" aria-pressed={Boolean(currentStyle.indent)} onMouseDown={keepSelection} onClick={() => patchStyle({ indent: currentStyle.indent ? 0 : 2 })}><IndentIncrease size={16}/></button>
       </div>}
-      <div className="editor-ai-tools"><span>{hasSelection ? `已选 ${selection.text.length} 字` : '选中文字后可局部修改'}</span>{[['polish','润色'],['shorten','缩短'],['expand','扩写']].map(([action,label]) => <button key={action} disabled={!hasSelection || Boolean(ai)} onMouseDown={keepSelection} onClick={() => rewrite(action)}><WandSparkles size={12}/>{label}</button>)}</div>
+      <div className="editor-ai-tools"><span>{article.mode === 'raw' ? '原文排版不调用 AI，可手动编辑正文' : hasSelection ? `已选 ${selection.text.length} 字` : '选中文字后可局部修改'}</span>{article.mode !== 'raw' && [['polish','润色'],['shorten','缩短'],['expand','扩写']].map(([action,label]) => <button key={action} disabled={!hasSelection || Boolean(ai)} onMouseDown={keepSelection} onClick={() => rewrite(action)}><WandSparkles size={12}/>{label}</button>)}</div>
     </div>
     {showAssets && <div className="editor-assets"><div className="editor-assets-heading"><span>点击插图，或拖到正文指定位置</span><button onClick={() => fileInput.current.click()} disabled={uploading}>上传图片</button></div><div className="editor-asset-strip">{[...assets.values()].map(asset => <button key={asset.id} title="点击插入，拖动可选择位置" draggable onDragStart={event => { event.dataTransfer.setData('application/x-weave-asset', asset.id); event.dataTransfer.effectAllowed = 'copy'; }} onMouseDown={keepSelection} onClick={() => insertAsset(asset.id)}><img src={asset.previewUrl || asset.url} alt={asset.filename || '图片素材'}/></button>)}{assets.size === 0 && <small>还没有图片，也可以直接粘贴截图或拖入文件。</small>}</div></div>}
     {imageBlock(current) && <div className="editor-image-controls"><label>图片宽度 <input aria-label="图片宽度" type="range" min="20" max="100" step="5" value={currentStyle.imageWidth || 100} onChange={event => patchStyle({ imageWidth: Number(event.target.value) })}/><span>{currentStyle.imageWidth || 100}%</span></label><div>{[['left','靠左'],['center','居中'],['right','靠右']].map(([align,label]) => <button key={align} aria-pressed={(currentStyle.align || 'left') === align} onClick={() => patchStyle({ align })}>{label}</button>)}<button onClick={() => onGallery(article.blocks.findIndex(block => block.id === current.id), current.id)}>替换图片</button><button title="删除当前图片，可撤销" aria-label="删除图片" onClick={() => publish(article.blocks.filter(block => block.id !== current.id))}><Trash2 size={14}/></button></div></div>}

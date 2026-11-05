@@ -1362,6 +1362,42 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   font-weight: 500;
 }
 
+.setting-hint {
+  margin: 10px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.writing-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 8px 0 14px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.writing-status small {
+  flex-basis: 100%;
+  color: var(--amber);
+  font-size: inherit;
+}
+
+.writing-warnings {
+  margin: 12px 0;
+  padding: 12px;
+  border-radius: var(--r-sm);
+  color: var(--amber);
+  background: var(--amber-subtle);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.writing-warnings p { margin: 5px 0 0; }
+
 .mock-origin {
   color: var(--amber);
   background: var(--amber-subtle);

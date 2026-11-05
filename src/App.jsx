@@ -23,6 +23,7 @@ import { renderArticle } from "./renderer";
 import { copyHtml } from "./clipboard";
 import { checkRawConsistency, parseRaw } from "./rawparser";
 import { uid } from "./core";
+import { bodyCharCount, bodyLengthStatus, CREATION_MODES, GENERATION_TIMEOUT_MS, TARGET_LENGTHS, WRITING_TONES } from "./creation.js";
 import { describeTemplateFit, recommendTemplates } from "./recommender";
 import { AIServiceSettings } from "./AIServiceSettings";
 import { ArticleEditor } from "./ArticleEditor";
@@ -89,7 +90,10 @@ function parseDocumentBlocks(source, sourceBlocks) {
 function App() {
   const [page, setPage] = useState("create");
   const [input, setInput] = useState(blank);
+  const [generationInput, setGenerationInput] = useState(null);
   const [article, setArticle] = useState(null);
+  const latestArticle = useRef(null);
+  latestArticle.current = article;
   const [selected, setSelected] = useState("T06");
   const [assets, setAssets] = useState(new Map());
   const [loading, setLoading] = useState(false);
@@ -102,7 +106,6 @@ function App() {
   const [saved, setSaved] = useState("");
   const [savedSnapshot, setSavedSnapshot] = useState(null);
   const fileRef = useRef();
-  const articleSnapshot = useRef(null);
   useEffect(() => {
     loadAssets()
       .then(async (items) => {
@@ -124,11 +127,13 @@ function App() {
       .catch(() => setToast("图片草稿无法读取"));
     Promise.all([loadDraft(), loadInputs(), loadSnapshot()])
       .then(([draft, storedInput, snapshotRecord]) => {
-        if (storedInput?.input) setInput(storedInput.input);
+        if (storedInput?.input) setInput({ ...blank(), ...storedInput.input });
         if (draft?.article) {
           setArticle(draft.article);
-          if (draft.snapshot || snapshotRecord?.snapshot)
-            setSavedSnapshot(draft.snapshot || snapshotRecord.snapshot);
+          const sourceInput = draft.generationInput || storedInput?.input;
+          setGenerationInput(sourceInput ? { ...blank(), ...sourceInput } : null);
+          const recoveredSnapshot = Object.hasOwn(draft, "snapshot") ? draft.snapshot : snapshotRecord?.snapshot || null;
+          setSavedSnapshot(recoveredSnapshot);
           setSelected(draft.article.templateId);
           setPage("edit");
           setModal("recover");
@@ -150,7 +155,7 @@ function App() {
   useEffect(() => {
     if (!article) return;
     const timer = setTimeout(() => {
-      saveDraft({ article, snapshot: articleSnapshot.current || null })
+      saveDraft({ article, generationInput, snapshot: savedSnapshot })
         .then(() => setSaved(new Date().toLocaleTimeString()))
         .catch(() => {
           setToast("浏览器空间不足，草稿未能保存");
@@ -158,8 +163,12 @@ function App() {
         });
     }, 800);
     return () => clearTimeout(timer);
-  }, [article]);
+  }, [article, generationInput, savedSnapshot]);
   const template = getTemplate(selected);
+  const saveArticleSnapshot = (snapshot) => {
+    setSavedSnapshot(snapshot);
+    saveSnapshot(snapshot).catch(() => {});
+  };
   const recs = useMemo(
     () => (article ? recommendTemplates(article) : []),
     [article],
@@ -170,7 +179,7 @@ function App() {
       blocks: a.blocks.map((b) => (b.id === id ? { ...b, ...patch } : b)),
       updatedAt: new Date().toISOString(),
     }));
-  const enterRaw = async (parsed, source = "") => {
+  const enterRaw = async (parsed, source = "", sourceInput = input, templateId = "T01", resetSnapshot = true) => {
     const now = new Date().toISOString();
     const digest = await crypto.subtle.digest(
       "SHA-256",
@@ -186,13 +195,18 @@ function App() {
       title: parsed.title,
       summary: parsed.summary,
       blocks: parsed.blocks,
-      templateId: "T01",
+      templateId,
       settings: {},
       rawSourceHash,
       createdAt: now,
       updatedAt: now,
     });
-    setSelected("T01");
+    setGenerationInput(structuredClone(sourceInput));
+    if (resetSnapshot) {
+      setSavedSnapshot(null);
+      clearSnapshot().catch(() => {});
+    }
+    setSelected(templateId);
     setPage("edit");
     setModal(null);
     setRawPending(null);
@@ -213,7 +227,7 @@ function App() {
         ? parseDocumentBlocks(documentFile.text, documentFile.blocks)
         : parseRaw(source);
       if (parsed.mismatch) {
-        setRawPending({ ...parsed, source });
+        setRawPending({ ...parsed, source, generationInput: structuredClone(input) });
         setModal("raw-mismatch");
         return;
       }
@@ -229,10 +243,11 @@ function App() {
       input.files.reduce((n, f) => n + (f.text?.length || 0), 0);
     if (
       materialLength > (input.targetLength || 1000) * 1.2 &&
-      !window.confirm("素材较长，生成文章可能压缩原始信息。是否继续？")
+      !window.confirm(mode === "polish" ? "原文较长，润色会优先保留事实和重要细节，可能超过目标长度。是否继续？" : "素材较长，生成文章可能压缩原始信息。是否继续？")
     )
       return;
     setLoading(true);
+    const submittedInput = structuredClone(input);
     requestAbort.current = new AbortController();
     try {
       const res = await fetch(API + "/api/articles/generate", {
@@ -240,24 +255,25 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode,
-          topic: input.topic,
-          text: input.text,
-          materials: input.files.map((f) => f.text).filter(Boolean),
-          tone: input.tone,
-          targetLength: input.targetLength,
-          assetIds: input.images.map((image) => image.id).filter(Boolean),
+          topic: submittedInput.topic,
+          text: submittedInput.text,
+          materials: submittedInput.files.filter((f) => f.ok).map((f) => f.text).filter(Boolean),
+          tone: submittedInput.tone,
+          targetLength: submittedInput.targetLength,
+          assetIds: submittedInput.images.map((image) => image.id).filter(Boolean),
         }),
         signal: AbortSignal.any([
           requestAbort.current.signal,
-          AbortSignal.timeout(100000),
+          AbortSignal.timeout(GENERATION_TIMEOUT_MS + 10000),
         ]),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error?.message || "生成失败");
       setArticle(data.article);
+      setGenerationInput(submittedInput);
       setSelected(data.article.templateId);
       setSavedSnapshot(null);
-      articleSnapshot.current = null;
+      clearSnapshot().catch(() => {});
       setPage("edit");
       if (data.warnings?.length) setToast(data.warnings.join("；"));
     } catch (e) {
@@ -471,8 +487,8 @@ function App() {
     await clearDrafts();
     await clearInputs();
     setArticle(null);
+    setGenerationInput(null);
     setSavedSnapshot(null);
-    articleSnapshot.current = null;
     setInput(blank());
     setAssets(new Map());
     setPage("create");
@@ -499,51 +515,50 @@ function App() {
       />
     );
   const regenerate = async () => {
-    if (input.mode === "raw") {
+    if (!generationInput) throw new Error("原始素材未保留，请返回创作页补充素材后生成");
+    const sourceInput = generationInput;
+    if (article.mode === "raw") {
       const source =
-        input.text ||
-        input.files
+        sourceInput.text ||
+        sourceInput.files
           .filter((f) => f.ok)
           .map((f) => f.text || "")
           .join("\n\n");
-      const documentFile = !input.text
-        ? input.files.find((file) => file.ok && file.blocks?.length)
+      const documentFile = !sourceInput.text
+        ? sourceInput.files.find((file) => file.ok && file.blocks?.length)
         : null;
       const parsed = documentFile
         ? parseDocumentBlocks(documentFile.text, documentFile.blocks)
         : parseRaw(source);
       if (parsed.mismatch) {
-        setRawPending({ ...parsed, source });
+        setRawPending({ ...parsed, source, generationInput: sourceInput, templateId: selected, isRegeneration: true, beforeArticle: article });
         setModal("raw-mismatch");
-        return;
+        return { pending: true };
       }
-      await enterRaw(parsed, source);
-      if (parsed.ignoredImages)
-        setToast(
-          `${parsed.ignoredImages} 张 Markdown 图片未导入，请在编辑器中插入原图`,
-        );
-      return;
+      await enterRaw(parsed, source, sourceInput, selected, false);
+      return { warnings: parsed.ignoredImages ? [`${parsed.ignoredImages} 张 Markdown 图片未导入，请在编辑器中插入原图`] : [] };
     }
     const response = await fetch("/api/articles/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        mode: input.mode,
-        topic: input.topic,
-        text: input.text,
-        materials: input.files.map((f) => f.text).filter(Boolean),
-        tone: input.tone,
-        targetLength: input.targetLength,
-        assetIds: input.images.map((image) => image.id).filter(Boolean),
+        mode: article.mode,
+        topic: sourceInput.topic,
+        text: sourceInput.text,
+        materials: sourceInput.files.filter((f) => f.ok).map((f) => f.text).filter(Boolean),
+        tone: article.settings?.tone || sourceInput.tone || "plain",
+        targetLength: article.settings?.targetLength || sourceInput.targetLength || 1000,
+        assetIds: [...new Set(article.blocks.filter((block) => block.type === "image" || block.type === "imageCard").map((block) => block.assetId))],
         templateId: selected,
       }),
-      signal: AbortSignal.timeout(100000),
+      signal: AbortSignal.timeout(GENERATION_TIMEOUT_MS + 10000),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error?.message || "重新生成失败");
-    setArticle(result.article);
+    if (latestArticle.current !== article) throw new Error("生成期间正文或设置已修改，本次结果未覆盖，请重新生成");
+    setArticle({ ...result.article, settings: { ...result.article.settings, accountName: article.settings?.accountName } });
     setSelected(result.article.templateId);
-    if (result.warnings?.length) setToast(result.warnings.join("；"));
+    return result;
   };
   const newDraft = async () => {
     for (const id of assets.keys()) {
@@ -557,8 +572,8 @@ function App() {
     await clearDrafts();
     await clearInputs();
     setArticle(null);
+    setGenerationInput(null);
     setSavedSnapshot(null);
-    articleSnapshot.current = null;
     setInput(blank());
     setAssets(new Map());
     setPage("create");
@@ -567,6 +582,7 @@ function App() {
   return (
     <Edit
       savedSnapshot={savedSnapshot}
+      onSnapshotSaved={saveArticleSnapshot}
       onSnapshotCleared={() => {
         setSavedSnapshot(null);
         clearSnapshot().catch(() => {});
@@ -576,7 +592,8 @@ function App() {
       onRegenerate={regenerate}
       rawPending={rawPending}
       confirmRaw={async () => {
-        await enterRaw(rawPending, rawPending?.source || "");
+        await enterRaw(rawPending, rawPending?.source || "", rawPending?.generationInput || input, rawPending?.templateId || "T01", !rawPending?.isRegeneration);
+        if (rawPending?.beforeArticle) saveArticleSnapshot(rawPending.beforeArticle);
         if (rawPending?.ignoredImages)
           setToast(
             `${rawPending.ignoredImages} 张 Markdown 图片未导入，请在编辑器中插入原图`,
@@ -873,11 +890,7 @@ function Create({
           <div className="setting-section">
             <label>创作方式</label>
             <div className="mode-list">
-              {[
-                ["create", "素材创作", "从素材组织出完整文章"],
-                ["polish", "素材润色", "保留事实，优化表达"],
-                ["raw", "原文排版", "不改正文，只做结构识别"],
-              ].map(([id, title, desc]) => (
+              {Object.entries(CREATION_MODES).map(([id, { label: title, hint: desc }]) => (
                 <button
                   className={
                     input.mode === id ? "mode-option active" : "mode-option"
@@ -899,11 +912,7 @@ function Create({
               <div className="setting-section">
                 <label>语气</label>
                 <div className="segmented">
-                  {[
-                    ["formal", "正式"],
-                    ["plain", "通俗"],
-                    ["lively", "活泼"],
-                  ].map(([id, label]) => (
+                  {Object.entries(WRITING_TONES).map(([id, { label }]) => (
                     <button
                       className={input.tone === id ? "selected" : ""}
                       onClick={() => setInput({ ...input, tone: id })}
@@ -913,11 +922,12 @@ function Create({
                     </button>
                   ))}
                 </div>
+                <p className="setting-hint">{WRITING_TONES[input.tone]?.hint}</p>
               </div>
               <div className="setting-section">
                 <label>目标长度</label>
                 <div className="segmented">
-                  {[600, 1000, 1500, 2000].map((n) => (
+                  {TARGET_LENGTHS.map((n) => (
                     <button
                       className={input.targetLength === n ? "selected" : ""}
                       onClick={() => setInput({ ...input, targetLength: n })}
@@ -927,6 +937,7 @@ function Create({
                     </button>
                   ))}
                 </div>
+                <p className="setting-hint">正文约 ±15%，不含主标题、摘要和图注。{input.mode === "polish" ? "润色优先保留原文事实和重要细节，不为凑字数删改信息。" : "不足时讲清已有信息，不编造事实或重复凑字数。"}</p>
               </div>
             </>
           )}
@@ -944,7 +955,7 @@ function Create({
               !valid ||
               textCount > 30000 ||
               loading ||
-              aiConfigured === null ||
+              (input.mode !== "raw" && aiConfigured === null) ||
               (input.mode !== "raw" && Boolean(aiStatus?.configurationError))
             }
             onClick={generate}
@@ -952,7 +963,7 @@ function Create({
             {loading ? (
               <>
                 <RefreshCw size={17} className="spin" />
-                正在整理素材
+                正在生成并检查内容
               </>
             ) : input.mode === "raw" ? (
               "开始排版"
@@ -1063,6 +1074,7 @@ function Edit({
   confirmRaw,
   copyFailure,
   savedSnapshot,
+  onSnapshotSaved,
   onSnapshotCleared,
   onRegenerate,
   onNewDraft,
@@ -1112,7 +1124,7 @@ function Edit({
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
   }, [library, libraryOriginal, setSelected]);
-  const [snapshot, setSnapshot] = useState(savedSnapshot || null);
+  const snapshot = savedSnapshot;
   const [regenerating, setRegenerating] = useState(false);
   const history = useRef([]);
   const future = useRef([]);
@@ -1124,6 +1136,8 @@ function Edit({
     article.settings?.accountName || "我的公众号",
   );
   const [summaryOpen, setSummaryOpen] = useState(Boolean(article.summary));
+  const bodyLength = TARGET_LENGTHS.includes(article.settings?.targetLength)
+    ? bodyLengthStatus(article.blocks, article.settings.targetLength) : null;
   const imageInput = useRef();
   const [insertAt, setInsertAt] = useState(0);
   const [replaceBlockId, setReplaceBlockId] = useState(null);
@@ -1367,15 +1381,15 @@ function Edit({
   };
   const requestRegenerate = () => setModal("regen");
   const confirmRegen = async () => {
-    setSnapshot(article);
-    setSavedSnapshot(article);
-    articleSnapshot.current = article;
-    saveSnapshot(article).catch(() => {});
+    const previous = article;
     setModal(null);
     setRegenerating(true);
     try {
-      await onRegenerate();
-      setToast("文章已重新生成");
+      const result = await onRegenerate();
+      if (!result?.pending) {
+        onSnapshotSaved?.(previous);
+        setToast(result?.warnings?.length ? result.warnings.join("；") : "文章已重新生成");
+      }
     } catch (e) {
       setToast(e.message || "重新生成失败");
     } finally {
@@ -1464,7 +1478,7 @@ function Edit({
               </button>
             </div>
             {article.settings?.mockGenerated && (
-              <div className="content-origin mock-origin">本地示例内容</div>
+              <div className="content-origin mock-origin">本地示例 · 未执行语气和目标长度</div>
             )}
             {article.settings?.aiGenerated &&
               !article.settings?.mockGenerated && (
@@ -1472,6 +1486,19 @@ function Edit({
                   内容由 AI 生成，请核对事实后发布
                 </div>
               )}
+            <div className="writing-status" aria-label="当前文章创作设置">
+              <span>{CREATION_MODES[article.mode]?.label}</span>
+              {article.mode === "raw" ? <span>保留原文 · 不使用 AI</span> : <>
+                <span>{WRITING_TONES[article.settings?.tone]?.label || "通俗"}</span>
+                {bodyLength && <span>目标约 {bodyLength.target} 字</span>}
+              </>}
+              <span title="含标点、小标题和引用出处，不计空白、主标题、摘要及图片说明">正文 {bodyLength?.actual ?? bodyCharCount(article.blocks)} 字</span>
+              {article.mode !== "raw" && !article.settings?.mockGenerated && bodyLength && !bodyLength.within && <small>当前超出 {bodyLength.min}–{bodyLength.max} 字参考范围，可继续编辑</small>}
+            </div>
+            {article.settings?.generationWarnings?.length > 0 && <div className="writing-warnings" role="status">
+              <strong>生成时提示</strong>
+              {article.settings.generationWarnings.map((warning, index) => <p key={index}>{warning}</p>)}
+            </div>}
             {summaryOpen && (
               <textarea
                 className={`summary-edit${activeKey === 'summary' ? ' is-linked' : ''}`}
@@ -1561,8 +1588,6 @@ function Edit({
                   onClick={() => {
                     setArticle(snapshot);
                     setSelected(snapshot.templateId);
-                    setSnapshot(null);
-                    articleSnapshot.current = null;
                     onSnapshotCleared?.();
                   }}
                 >

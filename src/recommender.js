@@ -1,5 +1,6 @@
 import { templates } from './templates.js';
 import { blockText } from './core.js';
+import { bodyCharCount } from './creation.js';
 
 const groups = {
     B: ['ai', '人工智能', '算法', '芯片', '云计算', '软件', '数据', '机器人', '智能制造', '大模型', '自动驾驶', '算力', '互联网', '数字化', '通信', '安全', '科技', '技术', '开发', '平台', '硬件', '创新', '云服务', '智能', '计算机', '编程', '网络', '信息化', '模型', '产品'],
@@ -17,7 +18,7 @@ export function extractFeatures(article) {
   const text = `${article.summary || ''} ${article.blocks.map(blockText).join(' ')}`.toLowerCase();
   const score = Object.entries(groups).map(([series, words]) => [series, words.reduce((n, word) => n + (title.includes(word) ? 3 : 0) + (text.includes(word) ? 1 : 0), 0)]).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   const category = score[0][1] === 0 ? 'general' : { B: '科技', C: '商务', D: '教育', E: '生活', F: '活动', G: '新闻', H: '品牌' }[score[0][0]];
-  const chars = article.blocks.reduce((n, block) => n + blockText(block).length, 0);
+  const chars = bodyCharCount(article.blocks);
   const types = new Set(article.blocks.map(block => block.type));
   const primaryLevel = article.blocks.some(block => block.type === 'heading' && block.level === 1) ? 1 : 2;
   return {
