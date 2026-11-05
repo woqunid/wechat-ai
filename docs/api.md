@@ -72,7 +72,7 @@ Vite 开发代理显式设置 `changeOrigin: false` 与 `xfwd: true`，保留浏
 
 编辑草稿的可选 `article.html` 为内容与版式保存源，最多600,000字符。`title/summary/blocks` 是从 HTML 提取的兼容摘要，供模板切换、字数和图片管理使用。旧结构仍被生成接口和原接口兼容；前端打开旧稿时转换为带稳定节点编号的 HTML。
 
-`POST /api/articles/edit` 增加 `scope: "selection" | "article"`。HTML 文章的操作为：
+`POST /api/articles/edit` 由 AI 根据要求、引用和对话自动选择局部或全文操作，不再接收手动范围。`messages` 可携带历史 `references`（与本轮引用结构相同）、`targets`（`html:节点编号` 或 `article`）以及 `status`（pending/applied/discarded/superseded），用于延续最近未取消、未被替代的修改位置；历史线索须按当前 HTML 重新定位。HTML 文章的操作为：
 
 ```json
 {"type":"setHtml","intent":"layout","html":"完整文章 HTML 片段"}
@@ -82,6 +82,6 @@ Vite 开发代理显式设置 `changeOrigin: false` 与 `xfwd: true`，保留浏
 {"type":"replaceHtml","intent":"layout","referenceId":"本轮选区编号","html":"替换选区的 HTML"}
 ```
 
-`intent` 默认为 `layout`，文字序列变化会被拒绝；用户明确要求内容改写时使用 `content`。`selection` 范围禁止 `setHtml`。引用 `keys` 为单个 `html:节点编号`，对应 HTML 的 `data-node-id`；文字偏移按 UTF-16 计数，`br` 算一个换行，图片算一个 `U+FFFC`。整节点选区替换外层元素，部分文字选区替换内部片段并保留边界外结构；图片引用替换图片节点。选区失效或原稿变化时拒绝覆盖。
+`intent` 默认为 `layout`，文字序列变化会被拒绝；用户明确要求内容改写时使用 `content`。本轮有引用也可根据用户明确的全文要求使用 `setHtml`。引用 `keys` 为单个 `html:节点编号`，对应 HTML 的 `data-node-id`；文字偏移按 UTF-16 计数，`br` 算一个换行，图片算一个 `U+FFFC`。整节点选区替换外层元素，部分文字选区替换内部片段并保留边界外结构；图片引用替换图片节点。无需本轮引用时，`replaceHtml` 可以指定当前 HTML 中的 `nodeId`，替换整个节点；可同时提供 `startOffset/endOffset` 只修改节点内的部分文字。`referenceId` 与 `nodeId` 必须二选一，目标不存在、偏移越界或原稿变化时拒绝覆盖。单元素替换保留目标节点编号，供后续对话继续定位。
 
 HTML 只允许流式内容元素与内联样式，不接收脚本、事件、外部样式、定位、flex/grid、固定高度或隐藏内容。图片以 `data-asset-id` 引用当前文章已有资源，不接受 AI 指定 `src`。预览按资源映射补充地址，复制时去除内部 `data-*` 标记；本地图片的手动补图流程继续适用。模板更换和独立版式应用会重新生成 HTML，原稿可通过撤销恢复。

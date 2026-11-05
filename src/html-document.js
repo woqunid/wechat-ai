@@ -168,12 +168,14 @@ export function articleWithHtml(article, html) {
   return { ...article, ...fields, html: safe, blocks: body.length ? body : [{ id: 'empty', type: 'paragraph', runs: [{ text: '' }] }] };
 }
 
-export function replaceHtmlNode(html, id, replacement) {
+export function replaceHtmlNode(html, id, replacement, { preserveId = false } = {}) {
   const tree = htmlTree(html);
   const node = htmlElements(tree).find(node => node.attribs['data-node-id'] === id);
   if (!node) throw new Error('修改区域已变化，请重新选择');
   const parent = node.parent;
   const children = htmlTree(replacement).children;
+  const elements = children.filter(child => child.type === 'tag');
+  if (preserveId && elements.length === 1 && children.every(child => child.type === 'tag' || child.type === 'text' && !child.data.trim())) elements[0].attribs['data-node-id'] = id;
   parent.children.splice(parent.children.indexOf(node), 1, ...children);
   for (let index = 0; index < parent.children.length; index++) {
     const child = parent.children[index];
@@ -196,10 +198,10 @@ export function replaceHtmlReference(html, reference, replacement) {
   const id = reference.keys[0]?.replace(/^html:/, '');
   const node = findHtmlNode(html, id);
   if (!node) throw new Error('所选内容已变化，请重新选择');
-  if (reference.kind === 'image') return replaceHtmlNode(html, id, replacement);
+  if (reference.kind === 'image') return replaceHtmlNode(html, id, replacement, { preserveId: true });
   const text = nodeText(node), start = reference.startOffset ?? 0, end = reference.endOffset ?? text.length;
   if (text.slice(start, end) !== reference.text || end <= start) throw new Error('选区文字已变化，请重新选择');
-  if (start === 0 && end === text.length) return replaceHtmlNode(html, id, replacement);
+  if (start === 0 && end === text.length) return replaceHtmlNode(html, id, replacement, { preserveId: true });
   const before = clip(node, 0, start), after = clip(node, end, text.length);
   // The boundary node itself is retained; only its selected contents are replaced.
   const contentOf = value => value ? innerHtml(htmlTree(value).children[0]) : '';

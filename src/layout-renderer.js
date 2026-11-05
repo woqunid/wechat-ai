@@ -17,7 +17,7 @@ function styleCss(style = {}) {
   if (style.borderSide) css += `${style.borderSide === 'all' ? 'border' : `border-${style.borderSide}`}:${style.borderWidth || 1}px ${style.borderStyle || 'solid'} ${style.borderColor || style.color || '#64748B'};`;
   return css;
 }
-function emphasizedText(value, emphasis = [], editing = false) {
+function emphasizedText(value, emphasis = []) {
   const text = String(value || '');
   const matches = [];
   for (const fragment of emphasis) {
@@ -31,7 +31,7 @@ function emphasizedText(value, emphasis = [], editing = false) {
   let offset = 0, html = '';
   for (const [start, end] of matches) {
     if (start < offset) continue;
-    html += escapeHtml(text.slice(offset, start)) + `<strong${editing ? ' data-run-format="{}"' : ''} style="font-weight:700;">${escapeHtml(text.slice(start, end))}</strong>`;
+    html += escapeHtml(text.slice(offset, start)) + `<strong style="font-weight:700;">${escapeHtml(text.slice(start, end))}</strong>`;
     offset = end;
   }
   return html + escapeHtml(text.slice(offset));
@@ -46,13 +46,13 @@ export function renderLayoutArticle(article, assets, { mode, anchor, imageUrl, e
   for (const field of ['title', 'summary']) blocks.set(field, articleField(article, field));
   const colors = { primary: design.rules.heading?.color || design.page.color, accent: design.rules.heading?.borderColor || design.page.color, red: '#A6372C', orange: '#9E4D20', green: '#276143' };
   const styledText = (runs, emphasis) => {
-    if (!runs.some(run => Object.keys(run).some(key => key !== 'text'))) return emphasizedText(runs.map(run => run.text).join(''), emphasis, editing);
+    if (!runs.some(run => Object.keys(run).some(key => key !== 'text'))) return emphasizedText(runs.map(run => run.text).join(''), emphasis);
     return runs.map(run => {
       let css = run.bold !== undefined ? `font-weight:${run.bold ? 700 : 400};` : '';
       if (run.underline !== undefined) css += `text-decoration:${run.underline ? 'underline' : 'none'};`;
       if (run.color) css += `color:${/^#[0-9a-f]{6}$/i.test(run.color) ? run.color : colors[run.color] || design.page.color};`;
       if (/^#[0-9a-f]{6}$/i.test(run.highlight || '')) css += `background-color:${run.highlight};`;
-      return `<span${editing ? ` data-run-format="${escapeHtml(JSON.stringify(run))}"` : ''} style="${css}">${emphasizedText(run.text, run.bold === false ? [] : emphasis, editing)}</span>`;
+      return `<span style="${css}">${emphasizedText(run.text, run.bold === false ? [] : emphasis)}</span>`;
     }).join('');
   };
   const render = nodes => nodes.map(node => {
@@ -61,7 +61,7 @@ export function renderLayoutArticle(article, assets, { mode, anchor, imageUrl, e
     const block = blocks.get(node.ref);
     const manual = BlockStyleSchema.safeParse(block?.style || {}).data || {};
     const style = { ...layoutContentStyle(design, item, node), ...(manual.fontSize ? { fontSize: manual.fontSize } : {}), ...(manual.lineHeight ? { lineHeight: manual.lineHeight } : {}), ...(manual.align ? { textAlign: manual.align } : {}), ...(manual.paragraphSpacing !== undefined ? { marginBottom: manual.paragraphSpacing } : {}) };
-    const text = value => emphasizedText(value, node.emphasis, editing);
+    const text = value => emphasizedText(value, node.emphasis);
     const part = (name = 'runs', index) => editing ? ` data-editor-part="${name}"${index !== undefined ? ` data-editor-index="${index}"` : ''}` : '';
     const paragraph = (value, extra = '', runs, name = 'runs') => `<p${part(name)} style="margin:0;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;${manual.indent !== undefined ? `text-indent:${manual.indent}em;` : ''}${extra}">${runs ? styledText(runs, node.emphasis) : text(value)}</p>`;
     let content;

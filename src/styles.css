@@ -976,12 +976,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   background: #fff6c5;
 }
 
-.document-toolbar .editor-reset {
-  font-size: 11px;
-  padding: 4px 6px;
-  margin-left: auto;
-}
-
 .paragraph-controls label {
   display: inline-flex;
   align-items: center;
@@ -1007,29 +1001,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .document-sheet {
   position: relative;
-}
-
-.editor-image-resize {
-  position: absolute;
-  right: -4px;
-  bottom: -4px;
-  width: 13px;
-  height: 13px;
-  border: 2px solid #ffffff;
-  background: var(--primary);
-  border-radius: 2px;
-  cursor: nwse-resize;
-  touch-action: none;
-}
-
-.editor-drop-line {
-  position: absolute;
-  left: 0;
-  right: 0;
-  z-index: 2;
-  height: 3px;
-  background: var(--primary);
-  pointer-events: none;
 }
 
 .editor-image-controls {
@@ -2643,7 +2614,6 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
 .document-toolbar { position: relative; top: auto; flex-shrink: 0; min-width: 0; padding: 7px 20px; margin: 0; border: 0; border-bottom: 1px solid var(--border-subtle); border-radius: 0; background: #fff; box-shadow: none; }
 .document-toolbar-row { gap: 5px; }
 .document-toolbar:disabled { opacity: .55; }
-.document-toolbar .editor-reset { margin-left: 12px; }
 .paragraph-controls { gap: 6px 12px; }
 .canvas-scroll { flex: 1; min-height: 0; overflow: auto; padding: 24px; scrollbar-gutter: stable both-edges; }
 .canvas-paper { box-sizing: content-box; margin: 0 auto; border: 1px solid #e1e3df; background: #fff; box-shadow: 0 5px 22px rgba(30,35,29,.08); }
@@ -2657,17 +2627,9 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
 .html-document { min-height: 180px; }
 .html-document img { cursor: grab; }
 .html-document[aria-readonly="true"] img { cursor: default; }
-.ai-edit-context > label { display: flex; align-items: center; gap: 5px; margin-left: auto; white-space: nowrap; }
-.ai-edit-context select { width: auto; padding: 3px 5px; font-size: 10px; }
 .document-canvas [data-editor-part] { outline: none; cursor: text; }
-.document-canvas [data-editor-part][contenteditable="true"] { min-height: 1em; }
 .document-canvas [data-editor-key].is-linked { outline: 1px solid var(--primary); outline-offset: 3px; }
-.document-canvas [data-editor-part]:not(:has(img)):is(:empty,:has(> br:only-child))::before { content: attr(data-placeholder); color: #8a9389; font-size: 13px; font-weight: 400; pointer-events: none; }
-.document-canvas [data-editor-part]:has(> br:only-child) > br { display: none; }
 .document-canvas [data-editor-part="cite"], .document-canvas [data-editor-part="item"] { white-space: pre-wrap; }
-.document-canvas .editor-image { position: relative; cursor: grab; }
-.document-canvas .editor-image img { user-select: none; -webkit-user-drag: none; }
-.document-canvas .editor-image[data-image-align="right"] .editor-image-resize { left: -4px; right: auto; cursor: nesw-resize; }
 .document-canvas .ai-proposed-change { outline: 2px dashed #0284c7; outline-offset: 3px; }
 .editor-image-controls { flex-shrink: 0; min-width: 0; margin: 0; border: 0; border-bottom: 1px solid var(--border-subtle); padding: 9px 20px; }
 .editor-image-controls > label { max-width: 440px; }
@@ -2690,7 +2652,6 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
   .canvas-heading { flex: 1; }
   .canvas-heading strong { max-width: 150px; }
   .paragraph-controls { gap: 5px 9px; }
-  .document-toolbar .editor-reset { margin-left: auto; }
 }
 @media (max-width: 480px) {
   .canvas-toolbar, .document-toolbar { padding-inline: 10px; }
@@ -2712,7 +2673,6 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
 .document-editor-sidebar .editor-image-controls { position: static; width: auto; margin: 0; border: 0; border-bottom: 1px solid var(--border-subtle); border-radius: 0; box-shadow: none; padding: 12px; }
 .document-editor-sidebar .document-toolbar-row { gap: 6px; }
 .document-editor-sidebar .document-toolbar-row:first-child select { flex: 1 0 100%; max-width: none; }
-.document-editor-sidebar .document-toolbar .editor-reset { margin-left: 0; }
 .document-editor-sidebar .paragraph-controls { align-items: flex-start; flex-direction: column; gap: 8px; }
 .document-editor-sidebar .paragraph-controls label { justify-content: space-between; width: 100%; }
 .document-editor-sidebar .paragraph-controls select { max-width: 78px; }

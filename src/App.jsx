@@ -31,7 +31,7 @@ import { uid } from "./core";
 import { bodyCharCount, bodyLengthStatus, CREATION_MODES, GENERATION_TIMEOUT_MS, TARGET_LENGTHS, WRITING_TONES } from "./creation.js";
 import { describeTemplateFit, recommendTemplates } from "./recommender";
 import { AIServiceSettings } from "./AIServiceSettings";
-import { HtmlArticleEditor as ArticleEditor } from "./HtmlArticleEditor";
+import { ArticleEditor } from "./ArticleEditor";
 import { reconcileHtmlArticle } from "./document-model.js";
 import { AIEditPanel, useAIEdit } from "./AIEditPanel";
 import { ImageLinkInput } from "./ImageLinkInput";

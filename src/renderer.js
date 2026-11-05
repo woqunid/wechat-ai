@@ -40,8 +40,7 @@ function textRuns(runs = [], t, inverse = false, decorate = true) {
     if (run.underline === false) css += 'text-decoration:none;border-bottom:0;';
     if (/^#[0-9a-f]{6}$/i.test(run.highlight || '')) css += `background-color:${run.highlight};`;
     const tag = run.bold ? 'strong' : 'span';
-    const format = t.editing ? ` data-run-format="${escapeHtml(JSON.stringify(run))}"` : '';
-    return `<${tag}${format} style="${css}">${escapeHtml(run.text)}</${tag}>`;
+    return `<${tag} style="${css}">${escapeHtml(run.text)}</${tag}>`;
   }).join('');
 }
 
@@ -288,7 +287,7 @@ function renderParagraph(block, t, first) {
       const character = Array.from(block.runs[0].text)[0];
       const head = { ...block.runs[0], text: character };
       const tail = [{ ...block.runs[0], text: block.runs[0].text.slice(character.length) }, ...block.runs.slice(1)].filter(run => run.text);
-      content = `<span${t.editing ? ' data-run-format="{}"' : ''} style="${headingFont(t)}font-size:32px;line-height:1;vertical-align:baseline;color:${t.tokens.primary};margin-right:3px;">${textRuns([head], t)}</span>${textRuns(tail, t)}`;
+      content = `<span style="${headingFont(t)}font-size:32px;line-height:1;vertical-align:baseline;color:${t.tokens.primary};margin-right:3px;">${textRuns([head], t)}</span>${textRuns(tail, t)}`;
     }
   }
   return `<p${editPart(t)} style="${base(t)}margin:0 0 ${spacing(block, t.tokens.paraGap)}px;white-space:pre-wrap;${css}${textStyle(block)}">${content}</p>`;
@@ -369,7 +368,7 @@ export function assertSafeHtml(html, { interactive = false, editing = false } = 
     if (!allowedTags.has(match[1].toLowerCase())) throw new Error(`HTML tag is not allowed: ${match[1]}`);
     for (const attr of match[2].matchAll(/([a-z-]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi)) {
       const name = attr[1].toLowerCase();
-      if (!allowedAttrs.has(name) && !(interactive && name === 'data-preview-key') && !(editing && ['data-editor-part', 'data-editor-index', 'data-run-format'].includes(name))) throw new Error(`HTML attribute is not allowed: ${attr[1]}`);
+      if (!allowedAttrs.has(name) && !(interactive && name === 'data-preview-key') && !(editing && ['data-editor-part', 'data-editor-index'].includes(name))) throw new Error(`HTML attribute is not allowed: ${attr[1]}`);
     }
     const style = match[2].match(/style="([^"]*)"/i)?.[1];
     if (style) for (const declaration of style.split(';').filter(Boolean)) {

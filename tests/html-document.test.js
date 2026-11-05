@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ArticleSchema } from '../src/core.js';
-import { AIEditRequestSchema, buildAIEdit, createAIReference, describeAIEdit, mergeAIEdit, validAIReference } from '../src/ai-edit.js';
+import { AIConversationMessageSchema, AIEditRequestSchema, aiEditTargets, buildAIEdit, createAIReference, describeAIEdit, mergeAIEdit, validAIReference } from '../src/ai-edit.js';
 import { ensureHtmlArticle, reconcileHtmlArticle } from '../src/document-model.js';
 import { articleWithHtml, findHtmlNode, htmlElements, htmlTree, nodeText, outerHtml, sanitizeHtml } from '../src/html-document.js';
 import { clearArticleStyles } from '../src/layout-design.js';
@@ -40,18 +40,17 @@ test('部分文字选区只替换对应文字，保留其他段落及边界样�
   const current = document();
   const reference = createAIReference(current, { kind: 'text', keys: ['html:first'], text: '选中文字', startOffset: 2, endOffset: 6 });
   assert.ok(validAIReference(current, reference));
-  const next = buildAIEdit(current, [{ type: 'replaceHtml', referenceId: reference.id, intent: 'content', html: '<span style="color:#A6372C;">修改后的字</span>' }], { scope: 'selection', references: [reference] });
+  const next = buildAIEdit(current, [{ type: 'replaceHtml', referenceId: reference.id, intent: 'content', html: '<span style="color:#A6372C;">修改后的字</span>' }], { references: [reference] });
   assert.equal(nodeText(findHtmlNode(next.html, 'first')), '保留修改后的字结尾');
   assert.equal(outerHtml(findHtmlNode(next.html, 'second')), outerHtml(findHtmlNode(current.html, 'second')));
   assert.equal(findHtmlNode(next.html, 'first').attribs.style, findHtmlNode(current.html, 'first').attribs.style);
-  assert.throws(() => buildAIEdit(current, [{ type: 'setHtml', html: '<p>越界</p>' }], { scope: 'selection', references: [reference] }), /只允许修改选区/);
-  assert.throws(() => buildAIEdit(current, [{ type: 'replaceHtml', referenceId: 'invented', html: '' }], { scope: 'selection', references: [reference] }), /真实选区/);
+  assert.throws(() => buildAIEdit(current, [{ type: 'replaceHtml', referenceId: 'invented', html: '' }], { references: [reference] }), /真实选区/);
 });
 
 test('完整列表选区可以改变整个列表的结构和内部间距', () => {
   const current = articleWithHtml(base(), '<section data-node-id="list"><p>01 第一项</p><p>02 第二项</p></section><p data-node-id="other">保留其他内容</p>');
   const reference = createAIReference(current, { kind: 'text', keys: ['html:list'], text: '01 第一项02 第二项', startOffset: 0, endOffset: 12 });
-  const next = buildAIEdit(current, [{ type: 'replaceHtml', referenceId: reference.id, html: '<section data-node-id="list" style="border:1px solid #26332F;"><p style="margin:0;padding:0;">01 第一项</p><p style="margin:0;padding:0;">02 第二项</p></section>' }], { references: [reference], scope: 'selection' });
+  const next = buildAIEdit(current, [{ type: 'replaceHtml', referenceId: reference.id, html: '<section data-node-id="list" style="border:1px solid #26332F;"><p style="margin:0;padding:0;">01 第一项</p><p style="margin:0;padding:0;">02 第二项</p></section>' }], { references: [reference] });
   assert.equal(outerHtml(findHtmlNode(next.html, 'other')), outerHtml(findHtmlNode(current.html, 'other')));
   assert.match(next.html, /margin:0;padding:0/);
 });
@@ -59,7 +58,7 @@ test('完整列表选区可以改变整个列表的结构和内部间距', () =>
 test('跨段落与换行选区保留边界外文字', () => {
   const current = articleWithHtml(base(), '<section data-node-id="root"><p data-node-id="a">甲<br>乙😀</p><p data-node-id="b">丙丁</p><p data-node-id="c">末段</p></section>');
   const reference = createAIReference(current, { kind: 'text', keys: ['html:root'], text: '\n乙😀丙', startOffset: 1, endOffset: 6 });
-  const next = buildAIEdit(current, [{ type: 'replaceHtml', referenceId: reference.id, intent: 'content', html: '<p>新文字</p>' }], { references: [reference], scope: 'selection' });
+  const next = buildAIEdit(current, [{ type: 'replaceHtml', referenceId: reference.id, intent: 'content', html: '<p>新文字</p>' }], { references: [reference] });
   assert.equal(nodeText(findHtmlNode(next.html, 'root')), '甲新文字丁末段');
   assert.equal(outerHtml(findHtmlNode(next.html, 'c')), outerHtml(findHtmlNode(current.html, 'c')));
 });
@@ -83,7 +82,7 @@ test('图片库替换保留自定义样式，图片插入与删除同步到 HTML
   assert.equal(inserted.blocks.filter(block => block.assetId).length, 2);
   const deleted = reconcileHtmlArticle(inserted, { ...inserted, blocks: inserted.blocks.filter(block => block.assetId !== 'img_third') });
   assert.ok(!deleted.html.includes('img_third'));
-  assert.equal(AIEditRequestSchema.safeParse({ article: next, prompt: '缩小图片', scope: 'article' }).success, true);
+  assert.equal(AIEditRequestSchema.safeParse({ article: next, prompt: '缩小图片' }).success, true);
 });
 
 test('模板和独立版式可重新生成 HTML，原稿保留供撤销', () => {
@@ -122,7 +121,7 @@ test('任意 HTML 的混合图文和长文字摘要不会截断正文', () => {
 test('图片邻接的局部文字修改不复制或删除图片', () => {
   const current = articleWithHtml(base(), '<section><p data-node-id="target">甲<img data-node-id="image" data-asset-id="img_test">乙</p></section>');
   const reference = createAIReference(current, { kind: 'text', keys: ['html:target'], text: '甲', startOffset: 0, endOffset: 1 });
-  const next = buildAIEdit(current, [{ type: 'replaceHtml', referenceId: reference.id, html: '<strong>甲</strong>' }], { scope: 'selection', references: [reference] });
+  const next = buildAIEdit(current, [{ type: 'replaceHtml', referenceId: reference.id, html: '<strong>甲</strong>' }], { references: [reference] });
   assert.equal(htmlElements(htmlTree(next.html)).filter(node => node.name === 'img').length, 1);
   assert.equal(nodeText(findHtmlNode(next.html, 'target')), '甲\uFFFC乙');
 });
@@ -131,7 +130,7 @@ test('AI 图片尺寸修改可应用，复制时使用登记的 HTTPS 地址', (
   const current = articleWithHtml(base(), '<section><img data-node-id="image" data-asset-id="img_test" style="width:100%;"></section>');
   const reference = createAIReference(current, { kind: 'image', keys: ['html:image'], text: '文章图片' });
   assert.equal(reference.assetId, 'img_test');
-  const next = buildAIEdit(current, [{ type: 'replaceHtml', referenceId: reference.id, html: '<img data-node-id="image" data-asset-id="img_test" style="width:50%;">' }], { scope: 'selection', references: [reference] });
+  const next = buildAIEdit(current, [{ type: 'replaceHtml', referenceId: reference.id, html: '<img data-node-id="image" data-asset-id="img_test" style="width:50%;">' }], { references: [reference] });
   const assets = new Map([['img_test', { url: 'https://example.com/image.png', previewUrl: 'blob:preview' }]]);
   const rendered = renderArticle(next, templates[0], assets);
   assert.match(rendered.html, /width:50%/);
@@ -140,4 +139,36 @@ test('AI 图片尺寸修改可应用，复制时使用登记的 HTTPS 地址', (
   const loading = renderArticle(next, templates[0], new Map(), { mode: 'preview', interactive: true }).html;
   assert.match(loading, /data-asset-id="img_test"/);
   assert.equal(articleWithHtml(next, loading).blocks.filter(block => block.assetId === 'img_test').length, 1);
+});
+
+test('AI 无需选区可定位节点，连续修改保留目标编号与边界外内容', () => {
+  const original = document();
+  const operations = [{ type: 'replaceHtml', nodeId: 'first', html: '<p style="margin:0 0 4px;">保留<strong>选中文字</strong>结尾</p>' }];
+  const next = buildAIEdit(original, operations);
+  assert.match(findHtmlNode(next.html, 'first').attribs.style, /margin:0 0 4px/);
+  assert.equal(outerHtml(findHtmlNode(next.html, 'second')), outerHtml(findHtmlNode(original.html, 'second')));
+  assert.deepEqual(aiEditTargets(operations), ['html:first']);
+  const followup = buildAIEdit(next, [{ type: 'replaceHtml', nodeId: 'first', startOffset: 2, endOffset: 6, html: '<span style="font-weight:700;">选中文字</span>' }]);
+  assert.equal(nodeText(findHtmlNode(followup.html, 'first')), '保留选中文字结尾');
+  assert.equal(outerHtml(findHtmlNode(followup.html, 'second')), outerHtml(findHtmlNode(original.html, 'second')));
+  assert.throws(() => buildAIEdit(original, [{ type: 'replaceHtml', nodeId: 'unknown', html: '' }]), /真实节点/);
+  assert.throws(() => buildAIEdit(original, [{ type: 'replaceHtml', nodeId: 'first', startOffset: 2, html: '' }]), /起止偏移/);
+  assert.throws(() => buildAIEdit(original, [{ type: 'replaceHtml', nodeId: 'first', startOffset: 2, endOffset: 200, html: '' }]), /超出目标节点/);
+});
+
+test('对话保留历史选区、实际修改目标与方案状态，明确全文要求可覆盖引用范围', () => {
+  const original = document();
+  const reference = createAIReference(original, { kind: 'text', keys: ['html:first'], text: '选中文字', startOffset: 2, endOffset: 6 });
+  const message = AIConversationMessageSchema.parse({ role: 'user', text: '把这里加粗', references: [reference], retryReferences: [reference] });
+  assert.equal(message.references[0].keys[0], 'html:first');
+  assert.equal(message.references[0].snapshot, undefined);
+  assert.equal(message.retryReferences, undefined);
+  const targets = aiEditTargets([{ type: 'replaceHtml', referenceId: reference.id }], [reference]);
+  assert.deepEqual(targets, ['html:first']);
+  const parsed = AIEditRequestSchema.parse({ article: original, prompt: '这里再紧凑一点', messages: [message, { role: 'assistant', text: '已生成第一段方案', targets, status: 'applied' }] });
+  assert.deepEqual(parsed.messages[1].targets, ['html:first']);
+  assert.equal(parsed.messages[1].status, 'applied');
+  const full = [{ type: 'setHtml', html: original.html.replace('padding:16px;', 'padding:8px;') }];
+  assert.match(buildAIEdit(original, full, { references: [reference] }).html, /padding:8px/);
+  assert.deepEqual(aiEditTargets(full), ['article']);
 });

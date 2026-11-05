@@ -4,7 +4,7 @@ import { LayoutDesignSchema, validateLayoutDesign } from './layout-design.js';
 import { renderArticle } from './renderer.js';
 import { getTemplate } from './templates.js';
 import { unreadableText } from './readability.js';
-import { articleWithHtml, findHtmlNode, htmlElements, htmlTree, nodeText, outerHtml, renderHtmlDocument, replaceHtmlReference, sanitizeHtml } from './html-document.js';
+import { articleWithHtml, findHtmlNode, htmlElements, htmlTree, nodeText, outerHtml, renderHtmlDocument, replaceHtmlNode, replaceHtmlReference, sanitizeHtml } from './html-document.js';
 
 export const AI_EDIT_TIMEOUT_MS = 180_000;
 const id = z.string().min(1).max(80);
@@ -13,21 +13,26 @@ export const AIReferenceSchema = z.object({
   id, kind: z.enum(['text', 'image']), keys: z.array(z.string().min(1).max(90)).min(1).max(122),
   text: text(180000), startOffset: z.number().int().nonnegative().optional(), endOffset: z.number().int().nonnegative().optional(),
 });
+export const AIConversationMessageSchema = z.object({
+  role: z.enum(['user', 'assistant']), text: text(4000),
+  references: z.array(AIReferenceSchema).max(100).optional(),
+  targets: z.array(z.string().min(1).max(90)).max(160).optional(),
+  status: z.enum(['pending', 'applied', 'discarded', 'superseded']).optional(),
+});
 export const AIEditRequestSchema = z.object({
   article: ArticleSchema, prompt: text(4000).refine(value => value.trim()),
   references: z.array(AIReferenceSchema).max(100).default([]),
-  messages: z.array(z.object({ role: z.enum(['user', 'assistant']), text: text(4000) })).max(16).default([]),
+  messages: z.array(AIConversationMessageSchema).max(16).default([]),
   attachments: z.array(z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('image'), name: text(240).min(1), assetId: id }).strict(),
     z.object({ kind: z.literal('document'), name: text(240).min(1), text: text(200_000), imageAssetIds: z.array(id).max(10).default([]) }).strict(),
   ])).max(5).default([]),
-  scope: z.enum(['selection', 'article']).default('article'),
 });
 export const AIEditResponseSchema = z.object({
   message: text(4000).min(1),
   operations: z.array(z.discriminatedUnion('type', [
     z.object({ type: z.literal('setHtml'), html: z.string().max(600_000).min(1), intent: z.enum(['layout', 'content']).default('layout') }).strict(),
-    z.object({ type: z.literal('replaceHtml'), referenceId: id, html: z.string().max(600_000), intent: z.enum(['layout', 'content']).default('layout') }).strict(),
+    z.object({ type: z.literal('replaceHtml'), referenceId: id.optional(), nodeId: id.optional(), startOffset: z.number().int().nonnegative().optional(), endOffset: z.number().int().nonnegative().optional(), html: z.string().max(600_000), intent: z.enum(['layout', 'content']).default('layout') }).strict(),
     z.object({ type: z.literal('setTitle'), text: text(80) }).strict(),
     z.object({ type: z.literal('setSummary'), text: text(120) }).strict(),
     z.object({ type: z.literal('updateBlock'), block: BlockSchema }).strict(),
@@ -76,20 +81,31 @@ function checkReadability(before, after) {
   return after;
 }
 
-export function buildAIEdit(article, operations, { references = [], scope = 'article' } = {}) {
+export function buildAIEdit(article, operations, { references = [] } = {}) {
   if (article.html) {
     let html = article.html;
     const used = new Set();
     for (const op of operations) {
       const before = html;
       if (op.type === 'setHtml') {
-        if (scope === 'selection') throw new Error('当前只允许修改选区，请使用 replaceHtml');
         html = op.html;
       } else if (op.type === 'replaceHtml') {
-        const reference = references.find(item => item.id === op.referenceId);
-        if (!reference || used.has(reference.id)) throw new Error('请使用本轮真实选区编号，且每个选区只修改一次');
-        html = replaceHtmlReference(html, reference, op.html);
-        used.add(reference.id);
+        if (Boolean(op.referenceId) === Boolean(op.nodeId)) throw new Error('局部修改必须指定一个真实选区或 HTML 节点');
+        if (op.referenceId) {
+          const reference = references.find(item => item.id === op.referenceId);
+          if (!reference || used.has(reference.id)) throw new Error('请使用本轮真实选区编号，且每个选区只修改一次');
+          if (op.startOffset !== undefined || op.endOffset !== undefined) throw new Error('引用选区已有边界，不应另设文字偏移');
+          html = replaceHtmlReference(html, reference, op.html);
+          used.add(reference.id);
+        } else {
+          const node = findHtmlNode(html, op.nodeId);
+          if (!node) throw new Error('修改目标不存在，请使用当前 HTML 中的真实节点编号');
+          if (op.startOffset === undefined && op.endOffset === undefined) html = replaceHtmlNode(html, op.nodeId, op.html, { preserveId: true });
+          else {
+            if (op.startOffset === undefined || op.endOffset === undefined || op.endOffset > nodeText(node).length) throw new Error('局部文字修改的起止偏移不完整或超出目标节点');
+            html = replaceHtmlReference(html, { kind: 'text', keys: [`html:${op.nodeId}`], startOffset: op.startOffset, endOffset: op.endOffset, text: nodeText(node).slice(op.startOffset, op.endOffset) }, op.html);
+          }
+        }
       } else throw new Error('当前文章以 HTML 保存，请使用 setHtml 或 replaceHtml 操作');
       if (op.intent !== 'content' && nodeText(htmlTree(before)).replace(/\s/g, '') !== nodeText(htmlTree(html)).replace(/\s/g, '')) throw new Error('排版修改必须保留原文；只有用户明确要求改写时才可使用 intent:content');
     }
@@ -128,6 +144,10 @@ export function buildAIEdit(article, operations, { references = [], scope = 'art
   const result = checkedArticle(next, new Set(article.blocks.filter(isImageBlock).map(block => block.assetId)));
   if (design) result.layoutDesign = validateLayoutDesign(design, result);
   return checkReadability(article, result);
+}
+
+export function aiEditTargets(operations, references = []) {
+  return [...new Set(operations.flatMap(op => op.type === 'setHtml' ? ['article'] : op.type === 'replaceHtml' ? op.nodeId ? [`html:${op.nodeId}`] : references.find(reference => reference.id === op.referenceId)?.keys || [] : []))];
 }
 
 function movedBlocks(before, after) {
