@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { KeyRound, LoaderCircle, RefreshCw, Save, Trash2, X } from "lucide-react";
+import { Building2, Check, KeyRound, LoaderCircle, RefreshCw, Save, Trash2, UserRound, X } from "lucide-react";
 
 async function readResponse(response) {
   const data = await response.json();
@@ -26,6 +26,13 @@ export function AIServiceSettings({ open, onClose, platformStatus, preferences, 
     setModel(personalConfig?.model || "");
     setError("");
     setNotice("");
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
   }, [open]);
 
   if (!open) return null;
@@ -102,23 +109,28 @@ export function AIServiceSettings({ open, onClose, platformStatus, preferences, 
     <div className="modal-backdrop ai-settings-backdrop" onClick={onClose}>
       <section className="small-modal ai-settings-modal" role="dialog" aria-modal="true" aria-labelledby="ai-settings-title" onClick={event => event.stopPropagation()}>
         <button className="modal-close" aria-label="关闭 AI 服务设置" onClick={onClose}><X size={18} /></button>
-        <h2 id="ai-settings-title">AI 设置</h2>
-        <p className="ai-settings-intro">选择文章使用的 AI 服务</p>
+        <h2 id="ai-settings-title">AI 服务</h2>
         <div className="segmented ai-provider-switch" role="group" aria-label="AI 服务来源">
-          <button type="button" className={provider === "platform" ? "selected" : ""} aria-pressed={provider === "platform"} onClick={() => selectProvider("platform")}>平台 AI</button>
-          <button type="button" className={provider === "personal" ? "selected" : ""} aria-pressed={provider === "personal"} onClick={() => selectProvider("personal")}>个人 AI</button>
+          <button type="button" className={`ai-provider-option ${provider === "platform" ? "selected" : ""}`} aria-pressed={provider === "platform"} onClick={() => selectProvider("platform")}>
+            <Building2 size={16} /><span className="ai-provider-info"><strong>平台 AI</strong><small>{provider === "platform" ? "正在使用" : platformStatus?.aiConfigured ? "已连接" : "未配置"}</small></span>
+            {provider === "platform" && <Check className="ai-provider-check" size={16} aria-hidden="true" />}
+          </button>
+          <button type="button" className={`ai-provider-option ${provider === "personal" ? "selected" : ""}`} aria-pressed={provider === "personal"} onClick={() => selectProvider("personal")}>
+            <UserRound size={16} /><span className="ai-provider-info"><strong>个人 AI</strong><small>{provider === "personal" ? "正在使用" : personalConfig ? "已保存" : "待配置"}</small></span>
+            {provider === "personal" && <Check className="ai-provider-check" size={16} aria-hidden="true" />}
+          </button>
         </div>
 
         {provider === "platform" ? (
           <div className="ai-settings-field ai-platform-status">
             <span>平台服务</span>
             <strong>{platformStatus?.aiConfigured ? platformStatus.model : "尚未配置"}</strong>
-            <small className="ai-field-hint">由部署方统一维护，所有选择平台 AI 的用户共用。</small>
+            <small className="ai-field-hint">由部署方维护，选择平台 AI 的用户共用。</small>
             {platformStatus?.configurationError && <small className="ai-settings-message error" role="alert">{platformStatus.configurationError.message}</small>}
           </div>
         ) : (
           <>
-            <p className="ai-settings-intro personal-ai-note">个人配置保存在本机浏览器；发起 AI 请求时会发送到应用服务以连接模型。</p>
+            <p className="ai-settings-intro personal-ai-note">配置仅保存在此浏览器；请求由本服务转发。</p>
             <label className="ai-settings-field">
               <span>接口地址</span>
               <input value={baseUrl} onChange={event => updateBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" autoComplete="url" spellCheck="false" />
@@ -147,7 +159,7 @@ export function AIServiceSettings({ open, onClose, platformStatus, preferences, 
         <div className="ai-settings-footer">
           <span>{provider === "platform" ? platformStatus?.aiConfigured ? `平台模型：${platformStatus.model}` : "平台 AI 未连接" : personalConfig ? `个人模型：${personalConfig.model}` : "未保存个人配置"}</span>
           {provider === "personal" && <div className="ai-settings-actions">
-            {personalConfig && <button className="ghost-action" type="button" disabled={loading} onClick={clearPersonal}><Trash2 size={14} />删除个人配置</button>}
+            {personalConfig && <button className="ghost-action" type="button" title="删除个人配置" disabled={loading} onClick={clearPersonal}><Trash2 size={14} />删除配置</button>}
             <button className="publish-action" type="button" disabled={loading || !model || !models.includes(model) || !apiKey.trim()} onClick={savePersonal}>
               <Save size={14} />保存并使用
             </button>

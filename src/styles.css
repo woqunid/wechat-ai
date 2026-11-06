@@ -2783,3 +2783,52 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
   .admin-login-surface, .admin-config-form { padding: 20px 17px; }
   .admin-title-row h1 { font-size: 19px; }
 }
+
+.small-modal.ai-settings-modal { width: min(560px, 100%); max-height: calc(100dvh - 32px); padding: 24px 28px; }
+.ai-settings-modal h2 { margin: 0 40px 18px 0; font-size: 19px; font-weight: 650; }
+.ai-settings-modal .ai-provider-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; margin-bottom: 18px; border: 1px solid var(--border-subtle); border-radius: 7px; background: var(--bg-subtle); }
+.ai-settings-modal .ai-provider-option { display: flex; align-items: center; justify-content: flex-start; gap: 10px; min-width: 0; min-height: 52px; padding: 7px 12px; border: 1px solid transparent; border-radius: 5px; color: var(--text-secondary); text-align: left; }
+.ai-settings-modal .ai-provider-option > svg:first-of-type { flex: 0 0 16px; color: currentColor; }
+.ai-settings-modal .ai-provider-info { display: grid; min-width: 0; gap: 2px; }
+.ai-settings-modal .ai-provider-check { flex: 0 0 16px; margin-left: auto; padding: 2px; border-radius: 50%; color: #fff; background: var(--primary); }
+.ai-settings-modal .ai-provider-option strong { color: var(--text-main); font-size: 12px; font-weight: 650; }
+.ai-settings-modal .ai-provider-option small { overflow: hidden; color: var(--text-tertiary); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.ai-settings-modal .ai-provider-option.selected { border-color: var(--primary); background: var(--primary-subtle); color: var(--primary-deep); box-shadow: 0 0 0 2px var(--primary-glow); }
+.ai-settings-modal .ai-provider-option.selected strong,
+.ai-settings-modal .ai-provider-option.selected small { color: var(--primary-deep); }
+.ai-settings-modal .ai-provider-option.selected small { font-weight: 650; }
+.ai-settings-modal .ai-provider-option:hover:not(.selected) { color: var(--text-main); background: rgba(255,255,255,.55); }
+.ai-settings-modal .ai-settings-intro { margin: 0 0 15px !important; color: var(--text-secondary); font-size: 11px; line-height: 1.55; }
+.ai-settings-modal .ai-settings-field { margin-bottom: 15px; }
+.ai-settings-modal .ai-settings-field > span,
+.ai-settings-modal .ai-settings-field > label { margin-bottom: 6px; font-size: 12px; }
+.ai-settings-modal .ai-settings-field input,
+.ai-settings-modal .ai-settings-field select { height: 42px; border-radius: 6px; }
+.ai-settings-modal .ai-field-hint { margin-top: 5px; font-size: 10px; }
+.ai-settings-modal .ai-platform-status { display: grid; gap: 5px; margin: 0 0 16px; padding: 15px 0 2px; border-top: 1px solid var(--border-light); }
+.ai-settings-modal .ai-platform-status > span { margin: 0; color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+.ai-settings-modal .ai-platform-status > strong { color: var(--text-main); font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.ai-settings-modal .ai-platform-status .ai-field-hint { margin-top: 0; }
+.ai-settings-modal .ai-settings-message { margin-bottom: 13px !important; padding: 10px 12px; font-size: 11px !important; }
+.ai-settings-modal .ai-settings-footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px 18px; padding-top: 15px; font-size: 11px; }
+.ai-settings-modal .ai-settings-footer > span { min-width: 0; line-height: 1.4; overflow-wrap: anywhere; }
+.ai-settings-modal .ai-settings-actions { flex-wrap: nowrap; gap: 8px; }
+.ai-settings-modal .ai-settings-actions > button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; gap: 6px; height: 36px; min-height: 36px; padding: 0 11px; border-radius: 5px; font-size: 11px; white-space: nowrap; }
+.ai-settings-modal .ai-settings-actions > .ghost-action { background: #fff; }
+.ai-settings-modal .ai-settings-actions > .publish-action { background: var(--text-main); }
+.ai-settings-modal .ai-settings-actions > .publish-action:hover { background: #394037; }
+
+@media (max-width: 600px) {
+  .modal-backdrop.ai-settings-backdrop { padding: 11px; }
+  .small-modal.ai-settings-modal { width: 100%; max-height: calc(100dvh - 22px); padding: 22px 18px; }
+  .ai-settings-modal .ai-provider-option { gap: 8px; padding-inline: 9px; }
+  .ai-settings-modal .ai-settings-footer { grid-template-columns: minmax(0, 1fr); gap: 11px; }
+  .ai-settings-modal .ai-settings-actions { justify-content: flex-end; }
+}
+
+@media (max-width: 360px) {
+  .small-modal.ai-settings-modal { padding-inline: 15px; }
+  .ai-settings-modal .ai-provider-option { gap: 6px; padding-inline: 7px; }
+  .ai-settings-modal .ai-provider-option small { font-size: 9px; }
+  .ai-settings-modal .ai-settings-actions > button { padding-inline: 9px; font-size: 10px; }
+}
