@@ -22,7 +22,8 @@ import { cleanupExpiredAssets, findImageFiles, imageDateDirectory, imageLifetime
 import { clearArticleStyles, layoutSource, LAYOUT_TIMEOUT_MS, validateLayoutDesign } from '../src/layout-design.js';
 import { renderArticle } from '../src/renderer.js';
 import { layoutInstructions } from './layout-rules.js';
-import { AIEditRequestSchema, AIEditResponseSchema, AI_EDIT_TIMEOUT_MS, buildAIEdit, describeAIEdit, isImageBlock } from '../src/ai-edit.js';
+import { AIEditRequestSchema, AIEditResponseSchema, AI_EDIT_TIMEOUT_MS, aiEditConversation, buildAIEdit, describeAIEdit, isImageBlock } from '../src/ai-edit.js';
+import { unsupportedStyles } from '../src/html-document.js';
 import { editInstructions } from './edit-rules.js';
 import { htmlEditInstructions } from './html-edit-rules.js';
 import { normalizeUsage, usageMeta } from './ai-usage.js';
@@ -32,6 +33,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const uploadDir = process.env.ASSET_DIR ? path.resolve(process.env.ASSET_DIR) : path.join(root, 'uploads');
 fs.mkdirSync(uploadDir, { recursive: true });
 const app = express();
+app.set('trust proxy', 'loopback');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 const MAX_EDIT_IMAGES = 10;
 const MAX_EDIT_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -609,7 +611,7 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
   if (!isAllowedOrigin(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
   const parsed = AIEditRequestSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: { code: 'INVALID_EDIT_INPUT', message: '请提供有效文章和1–4000字的修改要求' } });
-  const { article, prompt, references, messages, attachments } = parsed.data;
+  const { article, prompt, references, messages, attachments, pendingChanges, layoutRepair } = parsed.data;
   if (new Set(article.blocks.map(block => block.id)).size !== article.blocks.length) return res.status(400).json({ error: { code: 'INVALID_CONTENT_REFS', message: '文章内容编号重复，请恢复草稿后重试' } });
   const controller = new AbortController();
   res.once('close', () => { if (!res.writableEnded) controller.abort(); });
@@ -642,10 +644,14 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
   }
   const outline = block => ({ id: block.id, type: block.type, text: blockText(block).slice(0, 40), ...(isImageBlock(block) ? { assetId: block.assetId } : {}) });
   const content = article.html ? { html: article.html, blocks: article.blocks.map(outline) } : { blocks: article.blocks, layoutDesign: article.layoutDesign };
-  const input = { template: templates.find(template => template.id === article.templateId), article: { mode: article.mode, title: article.title, summary: article.summary, templateId: article.templateId, tone: article.settings.tone, ...content }, imageDimensions, ...(attachments.length ? { attachments } : {}), conversation: messages, prompt, references };
+  const input = { template: templates.find(template => template.id === article.templateId), article: { mode: article.mode, title: article.title, summary: article.summary, templateId: article.templateId, tone: article.settings.tone, ...content }, imageDimensions, ...(attachments.length ? { attachments } : {}), conversation: aiEditConversation(messages), prompt, references, pendingChanges, ...(layoutRepair ? { layoutRepair } : {}) };
   if (JSON.stringify(input).length > 1_100_000) return res.status(400).json({ error: { code: 'CONTENT_TOO_LONG', message: '文章、附件文字或引用内容过长，请移除部分附件或减少引用后重试；正文不会被截断提交' } });
   const usages = res.locals.modelUsages = [];
-  let lastError;
+  let lastError, fallback;
+  const respond = ({ result, candidate, ignored }, retried) => {
+    const note = ignored.length ? `\n已忽略公众号不支持的样式：${ignored.slice(0, 6).map(style => style.slice(0, 120)).join('、')}${ignored.length > 6 ? ' 等' : ''}` : '';
+    return res.json({ ...result, message: result.message.slice(0, 4000 - note.length) + note, changes: describeAIEdit(article, candidate), meta: { model: config.model, retried, ...usageMeta(usages) } });
+  };
   for (let attempt = 0; attempt < 2; attempt++) {
     if (signal.aborted) break;
     usages.push(normalizeUsage());
@@ -653,9 +659,19 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
       const output = await requestModel({ config, system: article.html ? htmlEditInstructions : editInstructions, signal, inputData: { ...input, previousValidationError: lastError?.message.slice(0, 1200) }, imageInputs });
       usages[attempt] = output.usage;
       const result = AIEditResponseSchema.parse(JSON.parse(output.text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/, '$1')));
-      const candidate = buildAIEdit(article, result.operations, { references });
+      const ignored = [...new Set(result.operations.flatMap(op => op.html ? unsupportedStyles(op.html) : []))];
+      let candidate;
+      try { candidate = buildAIEdit(article, result.operations, { references }); }
+      catch (error) {
+        if (ignored.length) throw new Error(`${error.message}；不支持的样式：${ignored.slice(0, 6).map(style => style.slice(0, 120)).join('、')}`);
+        throw error;
+      }
       renderArticle(candidate, templates.find(template => template.id === candidate.templateId));
-      if (!controller.signal.aborted) return res.json({ ...result, changes: describeAIEdit(article, candidate), meta: { model: config.model, retried: attempt > 0, ...usageMeta(usages) } });
+      if (ignored.length && !attempt) {
+        fallback = { result, candidate, ignored };
+        throw new Error(`方案使用了公众号不支持的样式（${ignored.slice(0, 8).join('；')}），这些样式会被移除；请改用单列流式排版中最接近的合规写法，并在 message 中说明`);
+      }
+      if (!controller.signal.aborted) return respond({ result, candidate, ignored }, attempt > 0);
       return;
     } catch (error) {
       if (controller.signal.aborted) return;
@@ -664,6 +680,7 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
     }
   }
   if (controller.signal.aborted) return;
+  if (fallback) return respond(fallback, true);
   if (imageInputs.length && isUnsupportedVisionRequest(lastError)) return res.status(422).json({ error: { code: 'VISION_UNSUPPORTED', message: '当前模型不支持多模态识图' } });
   const timeout = signal.aborted || ['TimeoutError', 'AbortError'].includes(lastError?.name);
   const upstream = Boolean(lastError?.status);

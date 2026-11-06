@@ -27,6 +27,10 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
       if ('layoutDesign' in input.article || input.article.blocks.some(block => block.runs || block.text.length > 40)) throw new Error('HTML article must send block outline only');
       if (input.prompt === 'ambiguous') return Response.json({output_text:JSON.stringify({message:'需要调整哪一段？',operations:[]})});
       if (input.prompt === 'garbage') return Response.json({output_text:'not json'});
+      if (input.prompt === 'unsupported-styles' && !input.previousValidationError) return Response.json({output_text:JSON.stringify({message:'调整样式',operations:[{type:'setHtml',html:input.article.html.replace('padding:16px;', 'padding:8px;display:grid;')}]})});
+      if (input.prompt === 'unsupported-styles' && input.previousValidationError) return Response.json({output_text:JSON.stringify({message:'改用合规样式',operations:[{type:'setHtml',html:input.article.html.replace('padding:16px;', 'padding:8px;')}]})});
+      if (input.prompt === 'unsupported-fallback' && input.previousValidationError) return Response.json({output_text:'not json'});
+      if (input.prompt === 'unsupported-fallback') return Response.json({output_text:JSON.stringify({message:'调整样式',operations:[{type:'setHtml',html:input.article.html.replace('padding:16px;', 'padding:8px;display:grid;')}]})});
       if (input.prompt === 'slow') await new Promise(resolve => setTimeout(resolve, 300));
       const operation = input.prompt === 'selection'
         ? {type:'replaceHtml', referenceId:input.references[0].id, html:'<strong style="color:#26332F;">选中文字</strong>'}
@@ -51,13 +55,21 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
     const now = new Date().toISOString();
     const article = articleWithHtml({ schemaVersion: 1, id: 'api-test', mode: 'create', title: '', summary: '', blocks: [], templateId: 'T01', settings: {}, createdAt: now, updatedAt: now }, '<section data-node-id="page" style="color:#26332F;background-color:#FFFFFF;padding:16px;"><p data-node-id="target">保留选中文字结尾</p><p>其他段落</p></section>');
     const reference = createAIReference(article, { kind: 'text', keys: ['html:target'], text: '选中文字', startOffset: 2, endOffset: 6 });
-    const request = async (prompt, options = {}) => {
-      const response = await fetch(`http://127.0.0.1:${port}/api/articles/edit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ article, prompt, references: [reference], ...options }) });
+    const request = async (prompt, { headers, ...options } = {}) => {
+      const response = await fetch(`http://127.0.0.1:${port}/api/articles/edit`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ article, prompt, references: [reference], ...options }) });
       return { status: response.status, data: await response.json() };
     };
     const full = await request('layout');
     assert.equal(full.status, 200);
     assert.match(buildAIEdit(article, full.data.operations).html, /padding:8px/);
+    const repairedStyles = await request('unsupported-styles', { references: [] });
+    assert.equal(repairedStyles.status, 200);
+    assert.equal(repairedStyles.data.meta.retried, true);
+    assert.match(buildAIEdit(article, repairedStyles.data.operations).html, /padding:8px/);
+    assert.doesNotMatch(buildAIEdit(article, repairedStyles.data.operations).html, /display:grid/);
+    const ignoredStyles = await request('unsupported-fallback', { references: [] });
+    assert.equal(ignoredStyles.status, 200);
+    assert.match(ignoredStyles.data.message, /已忽略公众号不支持的样式.*display:grid/);
     const selection = await request('selection');
     assert.equal(selection.status, 200);
     assert.match(buildAIEdit(article, selection.data.operations, { references: [reference] }).html, /<strong/);
@@ -79,6 +91,8 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
     const concurrent = await Promise.all(Array.from({ length: 3 }, () => request('slow')));
     assert.deepEqual(concurrent.map(result => result.status).sort(), [200, 200, 429]);
     assert.match(concurrent.find(result => result.status === 429).data.error.message, /已有生成任务进行中/);
+    const differentSources = await Promise.all(Array.from({ length: 3 }, (_, i) => request('slow', { headers: { 'X-Forwarded-For': `192.0.2.${i + 1}` } })));
+    assert.deepEqual(differentSources.map(result => result.status), [200, 200, 200]);
     const ambiguous = await request('ambiguous', { references: [] });
     assert.equal(ambiguous.status, 200);
     assert.deepEqual(ambiguous.data.operations, []);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ArticleSchema } from '../src/core.js';
-import { AIConversationMessageSchema, AIEditRequestSchema, aiEditTargets, buildAIEdit, createAIReference, describeAIEdit, mergeAIEdit, validAIReference } from '../src/ai-edit.js';
+import { AIConversationMessageSchema, AIEditRequestSchema, aiEditConversation, aiEditSummary, aiEditTargets, appliedAIEditStatus, buildAIEdit, createAIReference, describeAIEdit, mergeAIEdit, revertAIEdit, validAIReference } from '../src/ai-edit.js';
 import { ensureHtmlArticle, reconcileHtmlArticle } from '../src/document-model.js';
 import { articleWithHtml, findHtmlNode, htmlElements, htmlTree, nodeText, outerHtml, sanitizeHtml } from '../src/html-document.js';
 import { clearArticleStyles } from '../src/layout-design.js';
@@ -33,7 +33,11 @@ test('自定义分组与内联样式直接保存，预览和复制共用 HTML', 
   assert.equal(renderArticle(applied, templates[0]).html, renderArticle(applied, templates[0], new Map(), { mode: 'preview' }).html);
   assert.equal(describeAIEdit(current, next).length, 1);
   assert.equal(current.html, document().html);
-  assert.throws(() => mergeAIEdit(current, next, articleWithHtml(current, current.html.replace('其他段落', '手动修改'))), /失效/);
+  const untouched = articleWithHtml(current, current.html.replace('其他段落', '手动修改'));
+  const merged = mergeAIEdit(current, next, untouched);
+  assert.match(merged.html, /手动修改/);
+  assert.match(merged.html, /padding:7px/);
+  assert.throws(() => mergeAIEdit(current, next, articleWithHtml(current, current.html.replace('padding:16px', 'padding:22px'))), /失效/);
 });
 
 test('部分文字选区只替换对应文字，保留其他段落及边界样式', () => {
@@ -184,4 +188,73 @@ test('对话保留历史选区、实际修改目标与方案状态，明确全�
   const full = [{ type: 'setHtml', html: original.html.replace('padding:16px;', 'padding:8px;') }];
   assert.match(buildAIEdit(original, full, { references: [reference] }).html, /padding:8px/);
   assert.deepEqual(aiEditTargets(full), ['article']);
+});
+
+test('对话重试过滤失败消息并压缩历史引用，待改动列表可直接提供给模型', () => {
+  const current = document();
+  const failed = { role: 'user', text: '失败请求', status: 'failed' };
+  const pending = { role: 'user', text: '正在发送', status: 'pending' };
+  const assistant = { role: 'assistant', text: '已形成方案', status: 'pending', targets: ['html:first'] };
+  assert.deepEqual(aiEditConversation([failed, pending, assistant]).map(message => message.text), ['已形成方案']);
+  const longReference = { id: 'history-ref', kind: 'text', keys: ['html:first'], text: '历史引用'.repeat(300), startOffset: 0, endOffset: 1200 };
+  const history = aiEditConversation([{ role: 'user', text: '调整此处', status: 'answered', references: [longReference] }]);
+  assert.equal(history[0].references[0].text.length, 200);
+  assert.equal(history[0].references[0].endOffset, 1200);
+  assert.equal(longReference.text.length, 1200);
+  const proposed = buildAIEdit(current, [{ type: 'replaceHtml', nodeId: 'first', html: '<p style="margin:0 0 4px;">保留<strong>选中文字</strong>结尾</p>' }]);
+  assert.equal(aiEditSummary(current, proposed)[0].key, 'html:first');
+  assert.equal(aiEditSummary(current, proposed)[0].index, 1);
+});
+
+test('局部撤回恢复原段落，取消方案后可重新生成', () => {
+  const current = document();
+  const proposed = buildAIEdit(current, [{ type: 'replaceHtml', nodeId: 'first', html: '<p style="margin:0 0 4px;">保留<strong>选中文字</strong>结尾</p>' }]);
+  const reverted = revertAIEdit(current, proposed, 'html:first');
+  assert.equal(findHtmlNode(reverted.html, 'first').attribs.style, findHtmlNode(current.html, 'first').attribs.style);
+  assert.equal(findHtmlNode(reverted.html, 'second').attribs['data-node-id'], 'second');
+});
+
+test('不同段落可合并，同段文字、删除和移动冲突拒绝覆盖', () => {
+  const current = document();
+  const proposed = buildAIEdit(current, [{ type: 'replaceHtml', nodeId: 'first', html: '<p style="margin:0 0 4px;">保留<strong>选中文字</strong>结尾</p>' }]);
+  const manual = articleWithHtml(current, current.html.replace('其他段落', '手动编辑其他段落'));
+  assert.match(mergeAIEdit(current, proposed, manual).html, /手动编辑其他段落/);
+  const sameNode = articleWithHtml(current, current.html.replace('保留', '手动改写'));
+  assert.throws(() => mergeAIEdit(current, proposed, sameNode), /失效/);
+  const deleted = articleWithHtml(current, current.html.replace(outerHtml(findHtmlNode(current.html, 'first')), ''));
+  assert.throws(() => mergeAIEdit(current, proposed, deleted), /失效/);
+});
+
+test('方案新增节点可创建引用，撤销与重做同步已应用状态', () => {
+  const current = document();
+  const proposed = buildAIEdit(current, [{ type: 'setHtml', intent: 'content', html: current.html.replace('其他段落', '新增内容') + '<p data-node-id="new">新增段落</p>' }]);
+  assert.equal(createAIReference(current, { kind: 'text', keys: ['html:new'], text: '新增段落' }), null);
+  const reference = createAIReference(proposed, { kind: 'text', keys: ['html:new'], text: '新增段落' });
+  assert.ok(validAIReference(proposed, reference));
+  assert.equal(appliedAIEditStatus(current, proposed, proposed), 'applied');
+  assert.equal(appliedAIEditStatus(current, proposed, current), 'reverted');
+  const edited = articleWithHtml(proposed, proposed.html.replace('新增段落', '后续手动改写'));
+  assert.equal(appliedAIEditStatus(current, proposed, edited), 'superseded');
+});
+
+test('全部 HTML 改动均有编号，样式差异展示实际前后数值', () => {
+  const current = articleWithHtml(base(), Array.from({ length: 40 }, (_, i) => `<p data-node-id="p${i}" style="font-size:16px;line-height:1.9;">段落${i}</p>`).join(''));
+  const proposed = articleWithHtml(current, current.html.replaceAll('font-size:16px;line-height:1.9;', 'font-size:15px;line-height:1.75;'));
+  assert.equal(describeAIEdit(current, proposed).length, 40);
+  assert.equal(aiEditSummary(current, proposed).at(-1).index, 40);
+  assert.match(describeAIEdit(current, proposed)[0].after, /字号：16px → 15px/);
+  assert.match(describeAIEdit(current, proposed)[0].after, /行距：1.9 → 1.75/);
+});
+
+test('同一节点跨容器并发移动或删除时拒绝合并，防止重复或丢失正文', () => {
+  const current = articleWithHtml(base(), '<section data-node-id="a"><p data-node-id="item">需要移动的文字</p></section><section data-node-id="b"><p>乙</p></section><section data-node-id="c"><p>丙</p></section>');
+  const item = outerHtml(findHtmlNode(current.html, 'item'));
+  const moveTo = id => {
+    const removed = current.html.replace(item, '');
+    const target = findHtmlNode(removed, id);
+    return articleWithHtml(current, removed.replace(outerHtml(target), outerHtml(target).replace('</section>', `${item}</section>`)));
+  };
+  assert.throws(() => mergeAIEdit(current, moveTo('b'), moveTo('c')), /失效/);
+  const removed = articleWithHtml(current, current.html.replace(item, ''));
+  assert.throws(() => mergeAIEdit(current, moveTo('b'), removed), /失效/);
 });

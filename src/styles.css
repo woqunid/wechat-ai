@@ -2509,6 +2509,9 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
 .ai-edit-reference-remove:hover { background: var(--border-subtle); }
 .ai-edit-reference.is-invalid { border-color: #e3cc9f; background: var(--amber-subtle); }
 .ai-edit-reference-warning { margin-top: 5px; color: var(--amber); font-size: 9px; }
+.ai-message-retry, .ai-change-actions, .ai-edit-followups { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 7px; font-size: 10px; }
+.ai-edit-auto-apply { display: flex; align-items: center; gap: 5px; margin-bottom: 7px; color: var(--text-secondary); font-size: 10px; }
+.ai-edit-auto-apply input, .ai-edit-attachment > input { width: 13px; height: 13px; flex-shrink: 0; accent-color: var(--primary); }
 .ai-edit-preview-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-shrink: 0; padding: 7px 15px; border-bottom: 1px solid var(--primary-border); color: var(--primary); background: var(--primary-subtle); font-size: 10px; }
 .ai-edit-preview-bar > div { display: flex; align-items: center; gap: 10px; }
 .preview-apply { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 26px; padding: 0 8px; border-radius: 4px; color: white; background: var(--primary); font-size: 10px; }

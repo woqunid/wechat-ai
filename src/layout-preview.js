@@ -1,4 +1,9 @@
 export async function inspectLayoutPreview(html, signal) {
+  const overflow = (width, detail) => {
+    const error = new Error(`${width}px 预览出现横向溢出：${detail}；请调整宽度、留白或换行，保留原有内容`);
+    error.code = 'LAYOUT_OVERFLOW';
+    throw error;
+  };
   const frame = document.createElement('iframe');
   frame.title = '版式适配检查';
   frame.setAttribute('aria-hidden', 'true');
@@ -26,11 +31,11 @@ export async function inspectLayoutPreview(html, signal) {
       const doc = frame.contentDocument;
       if (!doc?.body) throw new Error('无法读取版式预览，请重新生成');
       const viewportWidth = doc.documentElement.clientWidth;
-      if (doc.documentElement.scrollWidth > viewportWidth + 1) throw new Error(`${width}px 预览出现横向溢出，请重新生成`);
-      for (const element of doc.querySelectorAll('section,p,img')) {
+      for (const element of doc.querySelectorAll('section,div,p,img,ul,ol,li,blockquote,h1,h2,h3,h4')) {
         const rect = element.getBoundingClientRect();
-        if (rect.left < -1 || rect.right > viewportWidth + 1 || element.scrollWidth > element.clientWidth + 1) throw new Error(`${width}px 预览有内容超出边界，请重新生成`);
+        if (rect.left < -1 || rect.right > viewportWidth + 1 || element.scrollWidth > element.clientWidth + 1) overflow(width, `${element.tagName.toLowerCase()}${element.dataset.nodeId ? ` 节点 ${element.dataset.nodeId}` : ''}，显示宽度 ${Math.round(rect.width)}px，内容宽度 ${element.scrollWidth}px`);
       }
+      if (doc.documentElement.scrollWidth > viewportWidth + 1) overflow(width, `页面内容宽度 ${doc.documentElement.scrollWidth}px`);
     }
   } finally { frame.remove(); }
 }

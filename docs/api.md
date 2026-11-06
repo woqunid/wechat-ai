@@ -70,7 +70,7 @@ Vite 开发代理显式设置 `changeOrigin: false` 与 `xfwd: true`，保留浏
 
 编辑草稿的可选 `article.html` 为内容与版式保存源，最多600,000字符。`title/summary/blocks` 是从 HTML 提取的兼容摘要，供模板切换、字数和图片管理使用。旧结构仍被生成接口和原接口兼容；前端打开旧稿时转换为带稳定节点编号的 HTML。
 
-`POST /api/articles/edit` 由 AI 根据要求、引用和对话自动选择局部或全文操作，不再接收手动范围。`messages` 可携带历史 `references`（与本轮引用结构相同）、`targets`（`html:节点编号` 或 `article`）以及 `status`（pending/applied/discarded/superseded），用于延续最近未取消、未被替代的修改位置；历史线索须按当前 HTML 重新定位。HTML 文章的操作为：
+`POST /api/articles/edit` 由 AI 根据要求、引用和对话自动选择局部或全文操作，不再接收手动范围。`messages` 可携带历史 `references`、`targets`（`html:节点编号` 或 `article`）以及 `status`（pending/applied/discarded/superseded/reverted/answered/failed/stopped）。失败、停止和仍在发送的用户消息不提交模型，历史引用文字最多200字，偏移仅供定位；当前真实引用保留完整文字。HTML 全文只发送一次，派生 blocks 仅保留编号、类型、前40字和图片编号。HTML 文章的操作为：
 
 ```json
 {"type":"setHtml","intent":"layout","html":"完整文章 HTML 片段"}
@@ -83,3 +83,7 @@ Vite 开发代理显式设置 `changeOrigin: false` 与 `xfwd: true`，保留浏
 `intent` 默认为 `layout`，文字序列变化会被拒绝；用户明确要求内容改写时使用 `content`。本轮有引用也可根据用户明确的全文要求使用 `setHtml`。引用 `keys` 为单个 `html:节点编号`，对应 HTML 的 `data-node-id`；文字偏移按 UTF-16 计数，`br` 算一个换行，图片算一个 `U+FFFC`。整节点选区替换外层元素，部分文字选区替换内部片段并保留边界外结构；图片引用替换图片节点。无需本轮引用时，`replaceHtml` 可以指定当前 HTML 中的 `nodeId`，替换整个节点；可同时提供 `startOffset/endOffset` 只修改节点内的部分文字。`referenceId` 与 `nodeId` 必须二选一，目标不存在、偏移越界或原稿变化时拒绝覆盖。单元素替换保留目标节点编号，供后续对话继续定位。
 
 HTML 只允许流式内容元素与内联样式，不接收脚本、事件、外部样式、定位、flex/grid、固定高度或隐藏内容。图片以 `data-asset-id` 引用当前文章已有资源，不接受 AI 指定 `src`。预览按资源映射补充地址，复制时去除内部 `data-*` 标记；本地图片的手动补图流程继续适用。模板更换和独立版式应用会重新生成 HTML，原稿可通过撤销恢复。
+
+可选 `pendingChanges` 为当前未应用方案的改动摘要（`index/key/label/before/after`），编号与前端列表一致，供“第 N 处”指令定位。客户端可直接撤回单项，应用时按节点进行三方合并，保留不冲突的手动修改。`layoutRepair:{result,issue}` 携带上次方案与手机预览溢出详情，客户端最多发起一次修复，操作仍基于本轮原始 article。过滤不支持的样式时服务端先纠正一次；保留可用方案时在 message 说明忽略项。
+
+附件可逐轮勾选，未选附件保留本地缓存但不发送；`VISION_UNSUPPORTED` 后可只发送文档文字重试。并发按来源 IP 限制，另有全站总上限；本机反向代理的转发地址被信任，使 Vite 转发的不同客户端不共用同一来源额度。

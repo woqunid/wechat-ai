@@ -4,7 +4,7 @@ import { LayoutDesignSchema, validateLayoutDesign } from './layout-design.js';
 import { renderArticle } from './renderer.js';
 import { getTemplate } from './templates.js';
 import { unreadableText } from './readability.js';
-import { articleWithHtml, findHtmlNode, htmlElements, htmlTree, nodeText, outerHtml, renderHtmlDocument, replaceHtmlNode, replaceHtmlReference, sanitizeHtml } from './html-document.js';
+import { articleWithHtml, cssDeclarations, findHtmlNode, htmlElements, htmlTree, innerHtml, nodeText, outerHtml, renderHtmlDocument, replaceHtmlNode, replaceHtmlReference, sanitizeHtml } from './html-document.js';
 
 export const AI_EDIT_TIMEOUT_MS = 180_000;
 const id = z.string().min(1).max(80);
@@ -17,9 +17,9 @@ export const AIConversationMessageSchema = z.object({
   role: z.enum(['user', 'assistant']), text: text(4000),
   references: z.array(AIReferenceSchema).max(100).optional(),
   targets: z.array(z.string().min(1).max(90)).max(160).optional(),
-  status: z.enum(['pending', 'applied', 'discarded', 'superseded']).optional(),
+  status: z.enum(['pending', 'applied', 'discarded', 'superseded', 'failed', 'stopped', 'answered', 'reverted']).optional(),
 });
-export const AIEditRequestSchema = z.object({
+const AIEditInputSchema = z.object({
   article: ArticleSchema, prompt: text(4000).refine(value => value.trim()),
   references: z.array(AIReferenceSchema).max(100).default([]),
   messages: z.array(AIConversationMessageSchema).max(16).default([]),
@@ -42,6 +42,19 @@ export const AIEditResponseSchema = z.object({
     z.object({ type: z.literal('setLayout'), design: LayoutDesignSchema }).strict(),
   ])).max(160),
 }).strict();
+
+export const AIEditRequestSchema = AIEditInputSchema.extend({
+  pendingChanges: z.array(z.object({ index: z.number().int().positive(), key: text(90), label: text(160), before: text(300), after: text(300) })).max(1000).default([]),
+  layoutRepair: z.object({ result: AIEditResponseSchema, issue: text(2000) }).strict().optional(),
+});
+
+export function aiEditConversation(messages) {
+  return messages.filter(message => !['failed', 'stopped'].includes(message.status) && !(message.role === 'user' && message.status === 'pending')).slice(-16).map(message => AIConversationMessageSchema.parse({
+    ...message, text: message.text.slice(0, 4000), references: message.references?.map(reference => ({ ...reference, text: reference.text.slice(0, 200) })),
+  }));
+}
+
+export const aiEditSummary = (base, candidate) => describeAIEdit(base, candidate).slice(0, 1000).map((change, index) => ({ ...change, index: index + 1, before: change.before.slice(0, 300), after: change.after.slice(0, 300) }));
 
 const ordered = value => Array.isArray(value) ? value.map(ordered) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, ordered(value[key])])) : value;
 const fingerprint = value => JSON.stringify(ordered(value));
@@ -173,11 +186,43 @@ function reorderedBlocks(before, after) {
   return new Set(ids.filter((blockId, index) => blockId !== oldIds[index]));
 }
 
+function mergeHtml(base, candidate, current, conflict) {
+  const trees = [base, candidate, current].map(htmlTree);
+  const maps = trees.map(tree => new Map(htmlElements(tree).map(node => [node.attribs['data-node-id'], node])));
+  const parentId = node => node?.parent?.attribs?.['data-node-id'] || '$root';
+  for (const [id, before] of maps[0]) {
+    const proposed = maps[1].get(id), now = maps[2].get(id);
+    if (proposed && now) {
+      if (parentId(before) !== parentId(proposed) && parentId(before) !== parentId(now) && parentId(proposed) !== parentId(now)) conflict();
+    } else if (proposed && parentId(before) !== parentId(proposed) || now && parentId(before) !== parentId(now)) conflict();
+  }
+  const serialized = node => node ? outerHtml(node) : '';
+  const own = node => fingerprint([node.name, node.attribs, (node.children || []).map(child => child.type === 'tag' ? child.attribs['data-node-id'] : serialized(child))]);
+  const merge = (before, proposed, now) => {
+    if (serialized(before) === serialized(proposed)) return serialized(now);
+    if (serialized(before) === serialized(now) || serialized(proposed) === serialized(now)) return serialized(proposed);
+    if (!before) return conflict();
+    if (!proposed) return serialized(before) === serialized(now) ? '' : conflict();
+    if (!now) return serialized(before) === serialized(proposed) ? '' : conflict();
+    if (before.name !== proposed.name || before.name !== now.name) return conflict();
+    if (own(before) !== own(proposed) && own(before) !== own(now) && own(proposed) !== own(now)) return conflict();
+    const source = own(before) !== own(proposed) ? proposed : now;
+    for (const child of before.children || []) {
+      const id = child.attribs?.['data-node-id'];
+      if (id && (!maps[1].has(id) || !maps[2].has(id))) merge(...maps.map(map => map.get(id)));
+    }
+    const content = (source.children || []).map(child => child.type === 'tag' ? merge(...maps.map(map => map.get(child.attribs['data-node-id']))) : serialized(child)).join('');
+    return source.type === 'root' ? content : serialized(source).replace(innerHtml(source), content);
+  };
+  return merge(...trees);
+}
+
 export function mergeAIEdit(base, candidate, current) {
   const conflict = () => { throw new Error('修改对象或相关排版已变化，此方案已失效，请取消方案后重新生成'); };
   if (base.html || candidate.html || current.html) {
-    if (base.id !== current.id || base.html !== current.html || base.templateId !== current.templateId) conflict();
-    return { ...current, ...articleWithHtml(current, candidate.html), settings: current.settings };
+    if (base.id !== current.id || !base.html || !candidate.html || !current.html || base.templateId !== current.templateId) conflict();
+    const html = mergeHtml(base.html, candidate.html, current.html, conflict);
+    return checkReadability(current, ArticleSchema.parse(articleWithHtml(current, html)));
   }
   if (base.id !== current.id || base.templateId !== current.templateId || !same(base.layoutDesign, current.layoutDesign)) conflict();
   const merged = structuredClone(current);
@@ -223,9 +268,56 @@ export function mergeAIEdit(base, candidate, current) {
   return checkReadability(current, checkedArticle(merged, new Set(current.blocks.filter(isImageBlock).map(block => block.assetId))));
 }
 
+export function revertAIEdit(base, candidate, key) {
+  if (key.startsWith('html:')) {
+    const id = key.slice(5), original = findHtmlNode(base.html, id), proposed = findHtmlNode(candidate.html, id);
+    let html = candidate.html;
+    if (proposed) html = replaceHtmlNode(html, id, original ? outerHtml(original) : '');
+    else if (original) {
+      const siblings = original.parent.children;
+      const following = siblings.slice(siblings.indexOf(original) + 1).find(node => node.attribs && findHtmlNode(html, node.attribs['data-node-id']));
+      const parent = findHtmlNode(html, original.parent.attribs?.['data-node-id']);
+      if (following) {
+        const node = findHtmlNode(html, following.attribs['data-node-id']);
+        html = replaceHtmlNode(html, node.attribs['data-node-id'], outerHtml(original) + outerHtml(node));
+      } else if (parent) html = replaceHtmlNode(html, parent.attribs['data-node-id'], outerHtml(parent).replace(innerHtml(parent), innerHtml(parent) + outerHtml(original)));
+      else if (original.parent.type === 'root') html += outerHtml(original);
+      else throw new Error('原段落的容器已变化，请取消方案后重新生成');
+    }
+    return articleWithHtml(candidate, html);
+  }
+  const next = structuredClone(candidate);
+  if (key === 'title' || key === 'summary') next[key] = base[key];
+  else if (key === 'layout') next.layoutDesign = structuredClone(base.layoutDesign);
+  else {
+    const id = key.replace(/^block:/, ''), original = base.blocks.find(block => block.id === id);
+    next.blocks = next.blocks.filter(block => block.id !== id);
+    if (original) {
+      const prior = base.blocks.slice(0, base.blocks.indexOf(original)).reverse().find(block => next.blocks.some(item => item.id === block.id));
+      next.blocks.splice(prior ? next.blocks.findIndex(block => block.id === prior.id) + 1 : 0, 0, structuredClone(original));
+    }
+  }
+  return next;
+}
+
+export function appliedAIEditStatus(base, next, current) {
+  try { return describeAIEdit(current, mergeAIEdit(next, base, current)).length ? 'applied' : 'reverted'; } catch {}
+  try { mergeAIEdit(base, next, current); return 'reverted'; } catch { return 'superseded'; }
+}
+
 const styleNames = { fontSize: '字号', align: '对齐', lineHeight: '行距', paragraphSpacing: '段距', itemSpacing: '列表项间距', indent: '首行缩进', imageWidth: '图片宽度', color: '文字颜色', backgroundColor: '背景色', fontFamily: '字体', fontWeight: '字重', letterSpacing: '字间距', textAlign: '对齐', marginTop: '上方间距', marginBottom: '下方间距', paddingX: '左右留白', paddingY: '上下留白', borderSide: '边框位置', borderWidth: '边框宽度', borderColor: '边框颜色', borderStyle: '边框样式', borderRadius: '圆角', paragraphGap: '段距' };
 const styleValues = { left: '左', center: '居中', right: '右', justify: '两端', sans: '无衬线', serif: '衬线', mono: '等宽', all: '四周', top: '上', bottom: '下', solid: '实线', dashed: '虚线', double: '双线' };
 const styleText = style => Object.entries(style || {}).map(([key, value]) => `${styleNames[key] || key}：${styleValues[value] || value}${key === 'imageWidth' ? '%' : ''}`).join('；');
+const cssNames = { 'font-size': '字号', 'line-height': '行距', color: '文字颜色', 'background-color': '背景色', 'font-weight': '字重', 'font-family': '字体', 'text-align': '对齐', 'letter-spacing': '字间距', margin: '外间距', padding: '内留白', 'margin-bottom': '段后间距', 'margin-top': '段前间距', width: '宽度', 'max-width': '最大宽度', border: '边框', 'border-radius': '圆角' };
+function htmlStyleChanges(before, after) {
+  const originals = new Map((before ? htmlElements(before) : []).map(node => [node.attribs['data-node-id'], node]));
+  return (after ? htmlElements(after) : []).flatMap(node => {
+    const original = originals.get(node.attribs['data-node-id']);
+    if (!original) return [];
+    const a = Object.fromEntries(cssDeclarations(original.attribs.style)), b = Object.fromEntries(cssDeclarations(node.attribs.style));
+    return [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(key => a[key] !== b[key]).map(key => `${cssNames[key] || key}：${a[key] || '默认'} → ${b[key] || '默认'}`);
+  });
+}
 function blockDescription(block) {
   const names = { paragraph: '正文', heading: '标题', list: '列表', quote: '引用', callout: '重点', image: '图片', imageCard: '图片', divider: '分隔线' };
   const formats = [...(block.runs || []), ...(block.items || []).flat()].filter(run => run.bold || run.underline || run.color || run.highlight).map(run => `“${run.text}”：${[run.bold && '加粗', run.underline && '下划线', run.color && `文字色${run.color}`, run.highlight && `高亮${run.highlight}`].filter(Boolean).join('、')}`);
@@ -245,9 +337,10 @@ export function describeAIEdit(base, candidate) {
     const ownContent = node => node ? fingerprint([node.name, node.attribs, (node.children || []).map(child => child.type === 'text' ? child.data : child.attribs?.['data-node-id'])]) : '';
     const changed = [...new Set([...before.keys(), ...after.keys()])].filter(id => ownContent(before.get(id)) !== ownContent(after.get(id)));
     const top = changed.filter(id => { const node = after.get(id) || before.get(id); return !changed.includes(node.parent?.attribs?.['data-node-id']); });
-    return top.slice(0, 30).map(id => {
+    return top.map(id => {
       const original = nodeText(before.get(id) || htmlTree('')), proposed = nodeText(after.get(id) || htmlTree(''));
-      return { key: `html:${id}`, label: original === proposed ? '调整自定义版式' : '修改内容与版式', before: original.slice(0, 800) || '空', after: `${proposed.slice(0, 800) || '空'}${original === proposed ? '\n（样式已调整，请在画布对比）' : ''}` };
+      const styles = htmlStyleChanges(before.get(id), after.get(id));
+      return { key: `html:${id}`, label: !before.has(id) ? '新增段落' : !after.has(id) ? '删除段落' : original === proposed ? '调整自定义版式' : '修改内容与版式', before: original.slice(0, 800) || '空', after: [proposed.slice(0, 800) || '空', ...new Set(styles)].join('\n') };
     });
   }
   const changes = [];

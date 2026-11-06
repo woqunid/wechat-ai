@@ -17,6 +17,16 @@ export function htmlElements(root) {
   return result;
 }
 export const findHtmlNode = (html, id) => htmlElements(htmlTree(html)).find(node => node.attribs['data-node-id'] === id);
+const allowedStyle = (key, value) => css.has(key) && Boolean(value) && !/[\\{}<>@]|url\s*\(|expression|javascript|var\s*\(|!important/i.test(value)
+  && (key !== 'display' || ['block', 'inline', 'inline-block', 'list-item'].includes(value))
+  && !(/^(margin|padding|width|height|font-size|line-height|text-indent)/.test(key) && /-\d/.test(value))
+  && (key !== 'height' || value === 'auto')
+  && (key !== 'white-space' || ['normal', 'pre-wrap', 'pre-line'].includes(value));
+export const cssDeclarations = style => (style || '').split(';').flatMap(declaration => {
+  const at = declaration.indexOf(':');
+  return at < 0 ? [] : [[declaration.slice(0, at).trim().toLowerCase(), declaration.slice(at + 1).trim()]];
+});
+export const unsupportedStyles = html => [...new Set(htmlElements(htmlTree(html)).flatMap(node => cssDeclarations(node.attribs.style).filter(([key, value]) => value && !allowedStyle(key, value)).map(([key, value]) => `${key}:${value}`)))];
 export const escapeHtml = text => String(text ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
 export function sanitizeHtml(html) {
@@ -42,18 +52,7 @@ export function sanitizeHtml(html) {
       if (key === 'alt' || key === 'title') attrs[key] = value.slice(0, 500);
     }
     if (node.name === 'font') return (node.children || []).map(clean).join('');
-    const declarations = (node.attribs.style || '').split(';').flatMap(declaration => {
-      const at = declaration.indexOf(':');
-      if (at < 0) return [];
-      const key = declaration.slice(0, at).trim().toLowerCase();
-      const value = declaration.slice(at + 1).trim();
-      if (!css.has(key) || !value || /[\\{}<>@]|url\s*\(|expression|javascript|var\s*\(|!important/i.test(value)) return [];
-      if (key === 'display' && !['block', 'inline', 'inline-block', 'list-item'].includes(value)) return [];
-      if (/^(margin|padding|width|height|font-size|line-height|text-indent)/.test(key) && /-\d/.test(value)) return [];
-      if (key === 'height' && value !== 'auto') return [];
-      if (key === 'white-space' && !['normal', 'pre-wrap', 'pre-line'].includes(value)) return [];
-      return [`${key}:${value}`];
-    });
+    const declarations = cssDeclarations(node.attribs.style).filter(([key, value]) => allowedStyle(key, value)).map(([key, value]) => `${key}:${value}`);
     if (declarations.length) attrs.style = `${declarations.join(';')};`;
     if (node.name === 'a' && /^https:\/\/[^\s<>"']+$/i.test(node.attribs.href || '')) attrs.href = node.attribs.href;
     if (node.name === 'img') {
