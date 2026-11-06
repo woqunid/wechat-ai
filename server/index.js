@@ -37,7 +37,8 @@ const MAX_EDIT_IMAGES = 10;
 const MAX_EDIT_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_EDIT_DOCUMENT_CHARS = 200_000;
 const oneMinute = new Map();
-let activeGenerations = 0;
+const activeGenerations = new Map();
+let totalGenerations = 0;
 const resolvedApiStyles = new Map();
 let activeImageImports = 0;
 
@@ -78,13 +79,22 @@ function rateLimit(defaultLimit, setting) {
   };
 }
 const concurrentGenerationLimit = (req, res, next) => {
-  if (activeGenerations >= 2) {
+  const active = activeGenerations.get(req.ip) || 0;
+  const busySource = active >= Number(process.env.GENERATION_CONCURRENCY_PER_SOURCE || 2);
+  if (busySource || totalGenerations >= Number(process.env.GENERATION_CONCURRENCY_TOTAL || 6)) {
     res.setHeader('Retry-After', '5');
-    return res.status(429).json({ error: { code: 'RATE_LIMITED', message: '生成任务较多，请稍后再试' } });
+    return res.status(429).json({ error: { code: 'RATE_LIMITED', message: busySource ? '已有生成任务进行中，请等待完成后再试' : '生成任务较多，请稍后再试' } });
   }
-  activeGenerations++;
+  activeGenerations.set(req.ip, active + 1);
+  totalGenerations++;
   let released = false;
-  const release = () => { if (!released) { released = true; activeGenerations--; } };
+  const release = () => {
+    if (released) return;
+    released = true;
+    totalGenerations--;
+    const count = activeGenerations.get(req.ip) - 1;
+    if (count > 0) activeGenerations.set(req.ip, count); else activeGenerations.delete(req.ip);
+  };
   res.once('finish', release);
   res.once('close', release);
   next();

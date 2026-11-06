@@ -26,6 +26,7 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
       if ('scope' in input) throw new Error('Manual scope must not be sent');
       if (input.prompt === 'ambiguous') return Response.json({output_text:JSON.stringify({message:'需要调整哪一段？',operations:[]})});
       if (input.prompt === 'garbage') return Response.json({output_text:'not json'});
+      if (input.prompt === 'slow') await new Promise(resolve => setTimeout(resolve, 300));
       const operation = input.prompt === 'selection'
         ? {type:'replaceHtml', referenceId:input.references[0].id, html:'<strong style="color:#26332F;">选中文字</strong>'}
         : input.prompt === 'locate'
@@ -39,7 +40,7 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
     };
     await import(${JSON.stringify(pathToFileURL(path.join(root, 'server/index.js')).href)});
   `);
-  const child = spawn(process.execPath, [bootstrap], { cwd: root, env: { ...process.env, PORT: String(port), AI_BASE_URL: 'http://html-test.invalid/v1', AI_API_KEY: 'test-only', AI_MODEL: 'fixture', AI_API_STYLE: 'responses', AI_TIMEOUT_MS: '2000', ASSET_DIR: path.join(directory, 'assets') }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [bootstrap], { cwd: root, env: { ...process.env, PORT: String(port), AI_BASE_URL: 'http://html-test.invalid/v1', AI_API_KEY: 'test-only', AI_MODEL: 'fixture', AI_API_STYLE: 'responses', AI_TIMEOUT_MS: '2000', RATE_EDIT_PER_MIN: '100', ASSET_DIR: path.join(directory, 'assets') }, stdio: ['ignore', 'pipe', 'pipe'] });
   try {
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Test API did not start')), 8000);
@@ -74,6 +75,9 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
     assert.equal(guarded.code, 'AI_EDIT_FAILED');
     assert.match(guarded.message, /排版修改必须保留原文/);
     assert.equal((await request('garbage', { references: [] })).data.error.message, '修改方案未通过内容或版式检查，原稿已保留，请重试');
+    const concurrent = await Promise.all(Array.from({ length: 3 }, () => request('slow')));
+    assert.deepEqual(concurrent.map(result => result.status).sort(), [200, 200, 429]);
+    assert.match(concurrent.find(result => result.status === 429).data.error.message, /已有生成任务进行中/);
     const ambiguous = await request('ambiguous', { references: [] });
     assert.equal(ambiguous.status, 200);
     assert.deepEqual(ambiguous.data.operations, []);
