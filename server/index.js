@@ -16,7 +16,9 @@ import { GENERATION_TIMEOUT_MS, TARGET_LENGTHS, WRITING_TONES } from '../src/cre
 import { generationInstructions, inspectDraft, preferDraft, protectedFragments } from './writing-rules.js';
 import { recommendTemplates } from '../src/recommender.js';
 import { DomUtils, parseDocument } from 'htmlparser2';
-import { fetchModels, getAIConfig, getAIStatus, resolveAIConfig, resolveCredentials, resolveRequestAIConfig } from './ai-config.js';
+import { fetchModels, getAIConfig, getAIStatus, normalizeBaseUrl, resolveAIConfig, resolveCredentials, resolveRequestAIConfig } from './ai-config.js';
+import { ADMIN_SESSION_COOKIE, ADMIN_SESSION_TTL_SECONDS, createAdminSession, verifyAdminPassword, verifyAdminSession } from './admin-auth.js';
+import { writePlatformAIConfig } from './env-config.js';
 import { fetchRemoteImage, MAX_IMAGE_BYTES } from './remote-image.js';
 import { cleanupExpiredAssets, findImageFiles, imageDateDirectory, imageLifetime } from './image-storage.js';
 import { clearArticleStyles, layoutSource, LAYOUT_TIMEOUT_MS, validateLayoutDesign } from '../src/layout-design.js';
@@ -28,8 +30,8 @@ import { editInstructions } from './edit-rules.js';
 import { htmlEditInstructions } from './html-edit-rules.js';
 import { normalizeUsage, usageMeta } from './ai-usage.js';
 
-dotenv.config();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+dotenv.config({ path: path.join(root, '.env') });
 const uploadDir = process.env.ASSET_DIR ? path.resolve(process.env.ASSET_DIR) : path.join(root, 'uploads');
 fs.mkdirSync(uploadDir, { recursive: true });
 const app = express();
@@ -40,6 +42,7 @@ const MAX_EDIT_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_EDIT_DOCUMENT_CHARS = 200_000;
 const oneMinute = new Map();
 const activeGenerations = new Map();
+const adminSessions = new Map();
 let totalGenerations = 0;
 const resolvedApiStyles = new Map();
 let activeImageImports = 0;
@@ -250,6 +253,115 @@ const isAllowedOrigin = req => {
   const allowedOrigins = (process.env.ALLOWED_ORIGIN?.split(',') || ['http://localhost:5173', 'http://127.0.0.1:5173']).map(value => value.trim()).filter(Boolean);
   return sameOrigin || allowedOrigins.includes(origin);
 };
+const adminPassword = () => process.env.BAOLONG_ADMIN_PASSWORD || '';
+const readAdminCookie = req => {
+  for (const item of (req.headers.cookie || '').split(';')) {
+    const separator = item.indexOf('=');
+    if (separator < 0 || item.slice(0, separator).trim() !== ADMIN_SESSION_COOKIE) continue;
+    return item.slice(separator + 1).trim();
+  }
+  return '';
+};
+const clearAdminCookie = (res, secure) => res.setHeader('Set-Cookie', `${ADMIN_SESSION_COOKIE}=; Path=/api/admin; HttpOnly; SameSite=Strict; Max-Age=0${secure ? '; Secure' : ''}`);
+const isActiveAdminSession = session => {
+  const expiresAt = adminSessions.get(session);
+  if (!expiresAt || expiresAt <= Math.floor(Date.now() / 1000) || !verifyAdminSession(session, adminPassword())) {
+    adminSessions.delete(session);
+    return false;
+  }
+  return true;
+};
+const requireAdmin = (req, res, next) => {
+  if (!adminPassword()) return res.status(503).json({ error: { code: 'ADMIN_AUTH_NOT_CONFIGURED', message: '服务器尚未设置管理访问密码' } });
+  const session = readAdminCookie(req);
+  if (!isActiveAdminSession(session)) return res.status(401).json({ error: { code: 'ADMIN_AUTH_REQUIRED', message: '请先登录管理页面' } });
+  next();
+};
+const requireAdminOrigin = (req, res) => {
+  if (req.get('origin') && isAllowedOrigin(req)) return false;
+  res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '管理请求来源无效' } });
+  return true;
+};
+const adminSecureCookie = req => req.secure;
+const adminAIStatus = () => {
+  try { return getAIStatus(); }
+  catch (error) {
+    return {
+      aiConfigured: false,
+      baseUrl: '',
+      hasApiKey: Boolean(process.env.AI_API_KEY),
+      model: '',
+      models: [],
+      source: 'environment',
+      configurationError: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '平台 AI 配置无效' },
+    };
+  }
+};
+const adminAIConfig = () => {
+  try { return getAIConfig(); }
+  catch { return { baseUrl: '', apiKey: process.env.AI_API_KEY || '' }; }
+};
+app.get('/api/admin/session', (req, res) => {
+  if (!adminPassword()) return res.status(503).json({ error: { code: 'ADMIN_AUTH_NOT_CONFIGURED', message: '服务器尚未设置管理访问密码' } });
+  const session = readAdminCookie(req);
+  if (!isActiveAdminSession(session)) return res.status(401).json({ error: { code: 'ADMIN_AUTH_REQUIRED', message: '请先登录管理页面' } });
+  res.json({ authenticated: true });
+});
+app.post('/api/admin/login', rateLimit(8, 'RATE_ADMIN_LOGIN_PER_MIN'), (req, res) => {
+  if (requireAdminOrigin(req, res)) return;
+  const password = adminPassword();
+  if (!password) return res.status(503).json({ error: { code: 'ADMIN_AUTH_NOT_CONFIGURED', message: '服务器尚未设置管理访问密码' } });
+  if (!verifyAdminPassword(req.body?.password, password)) return res.status(401).json({ error: { code: 'ADMIN_AUTH_FAILED', message: '访问密码不正确' } });
+  const secure = adminSecureCookie(req);
+  const session = createAdminSession(password);
+  const now = Math.floor(Date.now() / 1000);
+  for (const [token, expiresAt] of adminSessions) if (expiresAt <= now) adminSessions.delete(token);
+  adminSessions.set(session, Number(session.split('.')[0]));
+  res.setHeader('Set-Cookie', `${ADMIN_SESSION_COOKIE}=${session}; Path=/api/admin; HttpOnly; SameSite=Strict; Max-Age=${ADMIN_SESSION_TTL_SECONDS}${secure ? '; Secure' : ''}`);
+  res.json({ authenticated: true });
+});
+app.post('/api/admin/logout', (req, res) => {
+  if (requireAdminOrigin(req, res)) return;
+  adminSessions.delete(readAdminCookie(req));
+  clearAdminCookie(res, adminSecureCookie(req));
+  res.json({ authenticated: false });
+});
+app.get('/api/admin/config', requireAdmin, (req, res) => res.json(adminAIStatus()));
+app.post('/api/admin/models', rateLimit(20, 'RATE_CONFIG_PER_MIN'), requireAdmin, async (req, res) => {
+  if (requireAdminOrigin(req, res)) return;
+  try {
+    const baseUrl = normalizeBaseUrl(req.body?.baseUrl);
+    const suppliedKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+    const saved = adminAIConfig();
+    const apiKey = suppliedKey || (baseUrl === saved.baseUrl ? saved.apiKey : '');
+    const credentials = resolveCredentials({ baseUrl, apiKey });
+    const models = await fetchModels(credentials);
+    res.json({ baseUrl, models });
+  } catch (error) { configError(res, error); }
+});
+app.post('/api/admin/config', rateLimit(10, 'RATE_CONFIG_PER_MIN'), requireAdmin, async (req, res) => {
+  if (requireAdminOrigin(req, res)) return;
+  try {
+    const baseUrl = normalizeBaseUrl(req.body?.baseUrl);
+    const suppliedKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+    const saved = adminAIConfig();
+    const apiKey = suppliedKey || (baseUrl === saved.baseUrl ? saved.apiKey : '');
+    const credentials = resolveCredentials({ baseUrl, apiKey });
+    const model = typeof req.body?.model === 'string' ? req.body.model.trim() : '';
+    if (!model || model.length > 256) return res.status(400).json({ error: { code: 'INVALID_MODEL', message: '请选择有效模型' } });
+    const models = await fetchModels(credentials);
+    if (!models.includes(model)) return res.status(400).json({ error: { code: 'INVALID_MODEL', message: '模型不在服务返回的可用列表中，请重新获取模型' } });
+    await writePlatformAIConfig(path.join(root, '.env'), { AI_BASE_URL: baseUrl, AI_API_KEY: credentials.apiKey, AI_MODEL: model });
+    process.env.AI_BASE_URL = baseUrl;
+    process.env.AI_API_KEY = credentials.apiKey;
+    process.env.AI_MODEL = model;
+    res.json(adminAIStatus());
+  } catch (error) {
+    if (error.code) return configError(res, error);
+    console.error('Unable to persist platform AI configuration');
+    res.status(500).json({ error: { code: 'AI_CONFIG_WRITE_FAILED', message: '无法写入 .env，请检查服务目录的写入权限' } });
+  }
+});
 app.get('/api/config/status', async (req, res) => {
   try {
     const config = getAIConfig();

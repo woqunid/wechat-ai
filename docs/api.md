@@ -25,6 +25,12 @@ AI 生成、设计和编辑成功响应的 `meta` 均增加 `usage:{inputTokens,
 | GET | `/api/health` | 服务状态与版本 |
 | GET | `/api/config/status` | 脱敏返回平台 AI 的服务 URL、模型和密钥存在状态；未设置 `AI_MODEL` 时自动发现首个模型 |
 | POST | `/api/config/models` | `{baseUrl,apiKey}`，临时验证个人服务凭证并发现排序、去重后的模型列表，不保存配置 |
+| GET | `/api/admin/session` | 检查管理页会话 |
+| POST | `/api/admin/login` | `{password}`，以 `BAOLONG_ADMIN_PASSWORD` 验证并建立 HttpOnly 会话 |
+| POST | `/api/admin/logout` | 清除管理页会话 |
+| GET | `/api/admin/config` | 管理会话下读取脱敏的平台 AI 配置状态 |
+| POST | `/api/admin/models` | 管理会话下复用模型发现功能；已保存密钥可在服务地址不变时留空复用 |
+| POST | `/api/admin/config` | 管理会话下验证并保存 `{baseUrl,apiKey,model}` 到项目根目录 `.env`，当前进程立即生效 |
 | GET | `/api/templates` | v2.1.0，40 套模板元数据、视觉配置与内容适配信息（公众号真实回归完成前状态为 `draft`） |
 | POST | `/api/materials/parse` | `multipart/form-data`，字段 `files`，最多 5 份 DOCX/PDF/TXT/MD |
 | POST | `/api/assets` | `multipart/form-data`，字段 `file`，图片最多 10 MB |
@@ -47,7 +53,7 @@ AI 生成、设计和编辑成功响应的 `meta` 均增加 `usage:{inputTokens,
 
 草稿内容块可选 `style` 保存 `fontSize`（12–40）、`align`（left/center/right/justify）、`lineHeight`（1.2–3）、`paragraphSpacing`（0–64px）、`indent`（0–4em）、`imageWidth`（20–100%）。文字 run 可选 `bold`、`underline`、`color`（原有语义颜色或六位十六进制颜色）及 `highlight`（六位十六进制颜色）。标题块可选 `runs` 保存局部格式，同时维护纯文字 `text`；旧草稿不需要迁移。手动样式在预览与复制中优先于模板默认值，AI 生成仍只提供语义内容。
 
-个人 AI 的 API 密钥保存在用户当前浏览器本地存储中，调用模型时随单次请求发送至应用服务；服务端不保存个人密钥。平台 AI 由部署方通过 `.env` 管理，用户不能在页面修改。模型获取失败不会覆盖已保存的个人配置；所选 AI 未配置时相关接口返回 `AI_NOT_CONFIGURED`。
+个人 AI 的 API 密钥保存在用户当前浏览器本地存储中，调用模型时随单次请求发送至应用服务；服务端不保存个人密钥。平台 AI 由 `/baolongadmin` 管理页维护，访问密码通过部署环境变量 `BAOLONG_ADMIN_PASSWORD` 设置。管理会话为 8 小时有效的 HttpOnly、SameSite Strict Cookie；AI 密钥不会通过状态接口回传。配置写入 `.env` 并同步到当前进程，重启后由 `.env` 恢复。模型获取失败不会覆盖已保存的个人配置；所选 AI 未配置时相关接口返回 `AI_NOT_CONFIGURED`。
 
 前后端使用同一公网域名时，反向代理应传递正确的 `X-Forwarded-Host` 和 `X-Forwarded-Proto`，服务端据此识别 HTTPS 同源请求。前后端域名不同时，将前端完整来源（例如 `https://app.example.com`，不带末尾路径）加入 `ALLOWED_ORIGIN`，多个来源用逗号分隔。若出现来源校验错误，模型列表请求尚未转发到模型服务。
 

@@ -56,6 +56,7 @@ import {
   pruneArticleHistory,
 } from "./storage";
 import { ArticleHistory } from "./ArticleHistory";
+import { AdminPage } from "./AdminPage";
 import "./styles.css";
 
 const API = "";
@@ -101,7 +102,7 @@ function parseDocumentBlocks(source, sourceBlocks) {
   const check = checkRawConsistency(source, title, blocks);
   return { title, summary: "", blocks, ...check, ignoredImages: 0 };
 }
-function App() {
+function WorkspaceApp() {
   const [page, setPage] = useState("create");
   const [aiPreferences, setAiPreferences] = useState(loadAIPreferences);
   const [platformStatus, setPlatformStatus] = useState(null);
@@ -1836,6 +1837,10 @@ function Edit({
       )}
     </div>
   );
+}
+
+function App() {
+  return window.location.pathname.replace(/\/+$/, '') === '/baolongadmin' ? <AdminPage /> : <WorkspaceApp />;
 }
 
 createRoot(document.getElementById("root")).render(<App />);

@@ -32,7 +32,7 @@ Copy-Item .env.example .env
 npm run dev
 ```
 
-前端运行于 `http://localhost:5173`，API 运行于 `http://localhost:8787`。平台 AI 由部署方在 `.env` 设置 `AI_BASE_URL`、`AI_API_KEY` 和 `AI_MODEL`；平台配置对用户只读。个人 AI 设置保存在用户当前浏览器的本地存储中，发起模型请求时会临时发送到应用服务，不写入服务端配置文件。未配置可用 AI 时，创作、AI 修改、重新生成和定制排版会提示用户完成配置。复制会保留 HTML 排版，可粘贴到 135 编辑器或公众号后台；HTTPS 或 localhost 优先使用剪贴板 API，普通 HTTP 或接口不可用时尝试浏览器兼容复制。
+前端运行于 `http://localhost:5173`，API 运行于 `http://localhost:8787`。平台 AI 管理页为 `/baolongadmin`，访问密码由部署环境中的 `BAOLONG_ADMIN_PASSWORD` 提供；页面保存的模型地址、密钥和模型写入项目根目录 `.env` 并立即生效。个人 AI 设置保存在用户当前浏览器的本地存储中，发起模型请求时会临时发送到应用服务，不写入服务端配置文件。未配置可用 AI 时，创作、AI 修改、重新生成和定制排版会提示用户完成配置。复制会保留 HTML 排版，可粘贴到 135 编辑器或公众号后台；HTTPS 或 localhost 优先使用剪贴板 API，普通 HTTP 或接口不可用时尝试浏览器兼容复制。
 
 局域网访问使用 Vite 输出的 Network 地址。开发代理保留页面 Host，并传递原始地址与协议；通过前端的 `/api` 访问时，不需要将每次变化的局域网 IP 加入 `ALLOWED_ORIGIN`。修改 `vite.config.js` 后需重启开发服务。前后端分属不同来源时，仍需将前端完整地址加入 `ALLOWED_ORIGIN` 并重启后端。
 
@@ -45,7 +45,7 @@ npm run build
 npm start
 ```
 
-生产启动前应先设置 `.env` 并执行构建；Express 同时提供 `dist/`、图片资源和 API。`ASSET_DIR` 用于图片持久化，新增图片统一按北京时间的上传日期存入 `YYYY-MM-DD/` 子目录，根目录旧图片和旧链接继续可用。图片默认保留 30 天，`ASSET_TTL_DAYS` 可延长保留期，低于 30 天的值按 30 天处理。服务启动及每隔 24 小时检查一次，仅删除按文件保存时间已满保留期的图片，并移除空的日期目录，不按目录日期整批删除。`PUBLIC_BASE_URL` 配置可被公众号访问的 HTTPS 图片主机；留空时使用当前站点地址，复制结果会将非 HTTPS 图片替换为补图占位。
+生产启动前应设置部署环境变量 `BAOLONG_ADMIN_PASSWORD`，并执行构建；首次通过 `/baolongadmin` 保存平台 AI 配置时会自动创建或更新根目录 `.env`，服务需要对该文件所在目录有写入权限。若 AI 配置已存在，也可随部署提供 `.env`。Express 同时提供 `dist/`、图片资源和 API。`ASSET_DIR` 用于图片持久化，新增图片统一按北京时间的上传日期存入 `YYYY-MM-DD/` 子目录，根目录旧图片和旧链接继续可用。图片默认保留 30 天，`ASSET_TTL_DAYS` 可延长保留期，低于 30 天的值按 30 天处理。服务启动及每隔 24 小时检查一次，仅删除按文件保存时间已满保留期的图片，并移除空的日期目录，不按目录日期整批删除。`PUBLIC_BASE_URL` 配置可被公众号访问的 HTTPS 图片主机；留空时使用当前站点地址，复制结果会将非 HTTPS 图片替换为补图占位。
 
 接口列表、错误码见 [docs/api.md](docs/api.md)。真实公众号后台粘贴回归和限制见 [docs/known-limitations.md](docs/known-limitations.md)。
 
