@@ -1,6 +1,8 @@
 import { lookup } from 'node:dns/promises';
+import { request as httpRequest } from 'node:http';
 import { request } from 'node:https';
 import { BlockList, isIP } from 'node:net';
+import { connect } from 'node:tls';
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const blocked = new BlockList();
@@ -29,6 +31,39 @@ function imageUrl(value) {
   return url;
 }
 
+function imageProxy(hostname) {
+  const value = String(process.env.HTTPS_PROXY || process.env.https_proxy || '').trim();
+  if (!value) return null;
+  const bypass = String(process.env.NO_PROXY || process.env.no_proxy || '').split(',').map(entry => entry.trim().toLowerCase().replace(/^\*?\./, '')).filter(Boolean);
+  if (bypass.some(entry => entry === '*' || hostname === entry || hostname.endsWith('.' + entry))) return null;
+  let proxy = null;
+  try { proxy = new URL(value); } catch {}
+  if (proxy?.protocol !== 'http:') throw fail('IMAGE_PROXY_INVALID', 'HTTPS_PROXY 仅支持 http:// 代理地址', 500);
+  return proxy;
+}
+
+function proxyTunnel(proxy, { address, family }, signal) {
+  const proxyFailed = () => fail('IMAGE_PROXY_FAILED', '无法通过 HTTPS_PROXY 代理连接图片服务器，请检查代理是否可用', 502);
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({
+      host: proxy.hostname.replace(/^\[|\]$/g, ''),
+      port: proxy.port || 80,
+      method: 'CONNECT',
+      // 代理同样连接已校验的 IP，避免由代理重新解析域名。
+      path: family === 6 ? `[${address}]:443` : `${address}:443`,
+      agent: false,
+      signal
+    });
+    req.on('connect', (res, socket) => {
+      if (res.statusCode === 200) return resolve(socket);
+      socket.destroy();
+      reject(proxyFailed());
+    });
+    req.on('error', () => reject(proxyFailed()));
+    req.end();
+  });
+}
+
 async function download(url, signal) {
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
   const family = isIP(hostname);
@@ -41,13 +76,21 @@ async function download(url, signal) {
   signal.throwIfAborted();
   if (!addresses.length || !addresses.every(publicAddress)) throw fail('IMAGE_URL_NOT_PUBLIC', '图片链接必须指向公网地址');
   const chosen = addresses.find(address => address.family === 4) || addresses[0];
+  const proxy = imageProxy(hostname);
+  const tunnel = proxy && await proxyTunnel(proxy, chosen, signal);
   return new Promise((resolve, reject) => {
     const req = request(url, {
-      agent: false,
-      family: chosen.family,
-      autoSelectFamily: false,
-      // 固定到已校验的解析结果，避免连接时再次解析域名。
-      lookup: (_hostname, options, callback) => options.all ? callback(null, [chosen]) : callback(null, chosen.address, chosen.family),
+      ...(tunnel ? {
+        createConnection: () => connect({ socket: tunnel, host: hostname, servername: family ? undefined : hostname }),
+        // 不使用 agent 时需显式指定，否则 Host 头会带上 :80。
+        defaultPort: 443
+      } : {
+        agent: false,
+        family: chosen.family,
+        autoSelectFamily: false,
+        // 固定到已校验的解析结果，避免连接时再次解析域名。
+        lookup: (_hostname, options, callback) => options.all ? callback(null, [chosen]) : callback(null, chosen.address, chosen.family)
+      }),
       signal,
       headers: { Accept: 'image/jpeg,image/png,image/webp', 'User-Agent': 'Weave-Image-Import/1.0' }
     }, res => {
@@ -82,7 +125,7 @@ async function download(url, signal) {
     });
     req.on('error', reject);
     req.end();
-  });
+  }).finally(() => tunnel?.destroy());
 }
 
 export async function fetchRemoteImage(value, externalSignal) {
@@ -101,6 +144,6 @@ export async function fetchRemoteImage(value, externalSignal) {
     if (externalSignal?.aborted) throw error;
     if (signal.aborted) throw fail('IMAGE_IMPORT_TIMEOUT', '图片读取超时，请检查链接后重试', 504);
     if (error.status) throw error;
-    throw fail('IMAGE_IMPORT_FAILED', '图片无法读取，请检查链接或稍后重试', 502);
+    throw fail('IMAGE_IMPORT_FAILED', '图片服务器连接失败，请检查链接、网络或 HTTPS_PROXY 代理设置后重试', 502);
   }
 }

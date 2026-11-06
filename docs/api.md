@@ -59,7 +59,7 @@ Vite 开发代理显式设置 `changeOrigin: false` 与 `xfwd: true`，保留浏
 
 导入响应的 `asset` 在原有字段上增加 `cacheUrl`（本站缓存路径）和 `sourceUrl`（原始链接）；本地上传也返回 `cacheUrl`。`url` 优先使用配置的公网 HTTPS 缓存地址，否则链接图片使用原始 HTTPS 地址供复制。前端从缓存读取 Blob 保存草稿，重载按 `cacheUrl` 检查缓存，避免跨域 HEAD 误判；图片仍保持 `pasteStatus: needs-manual`，公众号端实际显示需检查。重新上传缓存时保留原图链接；删除仅移除本应用缓存，不请求删除图床资源。
 
-导入错误包括 `INVALID_IMAGE_URL`、`IMAGE_URL_NOT_PUBLIC`、`IMAGE_TOO_LARGE`、`DIMENSION_EXCEEDED`、`INVALID_IMAGE`、`IMAGE_IMPORT_FAILED`、`IMAGE_IMPORT_TIMEOUT`。弹窗读取失败保留链接输入；正文粘贴先生成普通链接段落，验证成功后只转换仍保持原链接文字的段落。失败保留链接，正文已修改或图片数量达上限时只登记为素材，不覆盖内容。最多 10 张图片与 120 个内容块的限制与本地图片共用；AI 继续只引用登记 ID，原文排版不会调用模型。
+导入错误包括 `INVALID_IMAGE_URL`、`IMAGE_URL_NOT_PUBLIC`、`IMAGE_TOO_LARGE`、`DIMENSION_EXCEEDED`、`INVALID_IMAGE`、`IMAGE_IMPORT_FAILED`、`IMAGE_IMPORT_TIMEOUT`、`IMAGE_PROXY_FAILED`、`IMAGE_PROXY_INVALID`。服务端默认直连图片主机；设置 `HTTPS_PROXY`（仅 http:// 代理）后通过代理 CONNECT 到已校验的公网 IP，`NO_PROXY` 中的域名仍直连。弹窗读取失败保留链接输入；正文粘贴先生成普通链接段落，验证成功后只转换仍保持原链接文字的段落。失败保留链接，正文已修改或图片数量达上限时只登记为素材，不覆盖内容。最多 10 张图片与 120 个内容块的限制与本地图片共用；AI 继续只引用登记 ID，原文排版不会调用模型。
 
 `GET /api/config/status` 会返回 Base URL、模型 ID 和 `hasApiKey`，但绝不返回密钥内容。
 
