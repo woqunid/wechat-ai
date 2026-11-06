@@ -24,6 +24,7 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
       const input = JSON.parse(body.input[1].content[0].text);
       if (!input.article.html || !body.input[0].content[0].text.includes('article.html')) throw new Error('Missing HTML model context');
       if ('scope' in input) throw new Error('Manual scope must not be sent');
+      if ('layoutDesign' in input.article || input.article.blocks.some(block => block.runs || block.text.length > 40)) throw new Error('HTML article must send block outline only');
       if (input.prompt === 'ambiguous') return Response.json({output_text:JSON.stringify({message:'需要调整哪一段？',operations:[]})});
       if (input.prompt === 'garbage') return Response.json({output_text:'not json'});
       if (input.prompt === 'slow') await new Promise(resolve => setTimeout(resolve, 300));
