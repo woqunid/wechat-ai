@@ -25,6 +25,7 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
       if (!input.article.html || !body.input[0].content[0].text.includes('article.html')) throw new Error('Missing HTML model context');
       if ('scope' in input) throw new Error('Manual scope must not be sent');
       if (input.prompt === 'ambiguous') return Response.json({output_text:JSON.stringify({message:'需要调整哪一段？',operations:[]})});
+      if (input.prompt === 'garbage') return Response.json({output_text:'not json'});
       const operation = input.prompt === 'selection'
         ? {type:'replaceHtml', referenceId:input.references[0].id, html:'<strong style="color:#26332F;">选中文字</strong>'}
         : input.prompt === 'locate'
@@ -66,8 +67,13 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
     const followup = await request('followup', { article: current, references: [], messages });
     assert.equal(followup.status, 200);
     assert.match(buildAIEdit(current, followup.data.operations).html, /<strong/);
-    assert.equal((await request('invalid-target', { references: [] })).data.error.code, 'AI_EDIT_FAILED');
-    assert.equal((await request('content-guard')).data.error.code, 'AI_EDIT_FAILED');
+    const invalidTarget = (await request('invalid-target', { references: [] })).data.error;
+    assert.equal(invalidTarget.code, 'AI_EDIT_FAILED');
+    assert.match(invalidTarget.message, /修改目标不存在/);
+    const guarded = (await request('content-guard')).data.error;
+    assert.equal(guarded.code, 'AI_EDIT_FAILED');
+    assert.match(guarded.message, /排版修改必须保留原文/);
+    assert.equal((await request('garbage', { references: [] })).data.error.message, '修改方案未通过内容或版式检查，原稿已保留，请重试');
     const ambiguous = await request('ambiguous', { references: [] });
     assert.equal(ambiguous.status, 200);
     assert.deepEqual(ambiguous.data.operations, []);

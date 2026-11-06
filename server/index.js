@@ -656,10 +656,13 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
   const timeout = signal.aborted || ['TimeoutError', 'AbortError'].includes(lastError?.name);
   const upstream = Boolean(lastError?.status);
   const code = timeout ? 'AI_TIMEOUT' : lastError?.upstreamCode === 'model_price_error' ? 'AI_UPSTREAM_CONFIG_ERROR' : upstream ? 'AI_UPSTREAM_ERROR' : 'AI_EDIT_FAILED';
+  // Validators throw user-facing Chinese reasons; JSON, schema and network errors keep the generic message.
+  const reason = code === 'AI_EDIT_FAILED' && lastError?.name !== 'ZodError' && /\p{Script=Han}/u.test(lastError?.message || '') ? lastError.message.slice(0, 300) : '';
   const message = timeout ? '修改方案生成超时，原稿已保留，请重试'
     : code === 'AI_UPSTREAM_CONFIG_ERROR' ? '当前模型的上游计费配置错误，请联系 AI 服务商修复或切换模型'
       : upstream ? `AI 服务请求失败（HTTP ${lastError.status}），请检查模型和服务配置`
-        : '修改方案未通过内容或版式检查，原稿已保留，请重试';
+        : reason ? `修改方案未通过检查（${reason}），原稿已保留，可调整要求后重试`
+          : '修改方案未通过内容或版式检查，原稿已保留，请重试';
   res.locals.modelFailure = { kind: timeout ? 'timeout' : upstream ? 'upstream' : 'validation', ...(lastError?.status ? { status: lastError.status } : {}), ...(lastError?.upstreamCode ? { upstreamCode: lastError.upstreamCode } : {}) };
   return res.status(timeout ? 504 : 502).json({ error: { code, message } });
 });
