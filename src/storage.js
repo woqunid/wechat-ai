@@ -49,7 +49,7 @@ const transact = async (storeName, action, value) => {
     return await new Promise((resolve, reject) => {
       const transaction = db.transaction(storeName, action === 'get' ? 'readonly' : 'readwrite');
       const store = transaction.objectStore(storeName);
-      const request = action === 'get' ? store.get('current') : action === 'clear' ? store.clear() : action === 'delete' ? store.delete(value.id) : store.put({ id: 'current', ...value });
+      const request = action === 'get' ? store.get('current') : action === 'delete' ? store.delete(value.id) : store.put({ id: 'current', ...value });
       let resultValue;
       request.onsuccess = () => { resultValue = request.result; };
       request.onerror = () => reject(request.error);
@@ -135,15 +135,6 @@ export async function deleteDraft(id) {
 export const loadWorkspaceSession = () => transact('workspace', 'get');
 export const saveInputs = input => transact('inputs', 'put', { input });
 export const loadInputs = () => transact('inputs', 'get');
-export const saveSnapshot = snapshot => transact('snapshots', 'put', { snapshot });
-export const loadSnapshot = () => transact('snapshots', 'get');
-export const clearSnapshot = () => transact('snapshots', 'clear');
-export const clearDrafts = async () => {
-  await transact('drafts', 'clear');
-  await transact('snapshots', 'clear');
-  await transact('aiEditAttachments', 'clear');
-};
-export const clearInputs = () => transact('inputs', 'clear');
 
 export const HISTORY_LIFETIME = 30 * 86_400_000;
 
@@ -256,8 +247,4 @@ export async function loadAssets() {
 
 export async function deleteAsset(id) {
   await transact('assets', 'delete', { id });
-}
-
-export async function clearAssets() {
-  await transact('assets', 'clear');
 }

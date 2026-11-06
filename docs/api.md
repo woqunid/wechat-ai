@@ -2,6 +2,8 @@
 
 所有接口返回 JSON；错误结构为 `{ "error": { "code": "...", "message": "..." } }`。响应包含 `X-Request-Id`。JSON 请求体上限 2 MB。
 
+AI 生成、设计和编辑统一将上游 HTTP 失败归为 `AI_UPSTREAM_ERROR`，上游 `model_price_error` 归为 `AI_UPSTREAM_CONFIG_ERROR`，超时归为 `AI_TIMEOUT`。上游 HTTP 失败不进行输出纠正重试；自动接口探测仅在 Responses 接口不受支持时回退到 Chat Completions，并保留上游错误码。
+
 AI 生成、设计和编辑成功响应的 `meta` 均增加 `usage:{inputTokens,outputTokens,cachedInputTokens}` 与 `cache:{hit,inputTokenHitRate}`，相同字段也写入现有请求日志。统计来自上游 Responses 的 `input_tokens_details.cached_tokens`、Chat Completions 的 `prompt_tokens_details.cached_tokens` 或 `prompt_cache_hit_tokens`，不按本地输入猜测命中。`inputTokenHitRate` 为缓存输入 token 数/全部输入 token 数，非请求命中率；输出纠正重试累计各轮用量。任一轮缺失或无效的字段累计值为 `null`，相关命中状态或比例也为 `null`；明确返回0则表示零命中，输入总数为0时比例为 `null`。接口探测失败不计为输出纠正调用。
 
 编辑请求保持非流式输出，按固定系统规则、模板、全文、图片尺寸、历史对话、本轮要求、引用、重试错误的顺序组织输入，以保留更长的重复前缀。实际上下文缓存由上游服务提供，不缓存编辑方案或跳过校验；没有增加前端界面或服务商专用请求参数。缓存原理参见 [OpenAI 官方文档](https://developers.openai.com/api/docs/guides/prompt-caching)。

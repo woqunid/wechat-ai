@@ -559,6 +559,17 @@ const isUnsupportedVisionRequest = error => {
   const detail = `${error?.message || ''} ${error?.upstreamMessage || ''}`;
   return /(?:image|vision|multimodal|input_image|image_url).{0,100}(?:not supported|unsupported|not support|unavailable|disabled)|(?:not supported|unsupported|not support|unavailable|disabled).{0,100}(?:image|vision|multimodal|input_image|image_url)/i.test(detail);
 };
+const respondModelFailure = (res, error, signal, { code, message, timeoutMessage = message }) => {
+  const timeout = signal.aborted || ['TimeoutError', 'AbortError'].includes(error?.name);
+  const upstream = Boolean(error?.status);
+  code = timeout ? 'AI_TIMEOUT' : error?.upstreamCode === 'model_price_error' ? 'AI_UPSTREAM_CONFIG_ERROR' : upstream ? 'AI_UPSTREAM_ERROR' : code;
+  if (timeout) message = timeoutMessage;
+  else if (code === 'AI_UPSTREAM_CONFIG_ERROR') message = '当前模型的上游计费配置错误，请联系 AI 服务商修复或切换模型';
+  else if (upstream) message = `AI 服务请求失败（HTTP ${error.status}），请检查模型和服务配置`;
+  else if (code === 'AI_EDIT_FAILED' && error?.name !== 'ZodError' && /\p{Script=Han}/u.test(error?.message || '')) message = `修改方案未通过检查（${error.message.slice(0, 300)}），原稿已保留，可调整要求后重试`;
+  res.locals.modelFailure = { kind: timeout ? 'timeout' : upstream ? 'upstream' : 'validation', ...(error?.status ? { status: error.status } : {}), ...(error?.upstreamCode ? { upstreamCode: error.upstreamCode } : {}) };
+  return res.status(timeout ? 504 : 502).json({ error: { code, message } });
+};
 async function requestModel({ config, system, source, topic, mode, tone, targetLength, assetIds, template, signal, previousError, revision, inputData, imageInputs = [] }) {
   const base = config.baseUrl;
   const style = process.env.AI_API_STYLE || 'auto';
@@ -586,26 +597,18 @@ async function requestModel({ config, system, source, topic, mode, tone, targetL
     try { upstreamCode = JSON.parse(upstreamMessage).error?.code; } catch { /* non-JSON upstream errors have no code */ }
     return Object.assign(new Error(`upstream ${response.status}`), { status: response.status, upstreamCode, upstreamMessage });
   };
-  if (style === 'responses' || style === 'chat') {
-    const kind = style;
-    const response = await request(kind, kind === 'responses' ? responsesBody : chatBody);
+  let kind = style === 'chat' || (style === 'auto' && resolvedApiStyle === 'chat') ? 'chat' : 'responses';
+  let response = await request(kind, kind === 'chat' ? chatBody : responsesBody);
+  if (!response.ok) {
+    const error = await upstreamFailure(response);
+    const unsupported = style !== 'responses' && kind === 'responses' && [400, 404, 405, 422].includes(error.status) && (/unsupported|not found|unknown|not support/i.test(error.upstreamMessage) || error.status === 404 || error.status === 405);
+    if (!unsupported) throw error;
+    kind = 'chat';
+    response = await request(kind, chatBody);
     if (!response.ok) throw await upstreamFailure(response);
-    return modelResult(await response.json());
   }
-  if (style === 'auto' && resolvedApiStyle === 'chat') {
-    const response = await request('chat', chatBody);
-    if (!response.ok) throw await upstreamFailure(response);
-    return modelResult(await response.json());
-  }
-  const response = await request('responses', responsesBody);
-  if (response.ok) { resolvedApiStyles.set(cacheKey, 'responses'); return modelResult(await response.json()); }
-  const bodyText = await response.text();
-  const unsupported = [400, 404, 405, 422].includes(response.status) && (/unsupported|not found|unknown|not support/i.test(bodyText) || response.status === 404 || response.status === 405);
-  if (!unsupported) throw Object.assign(new Error(`upstream ${response.status}`), { status: response.status });
-  const chatResponse = await request('chat', chatBody);
-  if (!chatResponse.ok) throw await upstreamFailure(chatResponse);
-  resolvedApiStyles.set(cacheKey, 'chat');
-  return modelResult(await chatResponse.json());
+  if (style === 'auto') resolvedApiStyles.set(cacheKey, kind);
+  return modelResult(await response.json());
 }
 app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concurrentGenerationLimit, async (req, res) => {
   const { mode = 'create', topic = '', text = '', materials = [], tone = 'plain', targetLength = 1000, assetIds = [], templateId } = req.body || {};
@@ -629,43 +632,35 @@ app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concu
   try { aiConfig = await resolveRequestAIConfig(req.body); }
   catch (error) { return res.status(error.status || 502).json({ error: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '无法连接 AI 服务' } }); }
   if (rejectMissingAIConfig(res, aiConfig)) return;
-  const useAI = true;
   let draft = null;
-  let model = aiConfig.model;
   let retried = false;
   const usages = res.locals.modelUsages = [];
   let lastError;
   let report;
   const protectedParts = mode === 'polish' ? protectedFragments(source) : [];
-  if (useAI) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      if (signal.aborted) break;
-      retried = attempt > 0;
-      usages.push(normalizeUsage());
-      try {
-        const output = await requestModel({ config: aiConfig, system: generationInstructions({ mode, tone, targetLength }), source, topic, mode, tone, targetLength, assetIds, template: templates.find(template => template.id === templateId), signal, previousError: lastError?.message, revision: draft ? { draft, issues: report.issues, actualBodyChars: report.length.actual } : undefined });
-        usages[attempt] = output.usage;
-        const next = normalizeDraft(output.text, assetIds);
-        const nextReport = inspectDraft(next, { targetLength, protectedParts });
-        if (preferDraft(nextReport, report)) { draft = next; report = nextReport; }
-        model = aiConfig.model;
-        if (!report.issues.length) break;
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        lastError = error;
-      }
-    }
-    if (controller.signal.aborted) return;
-    if (!draft) {
-      const timeout = signal.aborted || lastError?.name === 'TimeoutError' || lastError?.name === 'AbortError';
-      const upstream = lastError?.status && lastError.status >= 500;
-      return res.status(timeout ? 504 : 502).json({ error: { code: timeout ? 'AI_TIMEOUT' : upstream ? 'AI_UPSTREAM_ERROR' : 'AI_INVALID_OUTPUT', message: '生成暂时未完成，请重试' } });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (signal.aborted) break;
+    retried = attempt > 0;
+    usages.push(normalizeUsage());
+    try {
+      const output = await requestModel({ config: aiConfig, system: generationInstructions({ mode, tone, targetLength }), source, topic, mode, tone, targetLength, assetIds, template: templates.find(template => template.id === templateId), signal, previousError: lastError?.message, revision: draft ? { draft, issues: report.issues, actualBodyChars: report.length.actual } : undefined });
+      usages[attempt] = output.usage;
+      const next = normalizeDraft(output.text, assetIds);
+      const nextReport = inspectDraft(next, { targetLength, protectedParts });
+      if (preferDraft(nextReport, report)) { draft = next; report = nextReport; }
+      if (!report.issues.length) break;
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      lastError = error;
+      if (error.status) break;
     }
   }
+  if (controller.signal.aborted) return;
+  if (!draft) return respondModelFailure(res, lastError, signal, { code: 'AI_INVALID_OUTPUT', message: '生成暂时未完成，请重试' });
   const candidate = {
     schemaVersion: 1, id: uid('article'), mode, title: String(draft.title || title).slice(0, 64),
     summary: draft.summary, blocks: draft.blocks, templateId: templateId || 'T01',
-    settings: { tone, targetLength, aiGenerated: useAI },
+    settings: { tone, targetLength, aiGenerated: true },
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
   };
   const parsed = ArticleSchema.safeParse(candidate);
@@ -675,7 +670,7 @@ app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concu
     parsed.data.blocks.push({ id: uid('b'), type: 'imageCard', assetId, caption: '' });
   }
   if (!templateId) parsed.data.templateId = recommendTemplates(parsed.data)[0]?.id || 'T01';
-  res.json({ article: parsed.data, meta: { promptVersion: 'semantic-3', schemaVersion: 1, model, latencyMs: Date.now() - startedAt, retried, ...usageMeta(usages), ...(report ? { length: report.length, protectedMissingCount: report.missing.length } : {}) } });
+  res.json({ article: parsed.data, meta: { promptVersion: 'semantic-3', schemaVersion: 1, model: aiConfig.model, latencyMs: Date.now() - startedAt, retried, ...usageMeta(usages), ...(report ? { length: report.length, protectedMissingCount: report.missing.length } : {}) } });
 });
 
 app.post('/api/articles/design', rateLimit(10, 'RATE_DESIGN_PER_MIN'), concurrentGenerationLimit, async (req, res) => {
@@ -715,8 +710,7 @@ app.post('/api/articles/design', rateLimit(10, 'RATE_DESIGN_PER_MIN'), concurren
     }
   }
   if (controller.signal.aborted) return;
-  const timeout = signal.aborted || ['TimeoutError', 'AbortError'].includes(lastError?.name);
-  return res.status(timeout ? 504 : 502).json({ error: { code: timeout ? 'AI_TIMEOUT' : 'AI_DESIGN_FAILED', message: timeout ? '设计超时，当前排版已保留，请重试' : '新版式未通过完整性或适配检查，当前排版已保留，请重试' } });
+  return respondModelFailure(res, lastError, signal, { code: 'AI_DESIGN_FAILED', message: '新版式未通过完整性或适配检查，当前排版已保留，请重试', timeoutMessage: '设计超时，当前排版已保留，请重试' });
 });
 
 app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGenerationLimit, async (req, res) => {
@@ -794,18 +788,7 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
   if (controller.signal.aborted) return;
   if (fallback) return respond(fallback, true);
   if (imageInputs.length && isUnsupportedVisionRequest(lastError)) return res.status(422).json({ error: { code: 'VISION_UNSUPPORTED', message: '当前模型不支持多模态识图' } });
-  const timeout = signal.aborted || ['TimeoutError', 'AbortError'].includes(lastError?.name);
-  const upstream = Boolean(lastError?.status);
-  const code = timeout ? 'AI_TIMEOUT' : lastError?.upstreamCode === 'model_price_error' ? 'AI_UPSTREAM_CONFIG_ERROR' : upstream ? 'AI_UPSTREAM_ERROR' : 'AI_EDIT_FAILED';
-  // Validators throw user-facing Chinese reasons; JSON, schema and network errors keep the generic message.
-  const reason = code === 'AI_EDIT_FAILED' && lastError?.name !== 'ZodError' && /\p{Script=Han}/u.test(lastError?.message || '') ? lastError.message.slice(0, 300) : '';
-  const message = timeout ? '修改方案生成超时，原稿已保留，请重试'
-    : code === 'AI_UPSTREAM_CONFIG_ERROR' ? '当前模型的上游计费配置错误，请联系 AI 服务商修复或切换模型'
-      : upstream ? `AI 服务请求失败（HTTP ${lastError.status}），请检查模型和服务配置`
-        : reason ? `修改方案未通过检查（${reason}），原稿已保留，可调整要求后重试`
-          : '修改方案未通过内容或版式检查，原稿已保留，请重试';
-  res.locals.modelFailure = { kind: timeout ? 'timeout' : upstream ? 'upstream' : 'validation', ...(lastError?.status ? { status: lastError.status } : {}), ...(lastError?.upstreamCode ? { upstreamCode: lastError.upstreamCode } : {}) };
-  return res.status(timeout ? 504 : 502).json({ error: { code, message } });
+  return respondModelFailure(res, lastError, signal, { code: 'AI_EDIT_FAILED', message: '修改方案未通过内容或版式检查，原稿已保留，请重试', timeoutMessage: '修改方案生成超时，原稿已保留，请重试' });
 });
 
 app.use(express.static(path.join(root, 'dist')));

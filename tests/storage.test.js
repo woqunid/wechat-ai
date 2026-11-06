@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
-import { clearAssets, clearDrafts, deleteArticleHistory, deleteDraft, DRAFT_LIFETIME, HISTORY_LIFETIME, listArticleHistory, listDrafts, loadAIEditAttachments, loadDraft, loadInputs, loadWorkspaceSession, pruneArticleHistory, saveAIEditAttachments, saveArticleHistory, saveDraft, saveInputs } from '../src/storage.js';
+import { deleteArticleHistory, deleteDraft, DRAFT_LIFETIME, HISTORY_LIFETIME, listArticleHistory, listDrafts, loadAIEditAttachments, loadDraft, loadInputs, loadWorkspaceSession, pruneArticleHistory, saveAIEditAttachments, saveArticleHistory, saveDraft, saveInputs } from '../src/storage.js';
 
 globalThis.indexedDB = indexedDB;
 globalThis.IDBKeyRange = IDBKeyRange;
@@ -78,7 +78,7 @@ test('自动草稿不会覆盖手动历史，再次保存更新同一条记录�
   } finally { Date.now = originalNow; }
 });
 
-test('历史按保存时间倒序排列，删除和清空草稿互不影响', async () => {
+test('历史按保存时间倒序排列，删除草稿不影响历史', async () => {
   const originalNow = Date.now;
   let now = originalNow();
   Date.now = () => now;
@@ -87,8 +87,7 @@ test('历史按保存时间倒序排列，删除和清空草稿互不影响', as
     now += 1000;
     await saveArticleHistory(article('second'), assets());
     await saveDraft({ article: article('current') });
-    await clearAssets();
-    await clearDrafts();
+    await deleteDraft('current');
     assert.deepEqual((await listArticleHistory()).map(record => record.id), ['second', 'first']);
     await deleteArticleHistory('second');
     assert.deepEqual((await listArticleHistory()).map(record => record.id), ['first']);

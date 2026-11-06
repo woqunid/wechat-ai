@@ -24,8 +24,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { templates } from "./templates";
-import { getTemplate } from "./templates";
+import { templates, getTemplate } from "./templates";
 import { renderArticle } from "./renderer";
 import { copyHtml } from "./clipboard";
 import { checkRawConsistency, parseRaw } from "./rawparser";
@@ -59,7 +58,6 @@ import { ArticleHistory } from "./ArticleHistory";
 import { AdminPage } from "./AdminPage";
 import "./styles.css";
 
-const API = "";
 const LayoutDesigner = React.lazy(() => import('./LayoutDesigner').then(module => ({ default: module.LayoutDesigner })));
 const blank = () => ({
   topic: "",
@@ -332,7 +330,7 @@ function WorkspaceApp() {
     const submittedInput = structuredClone(input);
     requestAbort.current = new AbortController();
     try {
-      const res = await fetch(API + "/api/articles/generate", {
+      const res = await fetch("/api/articles/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -481,7 +479,7 @@ function WorkspaceApp() {
         const fd = new FormData();
         fd.append("file", file);
         try {
-          const r = await fetch(API + "/api/assets", {
+          const r = await fetch("/api/assets", {
             method: "POST",
             body: fd,
           });
@@ -516,7 +514,7 @@ function WorkspaceApp() {
         const fd = new FormData();
         fd.append("files", file);
         try {
-          const r = await fetch(API + "/api/materials/parse", {
+          const r = await fetch("/api/materials/parse", {
             method: "POST",
             body: fd,
           });
@@ -1187,12 +1185,6 @@ function Edit({
       return { ...a, blocks };
     });
     locateContent(`block:${id}`);
-  };
-  const insertionAfterSelection = () => {
-    if (['title', 'summary'].includes(activeKeyRef.current)) return 0;
-    const id = activeKeyRef.current?.startsWith('block:') ? activeKeyRef.current.slice(6) : null;
-    const index = article.blocks.findIndex(block => block.id === id);
-    return index < 0 ? article.blocks.length : index + 1;
   };
   const filtered = templates.filter(
     (t) =>

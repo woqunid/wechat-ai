@@ -18,10 +18,27 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
   const bootstrap = path.join(directory, 'bootstrap.mjs');
   await writeFile(bootstrap, `
     const originalFetch = globalThis.fetch;
+    const attempts = new Map();
     globalThis.fetch = async (url, options) => {
       if (!String(url).startsWith('http://html-test.invalid/')) return originalFetch(url, options);
       const body = JSON.parse(options.body);
-      const input = JSON.parse(body.input[1].content[0].text);
+      const input = JSON.parse(body.input ? body.input[1].content[0].text : body.messages[1].content);
+      const prompt = input.prompt || input.designPrompt || input.topic || '';
+      const failure = /^upstream-(401|429|500|503)/.exec(prompt);
+      if (failure) {
+        const count = (attempts.get(prompt) || 0) + 1;
+        attempts.set(prompt, count);
+        return Response.json({error:{code:prompt.includes('price') ? 'model_price_error' : 'fixture_error'}}, {status:count === 1 ? Number(failure[1]) : 599});
+      }
+      if (prompt.startsWith('timeout-')) throw Object.assign(new Error('fixture timeout'), {name:'TimeoutError'});
+      if (prompt === 'chat-fallback') {
+        if (body.input) {
+          const count = (attempts.get(prompt) || 0) + 1;
+          attempts.set(prompt, count);
+          return Response.json({error:{message:'unsupported endpoint'}}, {status:count === 1 ? 404 : 401});
+        }
+        return Response.json({choices:[{message:{content:JSON.stringify({message:'兼容接口可用',operations:[]})}}]});
+      }
       if (!input.article.html || !body.input[0].content[0].text.includes('article.html')) throw new Error('Missing HTML model context');
       if ('scope' in input) throw new Error('Manual scope must not be sent');
       if ('layoutDesign' in input.article || input.article.blocks.some(block => block.runs || block.text.length > 40)) throw new Error('HTML article must send block outline only');
@@ -45,7 +62,7 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
     };
     await import(${JSON.stringify(pathToFileURL(path.join(root, 'server/index.js')).href)});
   `);
-  const child = spawn(process.execPath, [bootstrap], { cwd: root, env: { ...process.env, PORT: String(port), AI_BASE_URL: 'http://html-test.invalid/v1', AI_API_KEY: 'test-only', AI_MODEL: 'fixture', AI_API_STYLE: 'responses', AI_TIMEOUT_MS: '2000', RATE_EDIT_PER_MIN: '100', ASSET_DIR: path.join(directory, 'assets') }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [bootstrap], { cwd: root, env: { ...process.env, PORT: String(port), AI_BASE_URL: 'http://html-test.invalid/v1', AI_API_KEY: 'test-only', AI_MODEL: 'fixture', AI_API_STYLE: 'auto', AI_TIMEOUT_MS: '2000', RATE_EDIT_PER_MIN: '100', ASSET_DIR: path.join(directory, 'assets') }, stdio: ['ignore', 'pipe', 'pipe'] });
   try {
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Test API did not start')), 8000);
@@ -96,6 +113,23 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
     const ambiguous = await request('ambiguous', { references: [] });
     assert.equal(ambiguous.status, 200);
     assert.deepEqual(ambiguous.data.operations, []);
+    for (const route of ['generate', 'design', 'edit']) {
+      for (const scenario of ['401', '429', '503', '500-price', 'timeout']) {
+        const prompt = scenario === 'timeout' ? `timeout-${route}` : `upstream-${scenario}-${route}`;
+        const body = route === 'generate' ? { topic: prompt } : route === 'design' ? { article, mode: 'prompt', prompt } : { article, prompt };
+        const response = await fetch(`http://127.0.0.1:${port}/api/articles/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const { error } = await response.json();
+        assert.equal(response.status, scenario === 'timeout' ? 504 : 502);
+        assert.equal(error.code, scenario === 'timeout' ? 'AI_TIMEOUT' : scenario.includes('price') ? 'AI_UPSTREAM_CONFIG_ERROR' : 'AI_UPSTREAM_ERROR');
+        if (/^\d+$/.test(scenario)) assert.match(error.message, new RegExp(`HTTP ${scenario}`));
+      }
+    }
+    const aiConfig = { baseUrl: 'http://html-test.invalid/v1', apiKey: 'test-only', model: 'chat-only' };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await request('chat-fallback', { aiProvider: 'personal', aiConfig });
+      assert.equal(result.status, 200);
+      assert.equal(result.data.message, '兼容接口可用');
+    }
   } finally {
     if (child.exitCode === null) { child.kill(); await once(child, 'exit'); }
     const resolved = path.resolve(directory);
