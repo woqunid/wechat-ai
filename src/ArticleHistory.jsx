@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { Modal } from './Modal.jsx';
+import { assetExpired } from './image-expiry.js';
 import { deleteArticleHistory, listArticleHistory } from './storage.js';
 
 const savedTime = value => new Date(value).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+const expiredImages = record => (record.assets || []).filter(asset => assetExpired(asset)).length;
 const draftTime = value => new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
 
 export function ArticleHistory({ onClose, onOpen, setToast, drafts, onOpenDraft, onDeleteDraft }) {
@@ -81,7 +83,7 @@ export function ArticleHistory({ onClose, onOpen, setToast, drafts, onOpenDraft,
     (selected === 'drafts' ? draftTab : savedTab).current.focus();
   };
   const savedContent = error ? <div className="article-history-empty" role="status">{error}<button className="text-link" onClick={load}>重试</button></div> : records === null ? <div className="article-history-empty" role="status">加载中…</div> : records.length ? <ul>{records.map(record => <li key={record.id}>
-    <div className="article-history-meta"><strong title={record.title}>{record.title}</strong><time dateTime={new Date(record.savedAt).toISOString()}>{savedTime(record.savedAt)}</time></div>
+    <div className="article-history-meta"><strong title={record.title}>{record.title}</strong><time dateTime={new Date(record.savedAt).toISOString()}>{savedTime(record.savedAt)}{expiredImages(record) > 0 && <span className="history-image-warning"> · {expiredImages(record)} 张图片已过期</span>}</time></div>
     <div className="article-history-row-actions">
       <button className="text-link" disabled={Boolean(busy)} onClick={() => open(record)}>查看/修改</button>
       <button className="icon-action article-history-delete" title="删除" aria-label={`删除${record.title}`} disabled={Boolean(busy)} onClick={() => remove(record)}><Trash2 size={16}/></button>

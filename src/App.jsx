@@ -554,12 +554,13 @@ function WorkspaceApp() {
     if (record.expiresAt <= Date.now()) throw new Error("历史记录已过期");
     const restoredAssets = new Map(assets);
     for (const asset of record.assets) {
+      const local = assets.get(asset.id);
       let broken = Date.parse(asset.expiresAt) <= Date.now();
       try { broken = !(await assetAvailable(asset.cacheUrl || asset.url)); } catch {}
       const restored = broken
-        ? { ...asset, url: undefined, cacheUrl: undefined, pasteStatus: "broken" }
-        : { ...asset, previewUrl: asset.cacheUrl || asset.url };
-      await saveAsset(restored);
+        ? { ...asset, url: undefined, cacheUrl: undefined, pasteStatus: "broken", ...(local?.blob ? { blob: local.blob, previewUrl: local.previewUrl } : {}) }
+        : { ...asset, previewUrl: local?.previewUrl || asset.cacheUrl || asset.url, ...(local?.blob ? { blob: local.blob } : {}) };
+      await saveAsset(restored, local?.blob);
       restoredAssets.set(asset.id, restored);
     }
     setAssets(restoredAssets);

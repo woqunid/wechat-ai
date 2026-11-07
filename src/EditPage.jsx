@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Copy, History, ImagePlus, LayoutGrid, Plus, PanelRightClose, PanelRightOpen, Undo2, Redo2, RefreshCw, Save, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowRight, Check, Copy, History, ImagePlus, LayoutGrid, Plus, PanelRightClose, PanelRightOpen, Undo2, Redo2, RefreshCw, Save, X } from "lucide-react";
 import { uid } from "./core";
 import { bodyCharCount, bodyLengthStatus, TARGET_LENGTHS } from "./creation.js";
 import { AISettingsButton } from "./AISettingsButton";
@@ -10,6 +10,7 @@ import { clearArticleStyles, layoutSignature } from "./layout-design.js";
 import { saveAsset } from "./storage";
 import { ArticleHistory } from "./ArticleHistory";
 import { absoluteUrl, uploadAsset } from "./api.js";
+import { imageExpiry } from "./image-expiry.js";
 import { ConfirmDialog, Modal } from "./Modal.jsx";
 import { TemplateThumb } from "./TemplateThumb";
 import { TemplateLibrary } from "./TemplateLibrary";
@@ -99,6 +100,9 @@ export function EditPage({
   const [insertAt, setInsertAt] = useState(0);
   const [replaceBlockId, setReplaceBlockId] = useState(null);
   const [imageSource, setImageSource] = useState('local');
+  const [expiryDismissed, setExpiryDismissed] = useState('');
+  const expiry = useMemo(() => imageExpiry(article, assets), [article.blocks, assets]);
+  const expiryKey = [...expiry.expired, '|', ...expiry.expiring].join(',');
   useEffect(() => { if (modal === 'gallery') setImageSource('local'); }, [modal]);
   const undo = () => {
     const prev = history.current.pop();
@@ -242,6 +246,26 @@ export function EditPage({
       setImageUploads(count => count - 1);
     }
   };
+  const renewImages = async ids => {
+    setImageUploads(count => count + 1);
+    let renewed = 0;
+    try {
+      for (const id of ids) {
+        const previous = assets.get(id);
+        if (!previous?.blob) continue;
+        const uploaded = await uploadAsset(previous.blob, { filename: previous.filename || "image.png", fallback: "图片重新上传失败" });
+        const asset = { ...uploaded, ...(previous.sourceUrl ? { sourceUrl: previous.sourceUrl } : {}), url: /^https:\/\//i.test(uploaded.url) ? uploaded.url : previous.sourceUrl || absoluteUrl(uploaded.url), blob: previous.blob };
+        await registerImageAsset(asset);
+        setArticle(a => !a || a.id !== article.id ? a : { ...a, blocks: a.blocks.map(block => isImageBlock(block) && block.assetId === id ? { ...block, assetId: asset.id } : block), updatedAt: new Date().toISOString() });
+        renewed++;
+      }
+      setToast(renewed === ids.length ? `已恢复 ${renewed} 张图片` : `已恢复 ${renewed} 张，其余图片缺少本地原图，请重新插入`);
+    } catch (e) {
+      setToast(`${renewed ? `已恢复 ${renewed} 张，` : ""}${e.message || "图片重新上传失败"}`);
+    } finally {
+      setImageUploads(count => count - 1);
+    }
+  };
   const requestRegenerate = async () => {
     if (regenerating || canvasReadOnly) return;
     const previous = article;
@@ -316,6 +340,12 @@ export function EditPage({
           </div>
           {aiEditor.candidate && !aiEditor.problem && <div className="ai-edit-preview-bar"><span>{aiPreview ? `${aiEditor.changes.length} 处改动 · 应用后可编辑` : '原稿'}</span><div><button className="text-link" disabled={Boolean(aiEditor.busy)} onClick={aiEditor.discard}>取消</button><button className="text-link" onClick={() => aiEditor.setShowCandidate(value => !value)}>{aiEditor.showCandidate ? '看原稿' : '看方案'}</button><button className="preview-apply" disabled={Boolean(aiEditor.busy || aiEditor.problem)} onClick={aiEditor.apply}><Check size={13}/>应用</button></div></div>}
           {layoutTrial && <div className="ai-edit-preview-bar layout-preview-bar"><span>{layoutTrial.design.name} · 应用后可编辑</span><div><button className="text-link" onClick={resetLayoutTrial}>取消</button><button className="preview-apply" onClick={applyLayoutTrial}><Check size={13}/>应用排版</button></div></div>}
+          {(expiry.expired.length > 0 || expiry.expiring.length > 0) && expiryDismissed !== expiryKey && <div className={`image-expiry-bar${expiry.expired.length ? " is-expired" : ""}`} role="status">
+            <AlertTriangle size={14}/>
+            <span>{expiry.expired.length ? `${expiry.expired.length} 张图片的服务器缓存已过期，复制到公众号后将缺图` : `${expiry.expiring.length} 张图片的服务器缓存将在 ${expiry.days} 天内过期，请尽快复制发布或续期`}</span>
+            {expiry.restorable.length > 0 ? <button className="text-link" disabled={canvasReadOnly || imageUploads > 0} onClick={() => renewImages(expiry.restorable)}>{expiry.expired.length ? "从本地原图恢复" : "续期"}</button> : <small>本地原图不可用，请重新插入</small>}
+            <button className="asset-remove" aria-label="暂时忽略图片过期提醒" onClick={() => setExpiryDismissed(expiryKey)}><X size={13}/></button>
+          </div>}
           {imageUploads > 0 && <div className="editor-uploading" role="status"><RefreshCw size={14} className="spin"/>上传图片中…</div>}
           <ArticleEditor
             article={article} displayArticle={canvasArticle === article ? undefined : canvasArticle} readOnly={canvasReadOnly} width={canvasWidth} changes={aiPreview ? aiEditor.changes : []}
