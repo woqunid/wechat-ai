@@ -2337,6 +2337,8 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
 .ai-edit-pane .side-panel-tabs { margin-bottom: 8px; }
 .ai-edit-panel { gap: 9px; overflow: hidden; }
 .ai-edit-messages { flex: 1 1 120px; min-height: 65px; padding-right: 3px; scrollbar-width: thin; }
+.ai-edit-messages-head { display: flex; justify-content: flex-end; padding-bottom: 4px; }
+.ai-edit-messages-head .text-link { font-size: 10px; color: var(--text-secondary); }
 .ai-edit-empty { padding: 18px 5px; font-size: 11px; line-height: 1.7; }
 .ai-empty-icon { display: grid; place-items: center; width: 39px; height: 39px; margin-bottom: 14px; border: 1px solid var(--border-subtle); border-radius: 9px; color: var(--primary); background: #f9faf7; }
 .ai-edit-empty h3 { margin: 0; font-size: 15px; font-weight: 550; }

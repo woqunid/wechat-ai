@@ -4,7 +4,7 @@ import { uid } from './core.js';
 import { absoluteUrl, assetAvailable, postJson, requestJson, uploadAsset } from './api.js';
 import { AIEditResponseSchema, AI_EDIT_TIMEOUT_MS, aiEditConversation, aiEditSummary, aiEditTargets, appliedAIEditStatus, buildAIEdit, createAIReference, describeAIEdit, isImageBlock, mergeAIEdit, revertAIEdit, sameAIReference, validAIReference } from './ai-edit.js';
 import { readImageLink } from './image-assets.js';
-import { loadAIEditAttachments, saveAIEditAttachments } from './storage.js';
+import { loadAIEditAttachments, loadAIEditConversation, saveAIEditAttachments, saveAIEditConversation } from './storage.js';
 import { renderArticle } from './renderer.js';
 import { getTemplate } from './templates.js';
 import { inspectLayoutPreview } from './layout-preview.js';
@@ -45,6 +45,7 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
   const latest = useRef(null);
   const previewUrls = useRef(new Set());
   const loadedAttachmentsFor = useRef(null);
+  const loadedConversationFor = useRef(null);
   latest.current = { article, references, disabled, assets, attachments };
   const registerPreviewUrls = values => values.forEach(attachment => attachmentImages(attachment).forEach(image => {
     if (image.previewUrl?.startsWith('blob:')) previewUrls.current.add(image.previewUrl);
@@ -65,14 +66,20 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
     setReferences([]); setMessages([]); setPrompt(''); setBusy(''); setError(''); setCandidate(null); setShowCandidate(true);
     setAttachments([]); latest.current.attachments = []; setAttachmentsReady(false);
     loadedAttachmentsFor.current = null;
+    loadedConversationFor.current = null;
     let active = true;
-    loadAIEditAttachments(article.id).then(saved => {
+    Promise.all([loadAIEditAttachments(article.id), loadAIEditConversation(article.id).catch(() => null)]).then(([saved, conversation]) => {
       const restored = saved.map(withAttachmentPreviews);
       if (!active) { releasePreviewUrls(restored); return; }
       registerPreviewUrls(restored);
       loadedAttachmentsFor.current = article.id;
       latest.current.attachments = restored;
       setAttachments(restored);
+      if (conversation) {
+        loadedConversationFor.current = article.id;
+        setMessages(conversation.messages);
+        setCandidate(conversation.candidate);
+      } else setError('对话记录读取失败');
       setAttachmentsReady(true);
     }).catch(() => { if (active) { setAttachmentsReady(true); setError('附件缓存读取失败'); } });
     return () => {
@@ -87,6 +94,11 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
     const timer = setTimeout(() => saveAIEditAttachments(article.id, attachments).catch(() => setError('附件缓存保存失败')), 300);
     return () => clearTimeout(timer);
   }, [article.id, attachments, attachmentsReady]);
+  useEffect(() => {
+    if (loadedConversationFor.current !== article.id) return undefined;
+    const timer = setTimeout(() => saveAIEditConversation(article.id, messages, candidate).catch(() => setError('对话记录保存失败')), 300);
+    return () => clearTimeout(timer);
+  }, [article.id, messages, candidate]);
 
   const resolved = useMemo(() => {
     if (!candidate) return {};
@@ -132,6 +144,10 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
   const discard = () => {
     setMessages(previous => previous.map(message => message.id === candidate?.messageId ? { ...message, status: 'discarded' } : message));
     setCandidate(null); setShowCandidate(true); setError('');
+  };
+  const clearConversation = () => {
+    if (request.current || candidate) return;
+    setMessages([]); setError('');
   };
   const checkReferences = (source, values) => {
     if (values.some(reference => !validAIReference(source, reference))) throw new Error('引用内容已失效，请点击卡片上的×移除后重新选择');
@@ -358,7 +374,7 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
       setError('');
     } catch (cause) { setError(cause.message); }
   };
-  return { references, referenceArticle, messages, prompt, setPrompt, busy, error, attachments, attachmentsReady, attachmentBusy, addAttachments, addImageLink, removeAttachment, toggleAttachment, autoApply, setAutoApply, candidate, problem: resolved.problem, changes, invalidReferences, showCandidate, setShowCandidate, previewArticle: showCandidate && !disabled ? resolved.article : null, addReference, removeReference: referenceId => setReferences(previous => previous.filter(reference => reference.id !== referenceId)), submit, retry: (message, withoutImages) => submit(null, { retry: message, withoutImages }), regenerate: () => submit(null, { regenerate: true }), revertChange, stop, discard, apply };
+  return { references, referenceArticle, messages, prompt, setPrompt, busy, error, attachments, attachmentsReady, attachmentBusy, addAttachments, addImageLink, removeAttachment, toggleAttachment, autoApply, setAutoApply, candidate, problem: resolved.problem, changes, invalidReferences, showCandidate, setShowCandidate, previewArticle: showCandidate && !disabled ? resolved.article : null, addReference, removeReference: referenceId => setReferences(previous => previous.filter(reference => reference.id !== referenceId)), submit, retry: (message, withoutImages) => submit(null, { retry: message, withoutImages }), regenerate: () => submit(null, { regenerate: true }), revertChange, stop, discard, apply, clearConversation };
 }
 
 export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
@@ -390,6 +406,7 @@ export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
   };
   return <section className="ai-edit-panel" aria-label="AI修改对话">
     <div className="ai-edit-messages" role="log" aria-label="修改对话记录" aria-live="polite" aria-relevant="additions text">
+      {editor.messages.length > 0 && <div className="ai-edit-messages-head"><button className="text-link" type="button" disabled={Boolean(editor.busy || editor.candidate)} title={editor.candidate ? '请先应用或取消当前方案' : undefined} onClick={editor.clearConversation}>清空对话</button></div>}
       {!editor.messages.length && <div className="ai-edit-empty"><span className="ai-empty-icon"><Sparkles size={23}/></span><h3>让文章更进一步</h3><p>调整文字、图片或排版。</p><div className="ai-prompt-suggestions">{[...(hasImages ? ['把附件图片插入到合适的位置'] : []), '精简表达，保留关键信息', '优化开头，更快切入主题', '统一段落间距与文字样式'].map(text => <button type="button" key={text} disabled={disabled} onClick={() => editor.setPrompt(text)}>{text}<ArrowUp size={13}/></button>)}</div></div>}
       {editor.messages.map(message => <div key={message.id} className={`ai-edit-message ${message.role}`}><strong>{message.role === 'user' ? '你' : <><Sparkles size={12}/>Weave AI</>}</strong><p>{message.text}</p>{message.referenceCount > 0 && <details className="ai-edit-message-references"><summary>{message.referenceCount} 处引用</summary><div>{message.references?.map((reference, index) => <p key={index}>{reference.text || '图片引用'}</p>)}</div></details>}{message.attachmentNames?.length > 0 && <small>附件：{message.attachmentNames.join('、')}{message.withoutImages ? '（仅文字）' : ''}</small>}{message.status && message.status !== 'answered' && <small className={`ai-message-status ${message.status}`}>{({ pending: message.role === 'user' ? '发送中' : editor.problem ? '方案已失效' : '待应用', applied: '已应用', discarded: '已取消', superseded: '已被后续修改替代', failed: message.failure || '生成失败', stopped: '已停止', reverted: '已撤销' })[message.status]}</small>}{['failed', 'stopped'].includes(message.status) && <div className="ai-message-retry"><button className="text-link" type="button" disabled={Boolean(editor.busy || disabled)} onClick={() => editor.retry(message)}>重试</button>{message.errorCode === 'VISION_UNSUPPORTED' && <button className="text-link" type="button" disabled={Boolean(editor.busy || disabled)} onClick={() => editor.retry(message, true)}>去掉图片后重试</button>}</div>}</div>)}
       {editor.busy && <div className="ai-edit-progress" role="status"><span className="ai-thinking"><i/><i/><i/></span><span>{editor.busy === 'checking' ? '检查改动与布局…' : editor.busy === 'repairing' ? '修复手机布局溢出…' : '生成修改方案…'}</span></div>}

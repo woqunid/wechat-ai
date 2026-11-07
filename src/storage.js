@@ -8,11 +8,11 @@ const draftRecord = (draft, previous, now = Date.now()) => {
 };
 
 const openDb = () => new Promise((resolve, reject) => {
-  const request = indexedDB.open(DB, 5);
+  const request = indexedDB.open(DB, 6);
   request.onupgradeneeded = () => {
     const db = request.result;
     if (!db.objectStoreNames.contains('assets')) db.createObjectStore('assets', { keyPath: 'id' });
-    for (const name of ['drafts', 'inputs', 'snapshots', 'aiEditAttachments']) {
+    for (const name of ['drafts', 'inputs', 'snapshots', 'aiEditAttachments', 'aiEditConversations']) {
       if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' });
     }
     if (!db.objectStoreNames.contains('workspace')) {
@@ -92,7 +92,7 @@ export async function listDrafts(now = Date.now()) {
   const db = await openDb();
   try {
     return await new Promise((resolve, reject) => {
-      const transaction = db.transaction(['drafts', 'aiEditAttachments', 'workspace'], 'readwrite');
+      const transaction = db.transaction(['drafts', 'aiEditAttachments', 'aiEditConversations', 'workspace'], 'readwrite');
       const request = transaction.objectStore('drafts').getAll();
       let records;
       request.onsuccess = () => {
@@ -100,6 +100,7 @@ export async function listDrafts(now = Date.now()) {
         for (const record of request.result.filter(record => record.expiresAt <= now)) {
           transaction.objectStore('drafts').delete(record.id);
           transaction.objectStore('aiEditAttachments').delete(record.id);
+          transaction.objectStore('aiEditConversations').delete(record.id);
         }
         const session = transaction.objectStore('workspace').get('current');
         session.onsuccess = () => {
@@ -118,9 +119,10 @@ export async function deleteDraft(id) {
   const db = await openDb();
   try {
     await new Promise((resolve, reject) => {
-      const transaction = db.transaction(['drafts', 'aiEditAttachments', 'workspace'], 'readwrite');
+      const transaction = db.transaction(['drafts', 'aiEditAttachments', 'aiEditConversations', 'workspace'], 'readwrite');
       transaction.objectStore('drafts').delete(id);
       transaction.objectStore('aiEditAttachments').delete(id);
+      transaction.objectStore('aiEditConversations').delete(id);
       const request = transaction.objectStore('workspace').get('current');
       request.onsuccess = () => {
         if (request.result?.articleId === id) transaction.objectStore('workspace').put({ id: 'current', page: 'create', articleId: null });
@@ -219,6 +221,38 @@ export async function loadAIEditAttachments(articleId) {
       request.onsuccess = () => resolve(request.result?.attachments || []);
       request.onerror = () => reject(request.error);
     });
+  } finally { db.close(); }
+}
+
+const MAX_STORED_MESSAGES = 60;
+const cachedMessage = ({ requestBase, requestSource, appliedBase, appliedNext, ...message }) => message;
+
+export async function saveAIEditConversation(articleId, messages, candidate) {
+  const db = await openDb();
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction('aiEditConversations', 'readwrite');
+      const store = transaction.objectStore('aiEditConversations');
+      if (messages.length || candidate) store.put({ id: articleId, messages: messages.slice(-MAX_STORED_MESSAGES).map(cachedMessage), candidate: candidate ? { ...candidate, generationRequest: cachedMessage(candidate.generationRequest) } : null });
+      else store.delete(articleId);
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error || new Error('对话保存失败'));
+    });
+  } finally { db.close(); }
+}
+
+export async function loadAIEditConversation(articleId) {
+  const db = await openDb();
+  try {
+    const record = await new Promise((resolve, reject) => {
+      const request = db.transaction('aiEditConversations').objectStore('aiEditConversations').get(articleId);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const candidate = record?.candidate || null;
+    const interrupted = message => message.role === 'user' ? 'stopped' : message.id === candidate?.messageId ? 'pending' : 'discarded';
+    return { candidate, messages: (record?.messages || []).map(message => message.status === 'pending' ? { ...message, status: interrupted(message) } : message) };
   } finally { db.close(); }
 }
 

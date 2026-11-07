@@ -40,7 +40,7 @@ AI 生成、设计和编辑成功响应的 `meta` 均增加 `usage:{inputTokens,
 | DELETE | `/api/assets/:id` | 删除图片资源 |
 | POST | `/api/articles/generate` | create/polish 模式生成结构化文章；raw 模式由共享解析器在前端完成 |
 | POST | `/api/articles/design` | 根据全文或用户风格要求生成独立版式，保留全部原文与图片 |
-| POST | `/api/articles/edit` | 基于全文、引用和临时对话返回待确认的内容与排版修改方案 |
+| POST | `/api/articles/edit` | 基于全文、引用和对话返回待确认的内容与排版修改方案 |
 | POST | `/api/articles/edit/attachments` | `multipart/form-data`，字段 `file`，解析 AI 修改附件并提取文档文字与内嵌图片 |
 
 `generate` 请求字段：`mode`、`topic`、`text`、`materials[]`、`assetIds[]`、`tone`、`targetLength`、`aiProvider`（`platform` 或 `personal`），可选 `aiConfig:{baseUrl,apiKey,model}`（仅个人模式）和 `templateId`（T01–T40，重新生成时保留选中模板）。平台模式读取服务端环境变量；个人模式只使用本次请求携带的配置，不写入服务端。未指定模板时，根据规范化后的内容推荐初始模板。按 `AI_API_STYLE` 调用 OpenAI 兼容 Responses 或 Chat Completions 接口；`auto` 默认先尝试 Responses，不支持时回退 Chat Completions。未配置所选服务时返回 `AI_NOT_CONFIGURED`，不会生成示例内容。响应带 `meta`（提示词/Schema 版本、模型、耗时、重试状态）。`design` 和 `edit` 请求也接收相同的 `aiProvider` 与个人模式 `aiConfig` 字段。

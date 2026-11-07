@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
-import { deleteArticleHistory, deleteDraft, DRAFT_LIFETIME, HISTORY_LIFETIME, listArticleHistory, listDrafts, loadAIEditAttachments, loadDraft, loadInputs, loadWorkspaceSession, pruneArticleHistory, saveAIEditAttachments, saveArticleHistory, saveDraft, saveInputs } from '../src/storage.js';
+import { deleteArticleHistory, deleteDraft, DRAFT_LIFETIME, HISTORY_LIFETIME, listArticleHistory, listDrafts, loadAIEditAttachments, loadAIEditConversation, loadDraft, loadInputs, loadWorkspaceSession, pruneArticleHistory, saveAIEditAttachments, saveAIEditConversation, saveArticleHistory, saveDraft, saveInputs } from '../src/storage.js';
 
 globalThis.indexedDB = indexedDB;
 globalThis.IDBKeyRange = IDBKeyRange;
@@ -194,6 +194,7 @@ test('草稿到期边界清理附件和编辑位置，保留未到期草稿与�
   try {
     const first = await saveDraft({ article: article('first') }, { page: 'edit' });
     await saveAIEditAttachments('first', [{ id: 'first-attachment' }]);
+    await saveAIEditConversation('first', [{ id: 'm1', role: 'user', text: '旧对话' }], null);
     now += 1000;
     await saveDraft({ article: article('second') });
     await saveArticleHistory(article('first'), assets());
@@ -201,9 +202,33 @@ test('草稿到期边界清理附件和编辑位置，保留未到期草稿与�
     now = first.expiresAt;
     assert.deepEqual((await listDrafts()).map(record => record.id), ['second']);
     assert.deepEqual(await loadAIEditAttachments('first'), []);
+    assert.deepEqual((await loadAIEditConversation('first')).messages, []);
     assert.equal((await loadWorkspaceSession()).page, 'create');
     assert.equal((await listArticleHistory()).length, 1);
   } finally { Date.now = originalNow; }
+});
+
+test('AI 对话按文章保存，刷新后恢复待应用方案并结束中断的请求', async () => {
+  const copy = article('copy');
+  const generationRequest = { id: 'u2', role: 'user', text: '改短', status: 'answered', requestBase: copy, requestSource: copy };
+  await saveAIEditConversation('first', [
+    { id: 'u1', role: 'user', text: '第一轮', status: 'answered', requestBase: copy, requestSource: copy },
+    { id: 'a1', role: 'assistant', text: '已应用', status: 'applied', appliedBase: copy, appliedNext: copy },
+    { id: 'a2', role: 'assistant', text: '待确认', status: 'pending' },
+    { id: 'a3', role: 'assistant', text: '丢失的方案', status: 'pending' },
+    { id: 'u3', role: 'user', text: '发送中', status: 'pending', requestBase: copy, requestSource: copy },
+  ], { base: copy, next: copy, messageId: 'a2', generationRequest, generationSource: copy });
+  const { messages, candidate } = await loadAIEditConversation('first');
+  assert.deepEqual(messages.map(message => message.status), ['answered', 'applied', 'pending', 'discarded', 'stopped']);
+  assert.ok(messages.every(message => !message.requestBase && !message.requestSource && !message.appliedBase && !message.appliedNext));
+  assert.equal(candidate.messageId, 'a2');
+  assert.equal(candidate.generationRequest.requestBase, undefined);
+  await saveAIEditConversation('first', Array.from({ length: 70 }, (_, index) => ({ id: `m${index}`, role: 'user', text: String(index) })), null);
+  const trimmed = await loadAIEditConversation('first');
+  assert.equal(trimmed.messages.length, 60);
+  assert.equal(trimmed.messages.at(-1).text, '69');
+  await saveAIEditConversation('first', [], null);
+  assert.deepEqual(await loadAIEditConversation('first'), { messages: [], candidate: null });
 });
 
 test('删除单篇草稿只移除对应附件，不影响其他文章、输入和历史', async () => {
@@ -211,12 +236,16 @@ test('删除单篇草稿只移除对应附件，不影响其他文章、输入�
   await saveDraft({ article: article('second') }, { page: 'edit' });
   await saveAIEditAttachments('first', [{ id: 'one' }]);
   await saveAIEditAttachments('second', [{ id: 'two' }]);
+  await saveAIEditConversation('first', [{ id: 'm1', role: 'user', text: '第一篇' }], null);
+  await saveAIEditConversation('second', [{ id: 'm2', role: 'user', text: '第二篇' }], null);
   await saveInputs({ topic: '尚未提交的第三篇' });
   await saveArticleHistory(article('first'), assets());
   await deleteDraft('first');
   assert.deepEqual((await listDrafts()).map(record => record.id), ['second']);
   assert.deepEqual(await loadAIEditAttachments('first'), []);
   assert.deepEqual(await loadAIEditAttachments('second'), [{ id: 'two' }]);
+  assert.deepEqual((await loadAIEditConversation('first')).messages, []);
+  assert.equal((await loadAIEditConversation('second')).messages[0].text, '第二篇');
   assert.equal((await loadWorkspaceSession()).articleId, 'second');
   assert.equal((await loadInputs()).input.topic, '尚未提交的第三篇');
   assert.equal((await listArticleHistory()).length, 1);
