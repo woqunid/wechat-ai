@@ -24,6 +24,37 @@ const respondModelFailure = (res, error, signal, { code, message, timeoutMessage
   return sendError(res, timeout ? 504 : 502, code, message);
 };
 
+// 从尚未结束的模型 JSON 中取出 message 已生成的部分；模型规则要求 message 为首个字段。
+export const partialMessage = text => {
+  const body = /"message"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(text.slice(0, 8000))?.[1];
+  if (!body) return '';
+  try { return JSON.parse(`"${body.replace(/\\u[0-9a-fA-F]{0,3}$/, '')}"`); } catch { return ''; }
+};
+
+const upstreamStreamError = detail => Object.assign(new Error('upstream stream error'), { status: 502, upstreamCode: detail?.code, upstreamMessage: String(detail?.message || '').slice(0, 2000) });
+
+async function readEventStream(response, kind, onDelta) {
+  const decoder = new TextDecoder();
+  let buffer = '', text = '', usage;
+  for await (const chunk of response.body) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      const data = line.startsWith('data:') ? line.slice(5).trim() : '';
+      if (!data || data === '[DONE]') continue;
+      let event;
+      try { event = JSON.parse(data); } catch { continue; }
+      if (event.error || event.type === 'error' || event.type === 'response.failed') throw upstreamStreamError(event.error || event.response?.error || event);
+      usage = event.usage || event.response?.usage || usage;
+      if (event.type === 'response.completed' && !text) text = modelResult(event.response).text;
+      const delta = kind === 'chat' ? event.choices?.[0]?.delta?.content : event.type === 'response.output_text.delta' ? event.delta : '';
+      if (delta) { text += delta; onDelta(text); }
+    }
+  }
+  return { text, usage: normalizeUsage(usage) };
+}
+
 const rejectMissingAIConfig = (res, config) => {
   if (config.baseUrl && config.apiKey && config.model) return false;
   const partial = Boolean(config.baseUrl || config.apiKey || config.model);
@@ -33,7 +64,7 @@ const rejectMissingAIConfig = (res, config) => {
   return true;
 };
 
-async function requestModel({ config, system, inputData, signal, imageInputs = [] }) {
+async function requestModel({ config, system, inputData, signal, imageInputs = [], onDelta }) {
   const base = config.baseUrl;
   const style = process.env.AI_API_STYLE || 'auto';
   const cacheKey = `${base}\0${crypto.createHash('sha256').update(config.apiKey).digest('hex')}\0${config.model}`;
@@ -52,7 +83,7 @@ async function requestModel({ config, system, inputData, signal, imageInputs = [
   const chatBody = { model: config.model, temperature: 0.5, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content: chatUserContent }] };
   const request = async (kind, body) => {
     const timeout = AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 90_000));
-    return fetch(`${base}/${kind === 'responses' ? 'responses' : 'chat/completions'}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` }, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    return fetch(`${base}/${kind === 'responses' ? 'responses' : 'chat/completions'}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` }, body: JSON.stringify(onDelta ? { ...body, stream: true } : body), signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
   };
   const upstreamFailure = async response => {
     const upstreamMessage = (await response.text()).slice(0, 2000);
@@ -71,12 +102,13 @@ async function requestModel({ config, system, inputData, signal, imageInputs = [
     if (!response.ok) throw await upstreamFailure(response);
   }
   if (style === 'auto') resolvedApiStyles.set(cacheKey, kind);
+  if (onDelta && response.headers.get('content-type')?.includes('text/event-stream')) return readEventStream(response, kind, onDelta);
   return modelResult(await response.json());
 }
 
 // 统一处理：AI 配置解析、客户端断开中止、最多两次尝试、用量统计与失败响应。
 // attempt 返回响应函数表示完成；抛错则带着 lastError 重试；fallback 在两次尝试都未完成时兜底。
-export async function runModelTask(req, res, { timeoutMs, attempt: tryOnce, fallback, failure }) {
+export async function runModelTask(req, res, { timeoutMs, attempt: tryOnce, fallback, failure, onDelta }) {
   const controller = new AbortController();
   res.once('close', () => { if (!res.writableEnded) controller.abort(); });
   const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(timeoutMs)]);
@@ -90,7 +122,10 @@ export async function runModelTask(req, res, { timeoutMs, attempt: tryOnce, fall
   for (let attempt = 0; attempt < 2 && !signal.aborted; attempt++) {
     usages.push(normalizeUsage());
     const request = async options => {
-      const output = await requestModel({ config, signal, ...options });
+      const output = await requestModel({ config, signal, onDelta, ...options }).catch(error => {
+        if (onDelta && error.status === 400 && /stream/i.test(error.upstreamMessage || '')) return requestModel({ config, signal, ...options });
+        throw error;
+      });
       usages[attempt] = output.usage;
       return output.text;
     };

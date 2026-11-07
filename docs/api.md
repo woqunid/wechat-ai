@@ -6,7 +6,7 @@ AI 生成、设计和编辑统一将上游 HTTP 失败归为 `AI_UPSTREAM_ERROR`
 
 AI 生成、设计和编辑成功响应的 `meta` 均增加 `usage:{inputTokens,outputTokens,cachedInputTokens}` 与 `cache:{hit,inputTokenHitRate}`，相同字段也写入现有请求日志。统计来自上游 Responses 的 `input_tokens_details.cached_tokens`、Chat Completions 的 `prompt_tokens_details.cached_tokens` 或 `prompt_cache_hit_tokens`，不按本地输入猜测命中。`inputTokenHitRate` 为缓存输入 token 数/全部输入 token 数，非请求命中率；输出纠正重试累计各轮用量。任一轮缺失或无效的字段累计值为 `null`，相关命中状态或比例也为 `null`；明确返回0则表示零命中，输入总数为0时比例为 `null`。接口探测失败不计为输出纠正调用。
 
-编辑请求保持非流式输出，按固定系统规则、模板、全文、图片尺寸、历史对话、本轮要求、引用、重试错误的顺序组织输入，以保留更长的重复前缀。实际上下文缓存由上游服务提供，不缓存编辑方案或跳过校验；没有增加前端界面或服务商专用请求参数。缓存原理参见 [OpenAI 官方文档](https://developers.openai.com/api/docs/guides/prompt-caching)。
+编辑请求按固定系统规则、模板、全文、图片尺寸、历史对话、本轮要求、引用、重试错误的顺序组织输入，以保留更长的重复前缀。实际上下文缓存由上游服务提供，不缓存编辑方案或跳过校验；没有增加前端界面或服务商专用请求参数。缓存原理参见 [OpenAI 官方文档](https://developers.openai.com/api/docs/guides/prompt-caching)。
 
 `design` 请求为 `{article:{title,summary,blocks},mode:"auto"|"prompt",prompt?:string}`。`prompt` 模式要求非空风格描述，最多1000字；`auto` 忽略提示词。发送模型前从全文构建语义内容，去掉模板及手动视觉样式，不截断正文。原文排版模式也可显式请求设计，文字不进入改写流程。未配置 AI 时明确报错，不以本地模板冒充生成结果。
 
@@ -16,7 +16,7 @@ AI 生成、设计和编辑成功响应的 `meta` 均增加 `usage:{inputTokens,
 
 `edit` 请求为 `{article,prompt,references?,messages?,attachments?}`，提交完整草稿与当前版式，修改要求1–4000字；`references`为关注点（最多100项），`messages`为最近最多16条对话（每条`{role:"user"|"assistant",text}`）。引用不限制修改范围，`raw`允许显式改写。文章已有图片默认只提交服务端缓存读取的宽高；图片引用可携带 `assetId`（须为正文已有图片），服务端读取缓存并缩放至 1280px 内的 JPEG 作为多模态输入，同时在 `visibleReferenceImages` 中列出，缓存已过期的图片跳过；本轮附件图片和文档内嵌图片会作为多模态输入交给模型。`attachments`最多5项，单张图片不超过10MB，单份文档不超过20MB，附件图片合计最多10张、20MB。支持 JPG/PNG/WebP、PDF、DOCX、TXT、MD；文档文字最多20万字。DOCX/PDF 提取内嵌图片，PDF 仅提取文本层和可读取图片，不做 OCR，扫描版或没有足够文本的 PDF 返回 `UNREADABLE_DOCUMENT`。识图模型不受支持时返回 `VISION_UNSUPPORTED`。引用仅在当前编辑会话中，对话、未应用方案、附件元数据与 Blob 按文章 ID 保存在浏览器 IndexedDB；图片资源同时由服务端缓存并在过期后可从本地 Blob 恢复。对话和候选均不在服务端持久化。
 
-响应为`{message,operations,changes,meta:{model,retried}}`。操作支持`setTitle`、`setSummary`、`updateBlock`、`insertBlock`、`removeBlock`、`moveBlock`和`setLayout`，不接受任意HTML/CSS。`changes`由程序比较实际前后结果产生，不依赖模型自报；咨询可返回空操作。未配置AI返回`AI_NOT_CONFIGURED`，不使用示例结果；无效输出最多纠正一次，整体预算180秒，每来源默认每分钟20次（`RATE_EDIT_PER_MIN`），与生成/定制排版共享并发限制。客户端停止会中止上游模型请求。
+响应为`{message,operations,changes,meta:{model,retried}}`。请求头 `Accept: application/x-ndjson` 时，参数校验通过后以 NDJSON 流式返回，HTTP 状态固定为 200：`{type:"progress",chars,message}` 约每 200ms 一次，`message` 为已生成的说明文字；`{type:"retry"}` 表示进入输出纠正；最后一行 `{type:"done",status,body}` 的 `status`、`body` 与非流式响应相同。上游返回普通 JSON 时不产生 progress；上游以含 `stream` 字样的 400 拒绝流式时自动改用非流式重试。Chat Completions 流式不请求用量，上游未附带时 `usage` 字段为 `null`。操作支持`setTitle`、`setSummary`、`updateBlock`、`insertBlock`、`removeBlock`、`moveBlock`和`setLayout`，不接受任意HTML/CSS。`changes`由程序比较实际前后结果产生，不依赖模型自报；咨询可返回空操作。未配置AI返回`AI_NOT_CONFIGURED`，不使用示例结果；无效输出最多纠正一次，整体预算180秒，每来源默认每分钟20次（`RATE_EDIT_PER_MIN`），与生成/定制排版共享并发限制。客户端停止会中止上游模型请求。
 
 客户端检查手机布局后在中间预览候选，确认前不修改或保存正文。应用时按修改对象与相关版式检查冲突，保留无关手动编辑；失效引用保留卡片，失效方案拒绝应用。一次应用沿用文章撤销/重做，并保存`settings.aiEdited`标记；对话、引用、候选不进入草稿、复制或导出。
 

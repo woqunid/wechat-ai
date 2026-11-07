@@ -1,4 +1,12 @@
 export const sendError = (res, status, code, message) => res.status(status).json({ error: { code, message } });
+// 首个进度事件前发出 200；之后 res.status().json() 改写为 done 事件，业务代码沿用同一套响应写法。
+export const streamNdjson = res => {
+  res.status(200).type('application/x-ndjson').set({ 'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no' });
+  res.flushHeaders();
+  res.status = status => { res.statusCode = status; return res; };
+  res.json = body => { res.end(`${JSON.stringify({ type: 'done', status: res.statusCode, body })}\n`); return res; };
+  return event => { if (!res.writableEnded) res.write(`${JSON.stringify(event)}\n`); };
+};
 export const configError = (res, error) => sendError(res, error.status || 400, error.code || 'AI_CONFIG_ERROR', error.message || 'AI 配置操作失败');
 
 export const allowedOrigins = () => (process.env.ALLOWED_ORIGIN?.split(',') || ['http://localhost:5173', 'http://127.0.0.1:5173']).map(value => value.trim()).filter(Boolean);

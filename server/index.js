@@ -24,9 +24,9 @@ import { unsupportedStyles } from '../src/html-document.js';
 import { editInstructions } from './edit-rules.js';
 import { htmlEditInstructions } from './html-edit-rules.js';
 import { usageMeta } from './ai-usage.js';
-import { allowedOrigins, concurrentGenerationLimit, configError, rateLimit, requireOrigin, sendError } from './http.js';
+import { allowedOrigins, concurrentGenerationLimit, configError, rateLimit, requireOrigin, sendError, streamNdjson } from './http.js';
 import { blocksFromDocxHtml, decodeText, isDocx, isPdf, MAX_EDIT_IMAGE_BYTES, MAX_EDIT_IMAGES, parsePdfAttachment, parsePdfText, waitFor } from './documents.js';
-import { isUnsupportedVisionRequest, parseModelJson, runModelTask } from './model-client.js';
+import { isUnsupportedVisionRequest, parseModelJson, runModelTask, partialMessage } from './model-client.js';
 import { registerAdminRoutes } from './admin-routes.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -375,10 +375,19 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
     const note = ignored.length ? `\n已忽略公众号不支持的样式：${listStyles(ignored)}${ignored.length > 6 ? ' 等' : ''}` : '';
     res.json({ ...result, message: result.message.slice(0, 4000 - note.length) + note, changes: describeAIEdit(article, candidate), meta: meta() });
   };
+  const send = req.get('accept')?.includes('application/x-ndjson') ? streamNdjson(res) : null;
+  let lastProgress = 0;
+  const onDelta = send && (text => {
+    if (Date.now() - lastProgress < 200) return;
+    lastProgress = Date.now();
+    send({ type: 'progress', chars: text.length, message: partialMessage(text) });
+  });
   await runModelTask(req, res, {
     timeoutMs: AI_EDIT_TIMEOUT_MS,
+    onDelta,
     failure: { code: 'AI_EDIT_FAILED', message: '修改方案未通过内容或版式检查，原稿已保留，请重试', timeoutMessage: '修改方案生成超时，原稿已保留，请重试' },
     async attempt({ attempt, lastError, request }) {
+      if (attempt) send?.({ type: 'retry' });
       const output = await request({ system: article.html ? htmlEditInstructions : editInstructions, inputData: { ...input, previousValidationError: lastError?.message.slice(0, 1200) }, imageInputs: visionInputs });
       const result = AIEditResponseSchema.parse(parseModelJson(output));
       const ignored = [...new Set(result.operations.flatMap(op => op.html ? unsupportedStyles(op.html) : []))];

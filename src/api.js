@@ -1,8 +1,32 @@
+const checkedData = (status, data, fallback) => {
+  if (status >= 200 && status < 300) return data;
+  throw Object.assign(new Error(data.error?.message || fallback), { code: data.error?.code, status });
+};
+
 export async function requestJson(url, { fallback = '请求失败，请重试', ...options } = {}) {
   const response = await fetch(url, options);
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw Object.assign(new Error(data.error?.message || fallback), { code: data.error?.code, status: response.status });
-  return data;
+  return checkedData(response.status, await response.json().catch(() => ({})), fallback);
+}
+
+// 服务端未进入流式（校验失败、限流等）时仍是普通 JSON，结果与 postJson 一致。
+export async function postStream(url, body, { onEvent, fallback = '请求失败，请重试', ...options } = {}) {
+  const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' }, body: JSON.stringify(body), ...options });
+  if (!response.headers.get('content-type')?.includes('application/x-ndjson')) return checkedData(response.status, await response.json().catch(() => ({})), fallback);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) throw new Error(fallback);
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines.filter(Boolean)) {
+      const event = JSON.parse(line);
+      if (event.type === 'done') return checkedData(event.status, event.body, fallback);
+      onEvent?.(event);
+    }
+  }
 }
 
 export const postJson = (url, body, options = {}) => requestJson(url, {

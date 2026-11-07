@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Check, FileText, Image, Link2, Paperclip, Sparkles, RefreshCw, Square, X } from 'lucide-react';
 import { uid } from './core.js';
-import { absoluteUrl, assetAvailable, postJson, requestJson, uploadAsset } from './api.js';
+import { absoluteUrl, assetAvailable, postStream, requestJson, uploadAsset } from './api.js';
 import { AIEditResponseSchema, AI_EDIT_TIMEOUT_MS, aiEditConversation, aiEditSummary, aiEditTargets, appliedAIEditStatus, buildAIEdit, createAIReference, describeAIEdit, isImageBlock, mergeAIEdit, revertAIEdit, sameAIReference, validAIReference } from './ai-edit.js';
 import { readImageLink } from './image-assets.js';
 import { loadAIEditAttachments, loadAIEditConversation, saveAIEditAttachments, saveAIEditConversation } from './storage.js';
@@ -33,6 +33,7 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
   const [messages, setMessages] = useState([]);
   const [prompt, setPrompt] = useState('');
   const [busy, setBusy] = useState('');
+  const [streamed, setStreamed] = useState(null);
   const [error, setError] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [attachmentsReady, setAttachmentsReady] = useState(false);
@@ -273,7 +274,7 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
     } catch (cause) { setError(cause.message); return; }
     const controller = new AbortController();
     request.current = controller;
-    setBusy('generating'); setError(''); if (!previousRequest) setPrompt('');
+    setBusy('generating'); setStreamed(null); setError(''); if (!previousRequest) setPrompt('');
     const selectedAttachments = previousRequest ? latest.current.attachments.filter(attachment => previousRequest.attachmentIds.includes(attachment.id)) : latest.current.attachments.filter(attachment => attachment.enabled !== false);
     const userMessageId = retry?.id || uid('msg');
     requestMessage.current = userMessageId;
@@ -298,7 +299,11 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
       const payload = { article: working, prompt: instruction, references: requestReferences, messages: aiEditConversation(messages.filter(message => message.id !== userMessageId).map(message => regenerate && message.id === candidate.messageId ? { ...message, status: 'discarded' } : message)), attachments: requestAttachments, pendingChanges: aiEditSummary(original, working), ...aiRequest };
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(AI_EDIT_TIMEOUT_MS + 10000)]);
       const generate = async layoutRepair => {
-        const data = await postJson('/api/articles/edit', { ...payload, ...(layoutRepair ? { layoutRepair } : {}) }, { signal, fallback: '修改方案生成失败' }).catch(issue => {
+        const data = await postStream('/api/articles/edit', { ...payload, ...(layoutRepair ? { layoutRepair } : {}) }, {
+          signal,
+          fallback: '修改方案生成失败',
+          onEvent: event => { if (request.current === controller) setStreamed(event.type === 'retry' ? { retrying: true } : event); },
+        }).catch(issue => {
           if (issue.code === 'NOT_FOUND') issue.message = 'AI修改接口尚未启动，请重启后端服务';
           throw issue;
         });
@@ -310,6 +315,7 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
       let result, next, checkedSource, merged, errorReport, previewAssets = latest.current.assets;
       for (let attempt = 0; attempt < 2; attempt++) {
         result = await generate(attempt ? { result, issue: errorReport } : undefined);
+        setStreamed(null);
         next = buildAIEdit(working, result.operations, { references: selected, assetIds: insertableAssetIds });
         checkedSource = latest.current.article;
         merged = mergeAIEdit(original, next, checkedSource);
@@ -345,7 +351,7 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
         setError(failure);
       }
     } finally {
-      if (request.current === controller) { request.current = null; requestMessage.current = null; setBusy(''); }
+      if (request.current === controller) { request.current = null; requestMessage.current = null; setBusy(''); setStreamed(null); }
     }
   };
   const apply = async () => {
@@ -375,7 +381,7 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
       setError('');
     } catch (cause) { setError(cause.message); }
   };
-  return { references, referenceArticle, messages, prompt, setPrompt, busy, error, attachments, attachmentsReady, attachmentBusy, addAttachments, addImageLink, removeAttachment, toggleAttachment, autoApply, setAutoApply, candidate, problem: resolved.problem, changes, invalidReferences, showCandidate, setShowCandidate, previewArticle: showCandidate && !disabled ? resolved.article : null, addReference, removeReference: referenceId => setReferences(previous => previous.filter(reference => reference.id !== referenceId)), submit, retry: (message, withoutImages) => submit(null, { retry: message, withoutImages }), regenerate: () => submit(null, { regenerate: true }), revertChange, stop, discard, apply, clearConversation };
+  return { references, referenceArticle, messages, prompt, setPrompt, busy, streamed, error, attachments, attachmentsReady, attachmentBusy, addAttachments, addImageLink, removeAttachment, toggleAttachment, autoApply, setAutoApply, candidate, problem: resolved.problem, changes, invalidReferences, showCandidate, setShowCandidate, previewArticle: showCandidate && !disabled ? resolved.article : null, addReference, removeReference: referenceId => setReferences(previous => previous.filter(reference => reference.id !== referenceId)), submit, retry: (message, withoutImages) => submit(null, { retry: message, withoutImages }), regenerate: () => submit(null, { regenerate: true }), revertChange, stop, discard, apply, clearConversation };
 }
 
 export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
@@ -389,7 +395,7 @@ export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
     if (await editor.addImageLink(link.trim())) { setLink(''); setLinkOpen(false); }
   };
   const attachDisabled = disabled || Boolean(editor.busy) || editor.attachmentBusy || editor.attachmentsReady === false;
-  useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }); }, [editor.messages, editor.busy]);
+  useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }); }, [editor.messages, editor.busy, editor.streamed?.message]);
   const pasteAttachments = event => {
     const clipboard = event.clipboardData;
     const files = [...clipboard.files];
@@ -410,7 +416,8 @@ export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
       {editor.messages.length > 0 && <div className="ai-edit-messages-head"><button className="text-link" type="button" disabled={Boolean(editor.busy || editor.candidate)} title={editor.candidate ? '请先应用或取消当前方案' : undefined} onClick={editor.clearConversation}>清空对话</button></div>}
       {!editor.messages.length && <div className="ai-edit-empty"><span className="ai-empty-icon"><Sparkles size={23}/></span><h3>让文章更进一步</h3><p>调整文字、图片或排版。</p><div className="ai-prompt-suggestions">{[...(hasImages ? ['把附件图片插入到合适的位置'] : []), '精简表达，保留关键信息', '优化开头，更快切入主题', '统一段落间距与文字样式'].map(text => <button type="button" key={text} disabled={disabled} onClick={() => editor.setPrompt(text)}>{text}<ArrowUp size={13}/></button>)}</div></div>}
       {editor.messages.map(message => <div key={message.id} className={`ai-edit-message ${message.role}`}><strong>{message.role === 'user' ? '你' : <><Sparkles size={12}/>Weave AI</>}</strong><p>{message.text}</p>{message.referenceCount > 0 && <details className="ai-edit-message-references"><summary>{message.referenceCount} 处引用</summary><div>{message.references?.map((reference, index) => <p key={index}>{reference.text || '图片引用'}</p>)}</div></details>}{message.attachmentNames?.length > 0 && <small>附件：{message.attachmentNames.join('、')}{message.withoutImages ? '（仅文字）' : ''}</small>}{message.status && message.status !== 'answered' && <small className={`ai-message-status ${message.status}`}>{({ pending: message.role === 'user' ? '发送中' : editor.problem ? '方案已失效' : '待应用', applied: '已应用', discarded: '已取消', superseded: '已被后续修改替代', failed: message.failure || '生成失败', stopped: '已停止', reverted: '已撤销' })[message.status]}</small>}{['failed', 'stopped'].includes(message.status) && <div className="ai-message-retry"><button className="text-link" type="button" disabled={Boolean(editor.busy || disabled)} onClick={() => editor.retry(message)}>重试</button>{message.errorCode === 'VISION_UNSUPPORTED' && <button className="text-link" type="button" disabled={Boolean(editor.busy || disabled)} onClick={() => editor.retry(message, true)}>去掉图片后重试</button>}</div>}</div>)}
-      {editor.busy && <div className="ai-edit-progress" role="status"><span className="ai-thinking"><i/><i/><i/></span><span>{editor.busy === 'checking' ? '检查改动与布局…' : editor.busy === 'repairing' ? '修复手机布局溢出…' : '生成修改方案…'}</span></div>}
+      {editor.busy && editor.streamed?.message && <div className="ai-edit-message assistant" aria-hidden="true"><strong><Sparkles size={12}/>Weave AI</strong><p>{editor.streamed.message}</p></div>}
+      {editor.busy && <div className="ai-edit-progress" role="status"><span className="ai-thinking"><i/><i/><i/></span><span>{editor.busy === 'checking' ? '检查改动与布局…' : editor.busy === 'repairing' ? '修复手机布局溢出…' : editor.streamed?.retrying ? '方案未通过检查，正在修正…' : '生成修改方案…'}</span>{editor.streamed?.chars > 0 && <small aria-hidden="true">已生成 {editor.streamed.chars.toLocaleString()} 字符</small>}</div>}
       <div ref={end}/>
     </div>
     {editor.candidate && <div className={`ai-edit-review${editor.problem ? ' is-invalid' : ''}`}>

@@ -9,7 +9,9 @@ import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import sharp from 'sharp';
 import { articleWithHtml, findHtmlNode } from '../src/html-document.js';
+import { partialMessage } from '../server/model-client.js';
 import { AIConversationMessageSchema, aiEditTargets, buildAIEdit, createAIReference } from '../src/ai-edit.js';
+import { postStream } from '../src/api.js';
 
 test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与目标校验', { timeout: 20_000 }, async () => {
   const root = fileURLToPath(new URL('../', import.meta.url));
@@ -48,6 +50,20 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
         const paragraph = {type:'paragraph',runs:[{text:'绿色的草地在阳光下延展，空气清新。'.repeat(6)}]};
         return Response.json({output_text:JSON.stringify({title:'草地',summary:'一片草地',blocks:[paragraph,{type:'imageCard',assetId:input.imageAssetIds[0],caption:images.length ? '一片绿色草地' : undefined},paragraph]})});
       }
+      if (input.prompt === 'stream-responses' || input.prompt === 'stream-chat') {
+        if (!body.stream) throw new Error('Missing stream flag');
+        const chat = input.prompt === 'stream-chat';
+        if (chat && body.input) return Response.json({error:{message:'unsupported endpoint'}}, {status:404});
+        const output = JSON.stringify({message:'流式“说明”\\n第二行',operations:[]});
+        const parts = [output.slice(0, 12), output.slice(12)];
+        const events = chat
+          ? [...parts.map(content => ({choices:[{delta:{content}}]})), {choices:[{delta:{}}],usage:{prompt_tokens:10,completion_tokens:5}}]
+          : [...parts.map(delta => ({type:'response.output_text.delta',delta})), {type:'response.completed',response:{usage:{input_tokens:10,output_tokens:5}}}];
+        const bytes = new TextEncoder().encode(events.map(event => 'data: ' + JSON.stringify(event) + '\\n\\n').join('') + 'data: [DONE]\\n\\n');
+        return new Response(new ReadableStream({ start(stream) { for (let i = 0; i < bytes.length; i += 7) stream.enqueue(bytes.slice(i, i + 7)); stream.close(); } }), {headers:{'Content-Type':'text/event-stream'}});
+      }
+      if (input.prompt === 'stream-rejected') return body.stream ? Response.json({error:{message:'stream is not allowed'}}, {status:400}) : Response.json({output_text:JSON.stringify({message:'已回退非流式',operations:[]})});
+      if (input.prompt === 'stream-failed') return new Response('data: ' + JSON.stringify({type:'response.failed',response:{error:{code:'server_error',message:'boom'}}}) + '\\n\\n', {headers:{'Content-Type':'text/event-stream'}});
       if (!input.article.html || !body.input[0].content[0].text.includes('article.html')) throw new Error('Missing HTML model context');
       if ('scope' in input) throw new Error('Manual scope must not be sent');
       if ('layoutDesign' in input.article || input.article.blocks.some(block => block.runs || block.text.length > 40)) throw new Error('HTML article must send block outline only');
@@ -162,6 +178,25 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
     const ambiguous = await request('ambiguous', { references: [] });
     assert.equal(ambiguous.status, 200);
     assert.deepEqual(ambiguous.data.operations, []);
+    const stream = async (prompt, options = {}) => {
+      const events = [];
+      const data = await postStream('http://127.0.0.1:' + port + '/api/articles/edit', { article, prompt, references: [], ...options }, { onEvent: event => events.push(event) }).catch(error => ({ failure: error }));
+      return { data, events };
+    };
+    for (const prompt of ['stream-responses', 'stream-chat']) {
+      const { data, events } = await stream(prompt, { aiProvider: 'personal', aiConfig: { baseUrl: 'http://html-test.invalid/v1', apiKey: 'test-only', model: prompt } });
+      assert.equal(data.message, '流式“说明”\n第二行');
+      assert.deepEqual([data.meta.usage.inputTokens, data.meta.usage.outputTokens], [10, 5]);
+      assert.ok(events.length >= 1 && events.every(event => event.type === 'progress' && event.chars > 0));
+    }
+    assert.equal((await stream('layout')).data.operations[0].type, 'setHtml');
+    assert.equal((await stream('stream-rejected')).data.message, '已回退非流式');
+    assert.deepEqual((await stream('unsupported-styles')).events.map(event => event.type), ['retry']);
+    assert.equal((await stream('stream-failed')).data.failure.code, 'AI_UPSTREAM_ERROR');
+    assert.equal((await stream('')).data.failure.code, 'INVALID_EDIT_INPUT');
+    assert.equal(partialMessage('{"message":"第一行\\n第二行\\u4e'), '第一行\n第二行');
+    assert.equal(partialMessage('{"message":"引号\\"结束'), '引号"结束');
+    assert.equal(partialMessage('{"operations":[]'), '');
     for (const route of ['generate', 'design', 'edit']) {
       for (const scenario of ['401', '429', '503', '500-price', 'timeout']) {
         const prompt = scenario === 'timeout' ? `timeout-${route}` : `upstream-${scenario}-${route}`;

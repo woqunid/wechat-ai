@@ -2359,6 +2359,7 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
 .ai-message-status { display: inline-block; padding: 1px 5px; border-radius: 3px; background: var(--bg-subtle); }
 .ai-message-status.applied { color: var(--primary); background: var(--primary-subtle); }
 .ai-edit-progress { display: flex; align-items: center; gap: 9px; padding: 8px 2px; color: var(--text-secondary); font-size: 10px; }
+.ai-edit-progress small { margin-left: auto; font-size: inherit; font-variant-numeric: tabular-nums; }
 .ai-thinking { display: inline-flex; gap: 3px; }
 .ai-thinking i { width: 4px; height: 4px; border-radius: 50%; background: var(--primary); animation: thinking 1.2s ease-in-out infinite; }
 .ai-thinking i:nth-child(2) { animation-delay: .15s; }
