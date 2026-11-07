@@ -1869,30 +1869,27 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   white-space: nowrap;
 }
 
-.image-checks {
+.copy-checks {
   border-top: 1px solid var(--border-light);
   margin-top: 18px;
 }
 
-.image-checks > div {
+.copy-checks > div {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 12px 0;
   border-bottom: 1px solid var(--border-light);
-  font-size: 12px;
+  font-size: 13px;
+  color: var(--text-regular);
 }
 
-.image-checks > div span {
+.copy-checks > div span {
   flex: 1;
 }
 
-.copy-image-thumb {
-  width: 44px;
-  height: 44px;
-  object-fit: cover;
-  border-radius: var(--r-xs);
-  border: 1px solid var(--border-light);
+.copy-checks > .is-error span {
+  color: #9a3412;
 }
 
 /* AI 设置面板 (精工浮窗) */

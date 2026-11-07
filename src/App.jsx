@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { getTemplate } from "./templates";
 import { renderArticle } from "./renderer";
 import { copyHtml } from "./clipboard";
+import { imageExpiry } from "./image-expiry.js";
 import { checkRawConsistency, parseRaw } from "./rawparser";
 import { uid } from "./core";
 import { GENERATION_TIMEOUT_MS } from "./creation.js";
@@ -490,14 +491,16 @@ function WorkspaceApp() {
   };
   const copy = async (force = false) => {
     if (!article) return;
-    if (article.title.length > 64 && !force) {
-      setModal("long-title");
+    const expiry = imageExpiry(article, assets);
+    if (!force && (article.title.length > 64 || expiry.expired.length)) {
+      setModal("copy-check");
       return;
     }
     const rendered = renderArticle(article, template, assets);
     try {
       await copyHtml(rendered);
-      setModal("copied");
+      setModal(null);
+      setToast(`已复制，请在公众号正文区 Ctrl+V 粘贴并检查版式与图片${expiry.expiring.length ? `；${expiry.expiring.length} 张图片缓存将在 ${expiry.days} 天内过期，请尽快保存` : ""}`);
     } catch (e) {
       setCopyFailure(e.name === "NotAllowedError" ? "permission" : "general");
       setModal("copy-error");

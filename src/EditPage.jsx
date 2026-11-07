@@ -472,33 +472,23 @@ export function EditPage({
         </div>
       </Modal>}
       {modal === "clear" && <ConfirmDialog eyebrow="清空草稿" title="删除当前文章草稿？" onClose={closeModal} confirmLabel="清空草稿" confirmClassName="danger-action" confirmDisabled={navigating} onConfirm={clear}/>}
-      {modal === "copied" && <ConfirmDialog eyebrow="已复制" eyebrowClassName="success-eyebrow" title="HTML 排版已复制" onClose={closeModal} cancelLabel="关闭" confirmLabel={<><Copy size={14} />重新复制</>} onConfirm={() => { setModal(null); copy(true); }}>
-        <p>请在 135 编辑器或公众号后台粘贴，并检查版式与图片。</p>
-        <ol>
-          <li>打开 135 编辑器或公众号图文编辑器</li>
-          <li>在正文区域按 Ctrl+V 粘贴内容</li>
-          <li>检查版式与图片后保存</li>
-        </ol>
-        <div className="image-checks">
-          {article.blocks.filter(isImageBlock).map(block => {
-            const asset = assets.get(block.assetId);
-            const broken = asset?.pasteStatus === "broken";
-            return <div key={block.id}>
-              <span>{block.caption || "文章图片"}</span>
-              {asset?.previewUrl && <img className="copy-image-thumb" src={asset.previewUrl} alt="" />}
-              <small>{broken ? "资源已过期，需重新上传" : "需手动检查"}</small>
-              {broken && <button className="text-link" onClick={() => {
-                if (asset.blob) uploadImage(asset.blob, article.blocks.findIndex(item => item.id === block.id), block.id);
-              }}>重新上传</button>}
-              <a href={asset?.previewUrl || asset?.url || "#"} download>下载原图</a>
-            </div>;
-          })}
-        </div>
-      </ConfirmDialog>}
-      {modal === "long-title" && <ConfirmDialog eyebrow="文章标题" title="标题超过 64 个字符" onClose={closeModal} cancelLabel="继续编辑" confirmLabel="仍然复制" onConfirm={() => copy(true)}>
-        <p>可以返回缩短标题，或继续复制。</p>
-      </ConfirmDialog>}
-      {modal === "copy-error" && <ConfirmDialog eyebrow="复制未完成" title={copyFailure === "permission" ? "剪贴板权限被拒绝" : "HTML 排版未能复制"} onClose={closeModal} cancelLabel="关闭" confirmLabel="重新复制 HTML" onConfirm={() => copy(true)}>
+      {modal === "copy-check" && (() => {
+        const titleOver = article.title.length > 64;
+        const restorable = expiry.expired.filter(id => expiry.restorable.includes(id));
+        const lost = article.blocks.find(block => isImageBlock(block) && expiry.expired.includes(block.assetId) && !restorable.includes(block.assetId));
+        const pending = titleOver || expiry.expired.length > 0;
+        return <ConfirmDialog eyebrow="复制前检查" title={pending ? "复制前建议处理以下问题" : "问题已处理，可以复制"} onClose={closeModal} cancelLabel="返回编辑" confirmLabel={<><Copy size={14} />{pending ? "仍然复制" : "复制排版"}</>} confirmDisabled={imageUploads > 0} onConfirm={() => copy(true)}>
+          <div className="copy-checks">
+            {titleOver && <div><span>标题 {article.title.length}/64 字，超出公众号限制</span><button className="text-link" onClick={() => { closeModal(); locateContent('title'); }}>去修改</button></div>}
+            {expiry.expired.length > 0 && <div className="is-error"><span>{expiry.expired.length} 张图片缓存已过期，复制后将缺图</span>
+              {restorable.length > 0 && <button className="text-link" disabled={imageUploads > 0} onClick={() => renewImages(restorable)}>{imageUploads > 0 ? "恢复中…" : "从本地原图恢复"}</button>}
+              {lost && <button className="text-link" onClick={() => { closeModal(); locateContent(`block:${lost.id}`); }}>定位重新插入</button>}
+            </div>}
+            {!pending && <div><span>所有检查项已通过</span></div>}
+          </div>
+        </ConfirmDialog>;
+      })()}
+      {modal === "copy-error" && <ConfirmDialog eyebrow="复制未完成" title={copyFailure === "permission" ? "剪贴板权限被拒绝" : "HTML 排版未能复制"} onClose={closeModal} cancelLabel="关闭" confirmLabel="重新复制" onConfirm={() => copy(true)}>
         <p>{copyFailure === "permission" ? "请允许本页访问剪贴板后重新复制。" : "请重新复制；如果仍然失败，请使用 Chrome 或 Edge 桌面版重试。"}</p>
       </ConfirmDialog>}
     </div>
