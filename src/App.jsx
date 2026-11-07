@@ -317,7 +317,10 @@ function WorkspaceApp() {
         ]),
         fallback: "生成失败",
       });
-      try { await enterEditor({ article: data.article, generationInput: submittedInput, snapshot: null }); }
+      try {
+        await enterEditor({ article: data.article, generationInput: submittedInput, snapshot: null });
+        if (data.meta?.visionSkipped) setToast("当前模型不支持识图，图片按上传顺序排入文中");
+      }
       catch { storageFailure(); }
     } catch (e) {
       setToast(

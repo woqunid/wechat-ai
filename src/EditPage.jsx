@@ -250,7 +250,7 @@ export function EditPage({
       const result = await onRegenerate();
       if (!result?.pending) {
         onSnapshotSaved?.(previous);
-        setToast(result?.ignoredImages ? `${result.ignoredImages} 张 Markdown 图片未导入，请在编辑器中插入原图` : "文章已重新生成");
+        setToast(result?.ignoredImages ? `${result.ignoredImages} 张 Markdown 图片未导入，请在编辑器中插入原图` : result?.meta?.visionSkipped ? "文章已重新生成，当前模型不支持识图，图片按原顺序排入" : "文章已重新生成");
       }
     } catch (e) {
       setToast(e.message || "重新生成失败");

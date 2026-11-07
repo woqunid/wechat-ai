@@ -63,6 +63,14 @@ app.use('/uploads', express.static(uploadDir, { fallthrough: false, maxAge: '1h'
 const publicAssetUrl = filename => `${String(process.env.PUBLIC_BASE_URL || '').trim().replace(/\/$/, '')}/uploads/${filename}`;
 const imageAssetExists = id => findImageFiles(uploadDir, id).length > 0;
 const attachmentName = file => path.basename(file.originalname).slice(0, 240);
+const visionImage = async (assetId, label) => {
+  const filename = findImageFiles(uploadDir, assetId)[0];
+  if (!filename) return null;
+  try {
+    const buffer = await sharp(path.join(uploadDir, filename)).resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer();
+    return { assetId, label: `${label}（assetId：${assetId}）`, mime: 'image/jpeg', buffer };
+  } catch { return null; }
+};
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', version: '0.1.0' }));
 registerAdminRoutes(app, { envPath: path.join(root, '.env') });
@@ -257,6 +265,8 @@ app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concu
   const startedAt = Date.now();
   const templateContentGuide = template ? { preferredBlocks: template.fit.preferredBlocks, headingLevels: [1, 2], missingContent: 'omit', priority: 'below-writing-rules' } : undefined;
   const protectedParts = mode === 'polish' ? protectedFragments(source) : [];
+  let imageInputs = (await Promise.all(assetIds.map((assetId, index) => visionImage(assetId, `素材图片 ${index + 1}`)))).filter(Boolean);
+  let visionSkipped = false;
   let draft = null;
   let report;
   const respond = meta => {
@@ -273,16 +283,24 @@ app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concu
       parsed.data.blocks.push({ id: uid('b'), type: 'imageCard', assetId, caption: '' });
     }
     if (!templateId) parsed.data.templateId = recommendTemplates(parsed.data)[0]?.id || 'T01';
-    res.json({ article: parsed.data, meta: { promptVersion: 'semantic-3', schemaVersion: 1, ...meta({ latencyMs: Date.now() - startedAt }), ...(report ? { length: report.length, protectedMissingCount: report.missing.length } : {}) } });
+    res.json({ article: parsed.data, meta: { promptVersion: 'semantic-3', schemaVersion: 1, ...meta({ latencyMs: Date.now() - startedAt }), ...(visionSkipped ? { visionSkipped } : {}), ...(report ? { length: report.length, protectedMissingCount: report.missing.length } : {}) } });
   };
   await runModelTask(req, res, {
     timeoutMs: GENERATION_TIMEOUT_MS,
     failure: { code: 'AI_INVALID_OUTPUT', message: '生成暂时未完成，请重试' },
     async attempt({ lastError, request }) {
-      const output = await request({
+      const options = {
         system: generationInstructions({ mode, tone, targetLength }),
-        inputData: { task: mode === 'polish' ? '润色文章，保留事实与重要细节及叙事顺序' : '基于主题和素材创作文章', mode, topic, source, imageAssetIds: assetIds, tone, targetLength, templateContentGuide, revision: draft ? { draft, issues: report.issues, actualBodyChars: report.length.actual } : undefined, schemaVersion: 1, previousValidationError: lastError?.message || undefined },
-      });
+        inputData: { task: mode === 'polish' ? '润色文章，保留事实与重要细节及叙事顺序' : '基于主题和素材创作文章', mode, topic, source, imageAssetIds: assetIds, ...(imageInputs.length ? { visibleImageAssetIds: imageInputs.map(image => image.assetId) } : {}), tone, targetLength, templateContentGuide, revision: draft ? { draft, issues: report.issues, actualBodyChars: report.length.actual } : undefined, schemaVersion: 1, previousValidationError: lastError?.message || undefined },
+      };
+      let output;
+      try { output = await request({ ...options, imageInputs }); }
+      catch (error) {
+        if (!imageInputs.length || !isUnsupportedVisionRequest(error)) throw error;
+        imageInputs = []; visionSkipped = true;
+        delete options.inputData.visibleImageAssetIds;
+        output = await request(options);
+      }
       const next = normalizeDraft(output, assetIds);
       const nextReport = inspectDraft(next, { targetLength, protectedParts });
       if (preferDraft(nextReport, report)) { draft = next; report = nextReport; }
@@ -345,14 +363,7 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
     imageInputs.push({ assetId: imageAssetId, name, label: `附件图片：${name}（assetId：${imageAssetId}）`, mime, buffer });
   }
   const referencedImages = [...new Map(references.filter(reference => reference.kind === 'image' && assetIds.includes(reference.assetId)).map(reference => [reference.assetId, reference])).values()];
-  const referenceInputs = (await Promise.all(referencedImages.map(async ({ assetId, text }) => {
-    const filename = findImageFiles(uploadDir, assetId)[0];
-    if (!filename) return [];
-    try {
-      const buffer = await sharp(path.join(uploadDir, filename)).resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer();
-      return [{ assetId, label: `引用图片：${text.slice(0, 60)}（assetId：${assetId}）`, mime: 'image/jpeg', buffer }];
-    } catch { return []; }
-  }))).flat();
+  const referenceInputs = (await Promise.all(referencedImages.map(({ assetId, text }) => visionImage(assetId, `引用图片：${text.slice(0, 60)}`)))).filter(Boolean);
   const visionInputs = [...imageInputs, ...referenceInputs];
   const insertableImages = (await dimensions(imageAssetIds)).map(item => ({ ...item, name: imageInputs.find(image => image.assetId === item.assetId).name }));
   const outline = block => ({ id: block.id, type: block.type, text: blockText(block).slice(0, 40), ...(isImageBlock(block) ? { assetId: block.assetId } : {}) });

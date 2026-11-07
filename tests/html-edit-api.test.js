@@ -40,6 +40,14 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
         }
         return Response.json({choices:[{message:{content:JSON.stringify({message:'兼容接口可用',operations:[]})}}]});
       }
+      if (input.topic?.startsWith('vision-generate')) {
+        const content = body.input[1].content;
+        const images = content.filter(item => item.type === 'input_image');
+        if (input.topic.includes('unsupported') && images.length) return Response.json({error:{message:'image input is not supported by this model'}}, {status:400});
+        if (!input.topic.includes('unsupported') && (images.length !== 1 || input.visibleImageAssetIds?.[0] !== input.imageAssetIds[0] || !content.some(item => item.type === 'input_text' && item.text === '素材图片 1（assetId：' + input.imageAssetIds[0] + '）'))) throw new Error('Missing generation image');
+        const paragraph = {type:'paragraph',runs:[{text:'绿色的草地在阳光下延展，空气清新。'.repeat(6)}]};
+        return Response.json({output_text:JSON.stringify({title:'草地',summary:'一片草地',blocks:[paragraph,{type:'imageCard',assetId:input.imageAssetIds[0],caption:images.length ? '一片绿色草地' : undefined},paragraph]})});
+      }
       if (!input.article.html || !body.input[0].content[0].text.includes('article.html')) throw new Error('Missing HTML model context');
       if ('scope' in input) throw new Error('Manual scope must not be sent');
       if ('layoutDesign' in input.article || input.article.blocks.some(block => block.runs || block.text.length > 40)) throw new Error('HTML article must send block outline only');
@@ -143,6 +151,14 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
     assert.equal(described.data.message, '图中是一片绿色');
     const { assetId, ...withoutImage } = sentReference;
     assert.equal((await request('describe-reference', { article: withImage, references: [withoutImage] })).data.error.code, 'AI_EDIT_FAILED');
+    for (const topic of ['vision-generate', 'vision-generate-unsupported']) {
+      const response = await fetch(`http://127.0.0.1:${port}/api/articles/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic, targetLength: 600, assetIds: [asset.id] }) });
+      const generated = await response.json();
+      assert.equal(response.status, 200);
+      assert.equal(generated.article.blocks[1].assetId, asset.id);
+      assert.equal(generated.article.blocks[1].caption, topic.includes('unsupported') ? undefined : '一片绿色草地');
+      assert.equal(generated.meta.visionSkipped, topic.includes('unsupported') || undefined);
+    }
     const ambiguous = await request('ambiguous', { references: [] });
     assert.equal(ambiguous.status, 200);
     assert.deepEqual(ambiguous.data.operations, []);

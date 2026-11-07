@@ -43,7 +43,7 @@ AI 生成、设计和编辑成功响应的 `meta` 均增加 `usage:{inputTokens,
 | POST | `/api/articles/edit` | 基于全文、引用和对话返回待确认的内容与排版修改方案 |
 | POST | `/api/articles/edit/attachments` | `multipart/form-data`，字段 `file`，解析 AI 修改附件并提取文档文字与内嵌图片 |
 
-`generate` 请求字段：`mode`、`topic`、`text`、`materials[]`、`assetIds[]`、`tone`、`targetLength`、`aiProvider`（`platform` 或 `personal`），可选 `aiConfig:{baseUrl,apiKey,model}`（仅个人模式）和 `templateId`（T01–T40，重新生成时保留选中模板）。平台模式读取服务端环境变量；个人模式只使用本次请求携带的配置，不写入服务端。未指定模板时，根据规范化后的内容推荐初始模板。按 `AI_API_STYLE` 调用 OpenAI 兼容 Responses 或 Chat Completions 接口；`auto` 默认先尝试 Responses，不支持时回退 Chat Completions。未配置所选服务时返回 `AI_NOT_CONFIGURED`，不会生成示例内容。响应带 `meta`（提示词/Schema 版本、模型、耗时、重试状态）。`design` 和 `edit` 请求也接收相同的 `aiProvider` 与个人模式 `aiConfig` 字段。
+`generate` 请求字段：`mode`、`topic`、`text`、`materials[]`、`assetIds[]`、`tone`、`targetLength`、`aiProvider`（`platform` 或 `personal`），可选 `aiConfig:{baseUrl,apiKey,model}`（仅个人模式）和 `templateId`（T01–T40，重新生成时保留选中模板）。平台模式读取服务端环境变量；个人模式只使用本次请求携带的配置，不写入服务端。未指定模板时，根据规范化后的内容推荐初始模板。按 `AI_API_STYLE` 调用 OpenAI 兼容 Responses 或 Chat Completions 接口；`auto` 默认先尝试 Responses，不支持时回退 Chat Completions。未配置所选服务时返回 `AI_NOT_CONFIGURED`，不会生成示例内容。`assetIds` 对应的图片缩放至 1280px 内后作为多模态输入，模型据画面安排位置并写图注；模型不支持识图时自动去掉画面重试，`meta.visionSkipped` 为 `true`，图片仅按 ID 排入。响应带 `meta`（提示词/Schema 版本、模型、耗时、重试状态）。`design` 和 `edit` 请求也接收相同的 `aiProvider` 与个人模式 `aiConfig` 字段。
 
 `semantic-3` 提示词分别定义创作、润色和三种中文语气。事实与当前模式的保留要求优先于语气和长度，模板仅提供低优先级的块类型偏好，不提供主题或强制结构。服务端兼容 JSON 代码围栏、Markdown 正文、文字型段落和列表条目，保留加粗语义、去除 AI 视觉字段，整理标题层级与长段落；图片必须引用请求提供的 ID。原文排版不走此流程，继续在前端本地解析。
 

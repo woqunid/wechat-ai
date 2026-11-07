@@ -64,7 +64,7 @@ async function requestModel({ config, system, inputData, signal, imageInputs = [
   let response = await request(kind, kind === 'chat' ? chatBody : responsesBody);
   if (!response.ok) {
     const error = await upstreamFailure(response);
-    const unsupported = style !== 'responses' && kind === 'responses' && [400, 404, 405, 422].includes(error.status) && (/unsupported|not found|unknown|not support/i.test(error.upstreamMessage) || error.status === 404 || error.status === 405);
+    const unsupported = style !== 'responses' && kind === 'responses' && !isUnsupportedVisionRequest(error) && [400, 404, 405, 422].includes(error.status) && (/unsupported|not found|unknown|not support/i.test(error.upstreamMessage) || error.status === 404 || error.status === 405);
     if (!unsupported) throw error;
     kind = 'chat';
     response = await request(kind, chatBody);
