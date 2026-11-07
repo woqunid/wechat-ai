@@ -58,6 +58,21 @@ export function getAIStatus() {
   };
 }
 
+export function safeAIStatus(fallbackMessage = 'AI 服务配置无效') {
+  try { return getAIStatus(); }
+  catch (error) {
+    return {
+      aiConfigured: false,
+      baseUrl: '',
+      hasApiKey: Boolean(process.env.AI_API_KEY),
+      model: '',
+      models: [],
+      source: 'environment',
+      configurationError: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || fallbackMessage },
+    };
+  }
+}
+
 export function resolveCredentials(body) {
   const baseUrl = normalizeBaseUrl(body?.baseUrl);
   if (body.apiKey !== undefined && typeof body.apiKey !== 'string') throw fail('INVALID_AI_KEY', 'API Key 格式无效');

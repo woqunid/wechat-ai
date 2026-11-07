@@ -1,8 +1,6 @@
 import express from 'express';
 import multer from 'multer';
 import mammoth from 'mammoth';
-import pdfParse from 'pdf-parse/lib/pdf-parse.js';
-import pdfjs from 'pdf-parse/lib/pdf.js/v1.10.100/build/pdf.js';
 import sharp from 'sharp';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -15,10 +13,7 @@ import { normalizeDraft } from '../src/content.js';
 import { GENERATION_TIMEOUT_MS, TARGET_LENGTHS, WRITING_TONES } from '../src/creation.js';
 import { generationInstructions, inspectDraft, preferDraft, protectedFragments } from './writing-rules.js';
 import { recommendTemplates } from '../src/recommender.js';
-import { DomUtils, parseDocument } from 'htmlparser2';
-import { fetchModels, getAIConfig, getAIStatus, normalizeBaseUrl, resolveAIConfig, resolveCredentials, resolveRequestAIConfig } from './ai-config.js';
-import { ADMIN_SESSION_COOKIE, ADMIN_SESSION_TTL_SECONDS, createAdminSession, verifyAdminPassword, verifyAdminSession } from './admin-auth.js';
-import { writePlatformAIConfig } from './env-config.js';
+import { fetchModels, getAIConfig, getAIStatus, resolveAIConfig, resolveCredentials, safeAIStatus } from './ai-config.js';
 import { fetchRemoteImage, MAX_IMAGE_BYTES } from './remote-image.js';
 import { cleanupExpiredAssets, findImageFiles, imageDateDirectory, imageLifetime } from './image-storage.js';
 import { clearArticleStyles, layoutSource, LAYOUT_TIMEOUT_MS, validateLayoutDesign } from '../src/layout-design.js';
@@ -28,7 +23,11 @@ import { AIEditRequestSchema, AIEditResponseSchema, AI_EDIT_TIMEOUT_MS, aiEditCo
 import { unsupportedStyles } from '../src/html-document.js';
 import { editInstructions } from './edit-rules.js';
 import { htmlEditInstructions } from './html-edit-rules.js';
-import { normalizeUsage, usageMeta } from './ai-usage.js';
+import { usageMeta } from './ai-usage.js';
+import { allowedOrigins, concurrentGenerationLimit, configError, rateLimit, requireOrigin, sendError } from './http.js';
+import { blocksFromDocxHtml, decodeText, isDocx, isPdf, MAX_EDIT_IMAGE_BYTES, MAX_EDIT_IMAGES, parsePdfAttachment, parsePdfText, waitFor } from './documents.js';
+import { isUnsupportedVisionRequest, parseModelJson, runModelTask } from './model-client.js';
+import { registerAdminRoutes } from './admin-routes.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 dotenv.config({ path: path.join(root, '.env') });
@@ -37,21 +36,14 @@ fs.mkdirSync(uploadDir, { recursive: true });
 const app = express();
 app.set('trust proxy', 'loopback');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
-const MAX_EDIT_IMAGES = 10;
-const MAX_EDIT_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_EDIT_DOCUMENT_CHARS = 200_000;
-const oneMinute = new Map();
-const activeGenerations = new Map();
-const adminSessions = new Map();
-let totalGenerations = 0;
-const resolvedApiStyles = new Map();
+const IMAGE_MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' };
 let activeImageImports = 0;
 
 app.use(express.json({ limit: '4mb' }));
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  const allowedOrigins = process.env.ALLOWED_ORIGIN?.split(',').map(value => value.trim()) || ['http://localhost:5173', 'http://127.0.0.1:5173'];
-  if (origin && allowedOrigins.includes(origin)) res.setHeader('Access-Control-Allow-Origin', origin);
+  if (origin && allowedOrigins().includes(origin)) res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Vary', 'Origin');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' https: data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'self' about:; base-uri 'self'; object-src 'none'");
@@ -68,324 +60,24 @@ app.use((req, res, next) => {
 });
 app.use('/uploads', express.static(uploadDir, { fallthrough: false, maxAge: '1h' }));
 
-function rateLimit(defaultLimit, setting) {
-  return (req, res, next) => {
-    const limit = Number(process.env[setting] || defaultLimit);
-    const key = `${req.ip}:${req.path}`;
-    const now = Date.now();
-    const state = oneMinute.get(key) || { start: now, count: 0 };
-    if (now - state.start >= 60_000) { state.start = now; state.count = 0; }
-    if (++state.count > limit) {
-      res.setHeader('Retry-After', String(Math.max(1, Math.ceil((60_000 - (now - state.start)) / 1000))));
-      return res.status(429).json({ error: { code: 'RATE_LIMITED', message: '请求过于频繁，请稍后再试' } });
-    }
-    oneMinute.set(key, state);
-    next();
-  };
-}
-const concurrentGenerationLimit = (req, res, next) => {
-  const active = activeGenerations.get(req.ip) || 0;
-  const busySource = active >= Number(process.env.GENERATION_CONCURRENCY_PER_SOURCE || 2);
-  if (busySource || totalGenerations >= Number(process.env.GENERATION_CONCURRENCY_TOTAL || 6)) {
-    res.setHeader('Retry-After', '5');
-    return res.status(429).json({ error: { code: 'RATE_LIMITED', message: busySource ? '已有生成任务进行中，请等待完成后再试' : '生成任务较多，请稍后再试' } });
-  }
-  activeGenerations.set(req.ip, active + 1);
-  totalGenerations++;
-  let released = false;
-  const release = () => {
-    if (released) return;
-    released = true;
-    totalGenerations--;
-    const count = activeGenerations.get(req.ip) - 1;
-    if (count > 0) activeGenerations.set(req.ip, count); else activeGenerations.delete(req.ip);
-  };
-  res.once('finish', release);
-  res.once('close', release);
-  next();
-};
-const waitFor = (promise, ms) => Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('parse timeout')), ms))]);
 const publicAssetUrl = filename => `${String(process.env.PUBLIC_BASE_URL || '').trim().replace(/\/$/, '')}/uploads/${filename}`;
 const imageAssetExists = id => findImageFiles(uploadDir, id).length > 0;
-const inlineRuns = nodes => {
-  const runs = [];
-  const visit = (children, bold = false) => {
-    for (const node of children || []) {
-      if (node.type === 'text') {
-        if (node.data) runs.push({ text: node.data, ...(bold ? { bold: true } : {}) });
-      } else if (node.name === 'br') {
-        runs.push({ text: '\n', ...(bold ? { bold: true } : {}) });
-      } else {
-        visit(node.children, bold || node.name === 'strong' || node.name === 'b');
-      }
-    }
-  };
-  visit(nodes);
-  return runs.filter(run => run.text);
-};
-function blocksFromDocxHtml(html) {
-  const root = parseDocument(html);
-  const blocks = [];
-  let ignoredImages = 0;
-  const visit = nodes => {
-    for (const node of nodes || []) {
-      if (node.type !== 'tag') continue;
-      if (node.name === 'img') { ignoredImages++; continue; }
-      if (['h1', 'h2', 'h3'].includes(node.name)) {
-        const text = DomUtils.textContent(node).trim();
-        if (text.length && text.length <= 40) blocks.push({ id: uid('b'), type: 'heading', level: node.name === 'h1' ? 1 : 2, text });
-        else if (text) blocks.push({ id: uid('b'), type: 'paragraph', runs: [{ text }] });
-      } else if (node.name === 'p') {
-        const runs = inlineRuns(node.children);
-        if (runs.some(run => run.text.trim())) blocks.push({ id: uid('b'), type: 'paragraph', runs });
-      } else if (node.name === 'blockquote') {
-        const runs = inlineRuns(node.children);
-        if (runs.some(run => run.text.trim())) blocks.push({ id: uid('b'), type: 'quote', runs });
-      } else if (node.name === 'ul' || node.name === 'ol') {
-        const items = (node.children || []).filter(child => child.name === 'li').map(item => inlineRuns(item.children)).filter(runs => runs.some(run => run.text.trim())).slice(0, 30);
-        if (items.length) blocks.push({ id: uid('b'), type: 'list', ordered: node.name === 'ol', items });
-      } else {
-        visit(node.children);
-      }
-    }
-  };
-  visit(root.children);
-  const text = blocks.map(block => block.type === 'heading' ? block.text : block.type === 'list' ? block.items.map(runs => runs.map(run => run.text).join('')).join('\n') : block.runs.map(run => run.text).join('')).join('\n\n');
-  return { blocks, text, ignoredImages };
-}
-
-async function extractPdfImages(page, maxImages) {
-  const pdf = pdfjs.PDFJS;
-  const list = await page.getOperatorList();
-  const images = [];
-  const seen = new Set();
-  let omittedImages = 0;
-  for (let index = 0; index < list.fnArray.length; index++) {
-    const operation = list.fnArray[index];
-    const args = list.argsArray[index] || [];
-    let image;
-    let key;
-    if ([pdf.OPS.paintImageXObject, pdf.OPS.paintJpegXObject, pdf.OPS.paintImageXObjectRepeat].includes(operation)) {
-      key = String(args[0]);
-      image = await new Promise(resolve => page.objs.get(args[0], resolve));
-    } else if (operation === pdf.OPS.paintInlineImageXObject) image = args[0];
-    if (!image?.data || !image.width || !image.height) continue;
-    const raw = Buffer.from(image.data.buffer || image.data, image.data.byteOffset || 0, image.data.byteLength || image.data.length);
-    key ||= crypto.createHash('sha256').update(raw).digest('hex');
-    if (seen.has(key)) continue;
-    seen.add(key);
-    if (images.length >= maxImages) { omittedImages++; continue; }
-    const channels = raw.length / (image.width * image.height);
-    try {
-      const buffer = Number.isInteger(channels) && channels >= 1 && channels <= 4
-        ? await sharp(raw, { raw: { width: image.width, height: image.height, channels } }).png().toBuffer()
-        : await sharp(raw).png().toBuffer();
-      images.push(buffer);
-    } catch { omittedImages++; }
-  }
-  return { images, omittedImages };
-}
-
-async function parsePdfAttachment(buffer) {
-  pdfjs.PDFJS.disableFontFace = true;
-  const images = [];
-  let omittedImages = 0;
-  const originalImage = globalThis.Image;
-  if (!originalImage) globalThis.Image = class {
-    set src(value) {
-      const data = Buffer.from(String(value).split(',').at(-1), 'base64');
-      sharp(data).removeAlpha().raw().toBuffer({ resolveWithObject: true }).then(({ data: pixels, info }) => {
-        this.width = info.width;
-        this.height = info.height;
-        this.data = pixels;
-        this.onload?.();
-      }).catch(() => this.onerror?.());
-    }
-  };
-  try {
-    const parsed = await waitFor(pdfParse(buffer, {
-      max: 200,
-      pagerender: async page => {
-        const text = await page.getTextContent({ normalizeWhitespace: false, disableCombineTextItems: false });
-        try {
-          const extracted = await extractPdfImages(page, MAX_EDIT_IMAGES - images.length);
-          images.push(...extracted.images);
-          omittedImages += extracted.omittedImages;
-        } catch {}
-        let lastY, result = '';
-        for (const item of text.items) {
-          result += lastY === item.transform[5] || !lastY ? item.str : `\n${item.str}`;
-          lastY = item.transform[5];
-        }
-        return result;
-      },
-    }), 15_000);
-    if (parsed.numpages > 200) throw new Error('page limit');
-    return { text: parsed.text, images, omittedImages };
-  } finally { if (!originalImage) delete globalThis.Image; }
-}
+const attachmentName = file => path.basename(file.originalname).slice(0, 240);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', version: '0.1.0' }));
-const configError = (res, error) => res.status(error.status || 400).json({ error: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || 'AI 配置操作失败' } });
-const rejectMissingAIConfig = (res, config) => {
-  if (config.baseUrl && config.apiKey && config.model) return false;
-  const partial = Boolean(config.baseUrl || config.apiKey || config.model);
-  res.status(400).json({ error: {
-    code: partial ? 'AI_CONFIG_INCOMPLETE' : 'AI_NOT_CONFIGURED',
-    message: partial
-      ? config.source === 'personal' ? '个人 AI 配置不完整，请重新保存' : '平台 AI 配置不完整，请检查部署环境变量'
-      : '请先在 AI 设置中选择可用的 AI 服务'
-  } });
-  return true;
-};
-const isAllowedOrigin = req => {
-  const origin = req.get('origin');
-  if (!origin) return true;
-  const forwardedHost = req.get('x-forwarded-host')?.split(',')[0].trim();
-  const forwardedProtocol = req.get('x-forwarded-proto')?.split(',')[0].trim();
-  const requestHost = (forwardedHost || req.get('host') || '').toLowerCase();
-  const requestProtocol = (forwardedProtocol || req.protocol).replace(/:$/, '').toLowerCase();
-  let sameOrigin = false;
-  try {
-    const parsedOrigin = new URL(origin);
-    sameOrigin = parsedOrigin.host.toLowerCase() === requestHost && parsedOrigin.protocol === `${requestProtocol}:`;
-  } catch {}
-  const allowedOrigins = (process.env.ALLOWED_ORIGIN?.split(',') || ['http://localhost:5173', 'http://127.0.0.1:5173']).map(value => value.trim()).filter(Boolean);
-  return sameOrigin || allowedOrigins.includes(origin);
-};
-const adminPassword = () => process.env.BAOLONG_ADMIN_PASSWORD || '';
-const readAdminCookie = req => {
-  for (const item of (req.headers.cookie || '').split(';')) {
-    const separator = item.indexOf('=');
-    if (separator < 0 || item.slice(0, separator).trim() !== ADMIN_SESSION_COOKIE) continue;
-    return item.slice(separator + 1).trim();
-  }
-  return '';
-};
-const clearAdminCookie = (res, secure) => res.setHeader('Set-Cookie', `${ADMIN_SESSION_COOKIE}=; Path=/api/admin; HttpOnly; SameSite=Strict; Max-Age=0${secure ? '; Secure' : ''}`);
-const isActiveAdminSession = session => {
-  const expiresAt = adminSessions.get(session);
-  if (!expiresAt || expiresAt <= Math.floor(Date.now() / 1000) || !verifyAdminSession(session, adminPassword())) {
-    adminSessions.delete(session);
-    return false;
-  }
-  return true;
-};
-const requireAdmin = (req, res, next) => {
-  if (!adminPassword()) return res.status(503).json({ error: { code: 'ADMIN_AUTH_NOT_CONFIGURED', message: '服务器尚未设置管理访问密码' } });
-  const session = readAdminCookie(req);
-  if (!isActiveAdminSession(session)) return res.status(401).json({ error: { code: 'ADMIN_AUTH_REQUIRED', message: '请先登录管理页面' } });
-  next();
-};
-const requireAdminOrigin = (req, res) => {
-  if (req.get('origin') && isAllowedOrigin(req)) return false;
-  res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '管理请求来源无效' } });
-  return true;
-};
-const adminSecureCookie = req => req.secure;
-const adminAIStatus = () => {
-  try { return getAIStatus(); }
-  catch (error) {
-    return {
-      aiConfigured: false,
-      baseUrl: '',
-      hasApiKey: Boolean(process.env.AI_API_KEY),
-      model: '',
-      models: [],
-      source: 'environment',
-      configurationError: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '平台 AI 配置无效' },
-    };
-  }
-};
-const adminAIConfig = () => {
-  try { return getAIConfig(); }
-  catch { return { baseUrl: '', apiKey: process.env.AI_API_KEY || '' }; }
-};
-app.get('/api/admin/session', (req, res) => {
-  if (!adminPassword()) return res.status(503).json({ error: { code: 'ADMIN_AUTH_NOT_CONFIGURED', message: '服务器尚未设置管理访问密码' } });
-  const session = readAdminCookie(req);
-  if (!isActiveAdminSession(session)) return res.status(401).json({ error: { code: 'ADMIN_AUTH_REQUIRED', message: '请先登录管理页面' } });
-  res.json({ authenticated: true });
-});
-app.post('/api/admin/login', rateLimit(8, 'RATE_ADMIN_LOGIN_PER_MIN'), (req, res) => {
-  if (requireAdminOrigin(req, res)) return;
-  const password = adminPassword();
-  if (!password) return res.status(503).json({ error: { code: 'ADMIN_AUTH_NOT_CONFIGURED', message: '服务器尚未设置管理访问密码' } });
-  if (!verifyAdminPassword(req.body?.password, password)) return res.status(401).json({ error: { code: 'ADMIN_AUTH_FAILED', message: '访问密码不正确' } });
-  const secure = adminSecureCookie(req);
-  const session = createAdminSession(password);
-  const now = Math.floor(Date.now() / 1000);
-  for (const [token, expiresAt] of adminSessions) if (expiresAt <= now) adminSessions.delete(token);
-  adminSessions.set(session, Number(session.split('.')[0]));
-  res.setHeader('Set-Cookie', `${ADMIN_SESSION_COOKIE}=${session}; Path=/api/admin; HttpOnly; SameSite=Strict; Max-Age=${ADMIN_SESSION_TTL_SECONDS}${secure ? '; Secure' : ''}`);
-  res.json({ authenticated: true });
-});
-app.post('/api/admin/logout', (req, res) => {
-  if (requireAdminOrigin(req, res)) return;
-  adminSessions.delete(readAdminCookie(req));
-  clearAdminCookie(res, adminSecureCookie(req));
-  res.json({ authenticated: false });
-});
-app.get('/api/admin/config', requireAdmin, (req, res) => res.json(adminAIStatus()));
-app.post('/api/admin/models', rateLimit(20, 'RATE_CONFIG_PER_MIN'), requireAdmin, async (req, res) => {
-  if (requireAdminOrigin(req, res)) return;
-  try {
-    const baseUrl = normalizeBaseUrl(req.body?.baseUrl);
-    const suppliedKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
-    const saved = adminAIConfig();
-    const apiKey = suppliedKey || (baseUrl === saved.baseUrl ? saved.apiKey : '');
-    const credentials = resolveCredentials({ baseUrl, apiKey });
-    const models = await fetchModels(credentials);
-    res.json({ baseUrl, models });
-  } catch (error) { configError(res, error); }
-});
-app.post('/api/admin/config', rateLimit(10, 'RATE_CONFIG_PER_MIN'), requireAdmin, async (req, res) => {
-  if (requireAdminOrigin(req, res)) return;
-  try {
-    const baseUrl = normalizeBaseUrl(req.body?.baseUrl);
-    const suppliedKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
-    const saved = adminAIConfig();
-    const apiKey = suppliedKey || (baseUrl === saved.baseUrl ? saved.apiKey : '');
-    const credentials = resolveCredentials({ baseUrl, apiKey });
-    const model = typeof req.body?.model === 'string' ? req.body.model.trim() : '';
-    if (!model || model.length > 256) return res.status(400).json({ error: { code: 'INVALID_MODEL', message: '请选择有效模型' } });
-    const models = await fetchModels(credentials);
-    if (!models.includes(model)) return res.status(400).json({ error: { code: 'INVALID_MODEL', message: '模型不在服务返回的可用列表中，请重新获取模型' } });
-    await writePlatformAIConfig(path.join(root, '.env'), { AI_BASE_URL: baseUrl, AI_API_KEY: credentials.apiKey, AI_MODEL: model });
-    process.env.AI_BASE_URL = baseUrl;
-    process.env.AI_API_KEY = credentials.apiKey;
-    process.env.AI_MODEL = model;
-    res.json(adminAIStatus());
-  } catch (error) {
-    if (error.code) return configError(res, error);
-    console.error('Unable to persist platform AI configuration');
-    res.status(500).json({ error: { code: 'AI_CONFIG_WRITE_FAILED', message: '无法写入 .env，请检查服务目录的写入权限' } });
-  }
-});
+registerAdminRoutes(app, { envPath: path.join(root, '.env') });
 app.get('/api/config/status', async (req, res) => {
-  try {
-    const config = getAIConfig();
-    if (config.baseUrl && config.apiKey && !config.model) {
-      try { await resolveAIConfig(); }
-      catch (error) { return res.json({ ...getAIStatus(), configurationError: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '无法获取模型列表' } }); }
-    }
-    const status = getAIStatus();
-    const partial = status.source !== 'none' && !(status.baseUrl && status.hasApiKey && status.model);
-    return res.json({ ...status, ...(partial ? { configurationError: { code: 'AI_CONFIG_INCOMPLETE', message: 'AI 服务配置不完整，请填写服务 URL、API Key 并选择模型' } } : {}) });
-  } catch (error) {
-    return res.json({
-      aiConfigured: false,
-      baseUrl: '',
-      hasApiKey: Boolean(process.env.AI_API_KEY),
-      model: '',
-      models: [],
-      source: 'environment',
-      configurationError: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || 'AI 服务配置无效' }
-    });
+  let config;
+  try { config = getAIConfig(); } catch { return res.json(safeAIStatus()); }
+  if (config.baseUrl && config.apiKey && !config.model) {
+    try { await resolveAIConfig(); }
+    catch (error) { return res.json({ ...getAIStatus(), configurationError: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '无法获取模型列表' } }); }
   }
+  const status = getAIStatus();
+  const partial = status.source !== 'none' && !(status.baseUrl && status.hasApiKey && status.model);
+  res.json({ ...status, ...(partial ? { configurationError: { code: 'AI_CONFIG_INCOMPLETE', message: 'AI 服务配置不完整，请填写服务 URL、API Key 并选择模型' } } : {}) });
 });
-app.post('/api/config/models', rateLimit(20, 'RATE_CONFIG_PER_MIN'), async (req, res) => {
-  if (!isAllowedOrigin(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许，请配置 ALLOWED_ORIGIN 或检查反向代理来源信息' } });
+app.post('/api/config/models', rateLimit(20, 'RATE_CONFIG_PER_MIN'), requireOrigin('当前页面来源未被服务端允许，请配置 ALLOWED_ORIGIN 或检查反向代理来源信息'), async (req, res) => {
   try {
     const credentials = resolveCredentials(req.body);
     const models = await fetchModels(credentials);
@@ -397,6 +89,7 @@ app.get('/api/templates', (req, res) => res.json({ version: '2.1.0', templates }
 app.post('/api/materials/parse', rateLimit(20, 'RATE_PARSE_PER_MIN'), upload.array('files', 5), async (req, res) => {
   const files = [];
   for (const file of req.files || []) {
+    const name = attachmentName(file);
     try {
       const extension = path.extname(file.originalname).toLowerCase();
       const buffer = file.buffer;
@@ -404,57 +97,51 @@ app.post('/api/materials/parse', rateLimit(20, 'RATE_PARSE_PER_MIN'), upload.arr
       let blocks;
       let imageCount = 0;
       if (extension === '.txt' || extension === '.md') {
-        text = new TextDecoder('utf-8').decode(buffer);
-        if (text.includes('\uFFFD')) text = new TextDecoder('gbk').decode(buffer);
-      } else if (extension === '.docx' && buffer[0] === 0x50 && buffer[1] === 0x4b) {
-        const converted = await waitFor(mammoth.convertToHtml({ buffer }), 15_000);
-        const structured = blocksFromDocxHtml(converted.value);
+        text = decodeText(buffer);
+      } else if (extension === '.docx' && isDocx(buffer)) {
+        const structured = blocksFromDocxHtml((await waitFor(mammoth.convertToHtml({ buffer }))).value);
         blocks = structured.blocks;
         text = structured.text;
         imageCount = structured.ignoredImages;
-      } else if (extension === '.pdf' && buffer.subarray(0, 5).toString() === '%PDF-') {
-        const parsed = await waitFor(pdfParse(buffer, { max: 200 }), 15_000);
-        if (parsed.numpages > 200) throw new Error('page limit');
-        text = parsed.text;
+      } else if (extension === '.pdf' && isPdf(buffer)) {
+        text = await parsePdfText(buffer);
       } else {
         throw new Error('unsupported type or signature');
       }
       const withoutWhitespace = text.replace(/\s/g, '');
       const badChars = (text.match(/[\uFFFD\u0000-\u0008\u000b\u000c\u000e-\u001f]/g) || []).length;
       if (withoutWhitespace.length < 20 || badChars / Math.max(text.length, 1) > 0.05) throw new Error('extraction quality too low');
-      files.push({ name: path.basename(file.originalname).slice(0, 240), ok: true, text, charCount: text.length, preview: text.slice(0, 200), ...(blocks ? { blocks } : {}), ...(imageCount ? { warnings: ['文档中的图片未导入，请单独上传'], imageCount } : {}) });
+      files.push({ name, ok: true, text, charCount: text.length, preview: text.slice(0, 200), ...(blocks ? { blocks } : {}), ...(imageCount ? { warnings: ['文档中的图片未导入，请单独上传'], imageCount } : {}) });
     } catch {
-      files.push({ name: path.basename(file.originalname).slice(0, 240), ok: false, error: '无法读取文本，请粘贴文字' });
+      files.push({ name, ok: false, error: '无法读取文本，请粘贴文字' });
     }
   }
   res.json({ files });
 });
 
-app.post('/api/articles/edit/attachments', rateLimit(60, 'RATE_EDIT_ATTACHMENTS_PER_MIN'), upload.single('file'), async (req, res) => {
-  if (!isAllowedOrigin(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
+app.post('/api/articles/edit/attachments', rateLimit(60, 'RATE_EDIT_ATTACHMENTS_PER_MIN'), upload.single('file'), requireOrigin(), async (req, res) => {
   const file = req.file;
-  if (!file) return res.status(400).json({ error: { code: 'INVALID_ATTACHMENT', message: '请选择图片或文档' } });
-  const name = path.basename(file.originalname).slice(0, 240);
+  if (!file) return sendError(res, 400, 'INVALID_ATTACHMENT', '请选择图片或文档');
+  const name = attachmentName(file);
   const extension = path.extname(name).toLowerCase();
-  if (['.jpg', '.jpeg', '.png', '.webp'].includes(extension)) {
-    if (file.size > 10 * 1024 * 1024) return res.status(413).json({ error: { code: 'FILE_TOO_LARGE', message: '图片不能超过10 MB' } });
+  if (Object.hasOwn(IMAGE_MIME, extension)) {
+    if (file.size > MAX_IMAGE_BYTES) return sendError(res, 413, 'FILE_TOO_LARGE', '图片不能超过10 MB');
     try {
       const asset = await cacheImage(file.buffer);
       return res.json({ attachment: { kind: 'image', name, assetId: asset.id, cacheUrl: asset.cacheUrl, mime: asset.mime, bytes: asset.bytes } });
     } catch (error) {
-      return res.status(400).json({ error: { code: error.code || 'INVALID_IMAGE', message: error.message || '图片无法处理' } });
+      return sendError(res, 400, error.code || 'INVALID_IMAGE', error.message || '图片无法处理');
     }
   }
-  if (!['.pdf', '.docx', '.txt', '.md'].includes(extension)) return res.status(400).json({ error: { code: 'UNSUPPORTED_ATTACHMENT', message: '仅支持 JPG、PNG、WebP、PDF、DOCX、TXT 和 MD' } });
+  if (!['.pdf', '.docx', '.txt', '.md'].includes(extension)) return sendError(res, 400, 'UNSUPPORTED_ATTACHMENT', '仅支持 JPG、PNG、WebP、PDF、DOCX、TXT 和 MD');
 
   let text = '';
   let imageBuffers = [];
   let omittedImages = 0;
   try {
     if (extension === '.txt' || extension === '.md') {
-      text = new TextDecoder('utf-8').decode(file.buffer);
-      if (text.includes('\uFFFD')) text = new TextDecoder('gbk').decode(file.buffer);
-    } else if (extension === '.docx' && file.buffer[0] === 0x50 && file.buffer[1] === 0x4b) {
+      text = decodeText(file.buffer);
+    } else if (extension === '.docx' && isDocx(file.buffer)) {
       let totalImageBytes = 0;
       const converted = await waitFor(mammoth.convertToHtml({ buffer: file.buffer }, {
         convertImage: mammoth.images.imgElement(async image => {
@@ -467,20 +154,20 @@ app.post('/api/articles/edit/attachments', rateLimit(60, 'RATE_EDIT_ATTACHMENTS_
           imageBuffers.push(imageBuffer);
           return { src: `attachment-image:${imageBuffers.length}` };
         }),
-      }), 15_000);
+      }));
       text = blocksFromDocxHtml(converted.value).text;
-    } else if (extension === '.pdf' && file.buffer.subarray(0, 5).toString() === '%PDF-') {
+    } else if (extension === '.pdf' && isPdf(file.buffer)) {
       const parsed = await parsePdfAttachment(file.buffer);
       text = parsed.text;
       imageBuffers = parsed.images;
       omittedImages = parsed.omittedImages;
     } else {
-      return res.status(400).json({ error: { code: 'UNREADABLE_DOCUMENT', message: '文档无法读取' } });
+      return sendError(res, 400, 'UNREADABLE_DOCUMENT', '文档无法读取');
     }
     const extractedTextLength = text.replace(/\s/g, '').length;
-    if (!text.trim() && !imageBuffers.length) return res.status(422).json({ error: { code: 'UNREADABLE_DOCUMENT', message: '文档中没有可用文字或图片' } });
-    if (extension === '.pdf' && extractedTextLength < 20) return res.status(422).json({ error: { code: 'UNREADABLE_DOCUMENT', message: '未提取到足够的文字，不支持扫描版 PDF 或图片文字识别' } });
-    if (text.length > MAX_EDIT_DOCUMENT_CHARS) return res.status(413).json({ error: { code: 'DOCUMENT_TOO_LARGE', message: '文档文字超过20万字，请拆分后上传' } });
+    if (!text.trim() && !imageBuffers.length) return sendError(res, 422, 'UNREADABLE_DOCUMENT', '文档中没有可用文字或图片');
+    if (extension === '.pdf' && extractedTextLength < 20) return sendError(res, 422, 'UNREADABLE_DOCUMENT', '未提取到足够的文字，不支持扫描版 PDF 或图片文字识别');
+    if (text.length > MAX_EDIT_DOCUMENT_CHARS) return sendError(res, 413, 'DOCUMENT_TOO_LARGE', '文档文字超过20万字，请拆分后上传');
     const images = [];
     let imageBytes = 0;
     for (const [index, imageBuffer] of imageBuffers.entries()) {
@@ -493,20 +180,21 @@ app.post('/api/articles/edit/attachments', rateLimit(60, 'RATE_EDIT_ATTACHMENTS_
     }
     return res.json({ attachment: { kind: 'document', name, text, charCount: text.length, images, ...(omittedImages ? { warning: `有${omittedImages}张内嵌图片无法提取或超过附件上限` } : {}) } });
   } catch {
-    return res.status(422).json({ error: { code: 'UNREADABLE_DOCUMENT', message: '文档无法读取，请确认文件完整；扫描版 PDF 不支持识别' } });
+    return sendError(res, 422, 'UNREADABLE_DOCUMENT', '文档无法读取，请确认文件完整；扫描版 PDF 不支持识别');
   }
 });
 
+const imageError = (code, message) => Object.assign(new Error(message), { code, status: 400 });
 async function cacheImage(buffer, sourceUrl) {
-  if (!buffer.length || buffer.length > MAX_IMAGE_BYTES) throw Object.assign(new Error('图片为空或超过 10MB'), { code: 'IMAGE_TOO_LARGE', status: 400 });
+  if (!buffer.length || buffer.length > MAX_IMAGE_BYTES) throw imageError('IMAGE_TOO_LARGE', '图片为空或超过 10MB');
   const metadata = await sharp(buffer, { failOn: 'error' }).metadata();
   const format = { jpeg: { mime: 'image/jpeg', extension: 'jpg' }, png: { mime: 'image/png', extension: 'png' }, webp: { mime: 'image/webp', extension: 'webp' } }[metadata.format];
-  if (!format) throw Object.assign(new Error('仅支持 JPG、PNG 和 WebP 图片'), { code: 'INVALID_IMAGE', status: 400 });
-  if (!metadata.width || !metadata.height || metadata.width > 8000 || metadata.height > 8000) throw Object.assign(new Error('图片尺寸过大'), { code: 'DIMENSION_EXCEEDED', status: 400 });
+  if (!format) throw imageError('INVALID_IMAGE', '仅支持 JPG、PNG 和 WebP 图片');
+  if (!metadata.width || !metadata.height || metadata.width > 8000 || metadata.height > 8000) throw imageError('DIMENSION_EXCEEDED', '图片尺寸过大');
   const id = uid('img');
   const filename = `${id}.${format.extension}`;
   const normalized = await sharp(buffer).rotate().toBuffer({ resolveWithObject: true });
-  if (normalized.info.size > MAX_IMAGE_BYTES) throw Object.assign(new Error('图片处理后超过 10MB'), { code: 'IMAGE_TOO_LARGE', status: 400 });
+  if (normalized.info.size > MAX_IMAGE_BYTES) throw imageError('IMAGE_TOO_LARGE', '图片处理后超过 10MB');
   const uploadedAt = Date.now();
   const directory = imageDateDirectory(uploadedAt);
   const relativePath = `${directory}/${filename}`;
@@ -517,9 +205,8 @@ async function cacheImage(buffer, sourceUrl) {
   return { id, filename, mime: format.mime, width: normalized.info.width, height: normalized.info.height, bytes: normalized.info.size, cacheUrl, url: sourceUrl && !/^https:\/\//i.test(publicUrl) ? sourceUrl : publicUrl, ...(sourceUrl ? { sourceUrl } : {}), expiresAt: new Date(uploadedAt + imageLifetime()).toISOString(), pasteStatus: 'needs-manual' };
 }
 
-app.post('/api/assets/import', rateLimit(20, 'RATE_IMPORT_PER_MIN'), async (req, res) => {
-  if (!isAllowedOrigin(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '此来源不能导入图片' } });
-  if (activeImageImports >= 2) return res.status(429).json({ error: { code: 'RATE_LIMITED', message: '正在读取其他图片，请稍后重试' } });
+app.post('/api/assets/import', rateLimit(20, 'RATE_IMPORT_PER_MIN'), requireOrigin('此来源不能导入图片'), async (req, res) => {
+  if (activeImageImports >= 2) return sendError(res, 429, 'RATE_LIMITED', '正在读取其他图片，请稍后重试');
   const controller = new AbortController();
   res.once('close', () => { if (!res.writableEnded) controller.abort(); });
   activeImageImports++;
@@ -528,204 +215,110 @@ app.post('/api/assets/import', rateLimit(20, 'RATE_IMPORT_PER_MIN'), async (req,
     const asset = await cacheImage(buffer, sourceUrl);
     if (!controller.signal.aborted) res.json({ asset });
   } catch (error) {
-    if (!controller.signal.aborted) res.status(error.status || 400).json({ error: { code: error.code || 'INVALID_IMAGE', message: error.status ? error.message : '图片无法处理，请使用 JPG、PNG 或 WebP 直链' } });
+    if (!controller.signal.aborted) sendError(res, error.status || 400, error.code || 'INVALID_IMAGE', error.status ? error.message : '图片无法处理，请使用 JPG、PNG 或 WebP 直链');
   } finally { activeImageImports--; }
 });
 
 app.post('/api/assets', rateLimit(60, 'RATE_ASSETS_PER_MIN'), upload.single('file'), async (req, res) => {
   try {
     const imageExtension = req.file ? path.extname(req.file.originalname).toLowerCase() : '';
-    const supportedExtensions = ['.jpg', '.jpeg', '.png', '.webp'];
-    if (!req.file || req.file.size > 10 * 1024 * 1024 || !supportedExtensions.includes(imageExtension)) {
-      return res.status(400).json({ error: { code: req.file?.size > 10 * 1024 * 1024 ? 'IMAGE_TOO_LARGE' : 'INVALID_IMAGE', message: '图片格式不支持或超过 10MB' } });
+    if (!req.file || req.file.size > MAX_IMAGE_BYTES || !Object.hasOwn(IMAGE_MIME, imageExtension)) {
+      return sendError(res, 400, req.file?.size > MAX_IMAGE_BYTES ? 'IMAGE_TOO_LARGE' : 'INVALID_IMAGE', '图片格式不支持或超过 10MB');
     }
     res.json({ asset: await cacheImage(req.file.buffer) });
   } catch (error) {
-    res.status(error.status || 400).json({ error: { code: error.code || 'INVALID_IMAGE', message: error.status ? error.message : '图片无法处理' } });
+    sendError(res, error.status || 400, error.code || 'INVALID_IMAGE', error.status ? error.message : '图片无法处理');
   }
 });
 
 app.delete('/api/assets/:id', (req, res) => {
   const id = req.params.id;
-  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id)) return res.status(400).json({ error: { code: 'INVALID_ID', message: '资源编号无效' } });
+  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id)) return sendError(res, 400, 'INVALID_ID', '资源编号无效');
   const matches = findImageFiles(uploadDir, id);
-  if (!matches.length) return res.status(404).json({ error: { code: 'NOT_FOUND', message: '图片资源不存在' } });
+  if (!matches.length) return sendError(res, 404, 'NOT_FOUND', '图片资源不存在');
   for (const name of matches) fs.rmSync(path.join(uploadDir, name), { force: true });
   res.status(204).end();
 });
 
-const modelResult = data => ({ text: data.output_text || data.choices?.[0]?.message?.content || data.output?.flatMap(item => item.content || []).find(item => item.type === 'output_text')?.text || '', usage: normalizeUsage(data.usage) });
-const isUnsupportedVisionRequest = error => {
-  const detail = `${error?.message || ''} ${error?.upstreamMessage || ''}`;
-  return /(?:image|vision|multimodal|input_image|image_url).{0,100}(?:not supported|unsupported|not support|unavailable|disabled)|(?:not supported|unsupported|not support|unavailable|disabled).{0,100}(?:image|vision|multimodal|input_image|image_url)/i.test(detail);
-};
-const respondModelFailure = (res, error, signal, { code, message, timeoutMessage = message }) => {
-  const timeout = signal.aborted || ['TimeoutError', 'AbortError'].includes(error?.name);
-  const upstream = Boolean(error?.status);
-  code = timeout ? 'AI_TIMEOUT' : error?.upstreamCode === 'model_price_error' ? 'AI_UPSTREAM_CONFIG_ERROR' : upstream ? 'AI_UPSTREAM_ERROR' : code;
-  if (timeout) message = timeoutMessage;
-  else if (code === 'AI_UPSTREAM_CONFIG_ERROR') message = '当前模型的上游计费配置错误，请联系 AI 服务商修复或切换模型';
-  else if (upstream) message = `AI 服务请求失败（HTTP ${error.status}），请检查模型和服务配置`;
-  else if (code === 'AI_EDIT_FAILED' && error?.name !== 'ZodError' && /\p{Script=Han}/u.test(error?.message || '')) message = `修改方案未通过检查（${error.message.slice(0, 300)}），原稿已保留，可调整要求后重试`;
-  res.locals.modelFailure = { kind: timeout ? 'timeout' : upstream ? 'upstream' : 'validation', ...(error?.status ? { status: error.status } : {}), ...(error?.upstreamCode ? { upstreamCode: error.upstreamCode } : {}) };
-  return res.status(timeout ? 504 : 502).json({ error: { code, message } });
-};
-async function requestModel({ config, system, source, topic, mode, tone, targetLength, assetIds, template, signal, previousError, revision, inputData, imageInputs = [] }) {
-  const base = config.baseUrl;
-  const style = process.env.AI_API_STYLE || 'auto';
-  const cacheKey = `${base}\0${crypto.createHash('sha256').update(config.apiKey).digest('hex')}\0${config.model}`;
-  const resolvedApiStyle = resolvedApiStyles.get(cacheKey);
-  const templateContentGuide = template ? { preferredBlocks: template.fit.preferredBlocks, headingLevels: [1, 2], missingContent: 'omit', priority: 'below-writing-rules' } : undefined;
-  const input = JSON.stringify(inputData || { task: mode === 'polish' ? '润色文章，保留事实与重要细节及叙事顺序' : '基于主题和素材创作文章', mode, topic, source, imageAssetIds: assetIds, tone, targetLength, templateContentGuide, revision, schemaVersion: 1, previousValidationError: previousError || undefined });
-  const responsesUserContent = [{ type: 'input_text', text: input }, ...imageInputs.flatMap(image => [
-    { type: 'input_text', text: `附件图片：${image.name}` },
-    { type: 'input_image', image_url: `data:${image.mime};base64,${image.buffer.toString('base64')}` },
-  ])];
-  const chatUserContent = imageInputs.length ? [{ type: 'text', text: input }, ...imageInputs.flatMap(image => [
-    { type: 'text', text: `附件图片：${image.name}` },
-    { type: 'image_url', image_url: { url: `data:${image.mime};base64,${image.buffer.toString('base64')}` } },
-  ])] : input;
-  const responsesBody = { model: config.model, input: [{ role: 'system', content: [{ type: 'input_text', text: system }] }, { role: 'user', content: responsesUserContent }], text: { format: { type: 'json_object' } } };
-  const chatBody = { model: config.model, temperature: 0.5, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content: chatUserContent }] };
-  const request = async (kind, body) => {
-    const timeout = AbortSignal.timeout(Number(process.env.AI_TIMEOUT_MS || 90_000));
-    return fetch(`${base}/${kind === 'responses' ? 'responses' : 'chat/completions'}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` }, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
-  };
-  const upstreamFailure = async response => {
-    const upstreamMessage = (await response.text()).slice(0, 2000);
-    let upstreamCode;
-    try { upstreamCode = JSON.parse(upstreamMessage).error?.code; } catch { /* non-JSON upstream errors have no code */ }
-    return Object.assign(new Error(`upstream ${response.status}`), { status: response.status, upstreamCode, upstreamMessage });
-  };
-  let kind = style === 'chat' || (style === 'auto' && resolvedApiStyle === 'chat') ? 'chat' : 'responses';
-  let response = await request(kind, kind === 'chat' ? chatBody : responsesBody);
-  if (!response.ok) {
-    const error = await upstreamFailure(response);
-    const unsupported = style !== 'responses' && kind === 'responses' && [400, 404, 405, 422].includes(error.status) && (/unsupported|not found|unknown|not support/i.test(error.upstreamMessage) || error.status === 404 || error.status === 405);
-    if (!unsupported) throw error;
-    kind = 'chat';
-    response = await request(kind, chatBody);
-    if (!response.ok) throw await upstreamFailure(response);
-  }
-  if (style === 'auto') resolvedApiStyles.set(cacheKey, kind);
-  return modelResult(await response.json());
-}
 app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concurrentGenerationLimit, async (req, res) => {
   const { mode = 'create', topic = '', text = '', materials = [], tone = 'plain', targetLength = 1000, assetIds = [], templateId } = req.body || {};
-  const validModes = ['create', 'polish'];
-  if (!validModes.includes(mode)) return res.status(400).json({ error: { code: 'INVALID_MODE', message: '创作方式无效' } });
-  if (typeof topic !== 'string' || typeof text !== 'string' || !Array.isArray(materials) || materials.some(value => typeof value !== 'string') || !Array.isArray(assetIds) || assetIds.length > 10) return res.status(400).json({ error: { code: 'INVALID_INPUT', message: '输入内容格式无效' } });
-  if (typeof tone !== 'string' || !Object.hasOwn(WRITING_TONES, tone) || !TARGET_LENGTHS.includes(targetLength)) return res.status(400).json({ error: { code: 'INVALID_SETTINGS', message: '文章设置无效' } });
-  if (templateId !== undefined && !templates.some(template => template.id === templateId)) return res.status(400).json({ error: { code: 'INVALID_TEMPLATE', message: '模板不存在' } });
+  if (!['create', 'polish'].includes(mode)) return sendError(res, 400, 'INVALID_MODE', '创作方式无效');
+  if (typeof topic !== 'string' || typeof text !== 'string' || !Array.isArray(materials) || materials.some(value => typeof value !== 'string') || !Array.isArray(assetIds) || assetIds.length > 10) return sendError(res, 400, 'INVALID_INPUT', '输入内容格式无效');
+  if (typeof tone !== 'string' || !Object.hasOwn(WRITING_TONES, tone) || !TARGET_LENGTHS.includes(targetLength)) return sendError(res, 400, 'INVALID_SETTINGS', '文章设置无效');
+  const template = templateId === undefined ? undefined : templates.find(item => item.id === templateId);
+  if (templateId !== undefined && !template) return sendError(res, 400, 'INVALID_TEMPLATE', '模板不存在');
   const source = [text, ...materials].filter(Boolean).join('\n\n');
-  if (source.length > 30_000) return res.status(400).json({ error: { code: 'INPUT_TOO_LONG', message: '素材总量超过 30,000 字' } });
-  if (mode === 'polish' && !source.trim()) return res.status(400).json({ error: { code: 'INPUT_EMPTY', message: '请先添加正文或文档素材' } });
-  if (mode === 'create' && !topic.trim() && !source.trim()) return res.status(400).json({ error: { code: 'INPUT_EMPTY', message: '请输入主题或上传/粘贴素材' } });
-  if (mode === 'create' && !source.trim() && topic.trim().length < 5) return res.status(400).json({ error: { code: 'TOPIC_TOO_SHORT', message: '主题至少 5 个字符' } });
-  if (new Set(assetIds).size !== assetIds.length || assetIds.some(id => !imageAssetExists(id))) return res.status(400).json({ error: { code: 'INVALID_ASSET', message: '部分图片已失效，请重新上传' } });
+  if (source.length > 30_000) return sendError(res, 400, 'INPUT_TOO_LONG', '素材总量超过 30,000 字');
+  if (mode === 'polish' && !source.trim()) return sendError(res, 400, 'INPUT_EMPTY', '请先添加正文或文档素材');
+  if (mode === 'create' && !topic.trim() && !source.trim()) return sendError(res, 400, 'INPUT_EMPTY', '请输入主题或上传/粘贴素材');
+  if (mode === 'create' && !source.trim() && topic.trim().length < 5) return sendError(res, 400, 'TOPIC_TOO_SHORT', '主题至少 5 个字符');
+  if (new Set(assetIds).size !== assetIds.length || assetIds.some(id => !imageAssetExists(id))) return sendError(res, 400, 'INVALID_ASSET', '部分图片已失效，请重新上传');
   const title = (topic.trim() || source.trim().split(/\n/)[0] || '未命名文章').slice(0, 64);
   const startedAt = Date.now();
-  const controller = new AbortController();
-  res.once('close', () => { if (!res.writableEnded) controller.abort(); });
-  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(GENERATION_TIMEOUT_MS)]);
-  let aiConfig;
-  try { aiConfig = await resolveRequestAIConfig(req.body); }
-  catch (error) { return res.status(error.status || 502).json({ error: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '无法连接 AI 服务' } }); }
-  if (rejectMissingAIConfig(res, aiConfig)) return;
-  let draft = null;
-  let retried = false;
-  const usages = res.locals.modelUsages = [];
-  let lastError;
-  let report;
+  const templateContentGuide = template ? { preferredBlocks: template.fit.preferredBlocks, headingLevels: [1, 2], missingContent: 'omit', priority: 'below-writing-rules' } : undefined;
   const protectedParts = mode === 'polish' ? protectedFragments(source) : [];
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (signal.aborted) break;
-    retried = attempt > 0;
-    usages.push(normalizeUsage());
-    try {
-      const output = await requestModel({ config: aiConfig, system: generationInstructions({ mode, tone, targetLength }), source, topic, mode, tone, targetLength, assetIds, template: templates.find(template => template.id === templateId), signal, previousError: lastError?.message, revision: draft ? { draft, issues: report.issues, actualBodyChars: report.length.actual } : undefined });
-      usages[attempt] = output.usage;
-      const next = normalizeDraft(output.text, assetIds);
+  let draft = null;
+  let report;
+  const respond = meta => {
+    const now = new Date().toISOString();
+    const parsed = ArticleSchema.safeParse({
+      schemaVersion: 1, id: uid('article'), mode, title: String(draft.title || title).slice(0, 64),
+      summary: draft.summary, blocks: draft.blocks, templateId: templateId || 'T01',
+      settings: { tone, targetLength, aiGenerated: true },
+      createdAt: now, updatedAt: now
+    });
+    if (!parsed.success) return sendError(res, 502, 'AI_INVALID_OUTPUT', '生成内容格式异常，请重试');
+    const referenced = new Set(parsed.data.blocks.filter(isImageBlock).map(block => block.assetId));
+    for (const assetId of assetIds) if (!referenced.has(assetId)) {
+      parsed.data.blocks.push({ id: uid('b'), type: 'imageCard', assetId, caption: '' });
+    }
+    if (!templateId) parsed.data.templateId = recommendTemplates(parsed.data)[0]?.id || 'T01';
+    res.json({ article: parsed.data, meta: { promptVersion: 'semantic-3', schemaVersion: 1, ...meta({ latencyMs: Date.now() - startedAt }), ...(report ? { length: report.length, protectedMissingCount: report.missing.length } : {}) } });
+  };
+  await runModelTask(req, res, {
+    timeoutMs: GENERATION_TIMEOUT_MS,
+    failure: { code: 'AI_INVALID_OUTPUT', message: '生成暂时未完成，请重试' },
+    async attempt({ lastError, request }) {
+      const output = await request({
+        system: generationInstructions({ mode, tone, targetLength }),
+        inputData: { task: mode === 'polish' ? '润色文章，保留事实与重要细节及叙事顺序' : '基于主题和素材创作文章', mode, topic, source, imageAssetIds: assetIds, tone, targetLength, templateContentGuide, revision: draft ? { draft, issues: report.issues, actualBodyChars: report.length.actual } : undefined, schemaVersion: 1, previousValidationError: lastError?.message || undefined },
+      });
+      const next = normalizeDraft(output, assetIds);
       const nextReport = inspectDraft(next, { targetLength, protectedParts });
       if (preferDraft(nextReport, report)) { draft = next; report = nextReport; }
-      if (!report.issues.length) break;
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      lastError = error;
-      if (error.status) break;
-    }
-  }
-  if (controller.signal.aborted) return;
-  if (!draft) return respondModelFailure(res, lastError, signal, { code: 'AI_INVALID_OUTPUT', message: '生成暂时未完成，请重试' });
-  const candidate = {
-    schemaVersion: 1, id: uid('article'), mode, title: String(draft.title || title).slice(0, 64),
-    summary: draft.summary, blocks: draft.blocks, templateId: templateId || 'T01',
-    settings: { tone, targetLength, aiGenerated: true },
-    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
-  };
-  const parsed = ArticleSchema.safeParse(candidate);
-  if (!parsed.success) return res.status(502).json({ error: { code: 'AI_INVALID_OUTPUT', message: '生成内容格式异常，请重试' } });
-  const referenced = new Set(parsed.data.blocks.filter(block => block.type === 'image' || block.type === 'imageCard').map(block => block.assetId));
-  for (const assetId of assetIds) if (!referenced.has(assetId)) {
-    parsed.data.blocks.push({ id: uid('b'), type: 'imageCard', assetId, caption: '' });
-  }
-  if (!templateId) parsed.data.templateId = recommendTemplates(parsed.data)[0]?.id || 'T01';
-  res.json({ article: parsed.data, meta: { promptVersion: 'semantic-3', schemaVersion: 1, model: aiConfig.model, latencyMs: Date.now() - startedAt, retried, ...usageMeta(usages), ...(report ? { length: report.length, protectedMissingCount: report.missing.length } : {}) } });
+      if (!report.issues.length) return respond;
+    },
+    fallback: () => draft && respond,
+  });
 });
 
-app.post('/api/articles/design', rateLimit(10, 'RATE_DESIGN_PER_MIN'), concurrentGenerationLimit, async (req, res) => {
-  if (!isAllowedOrigin(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
+app.post('/api/articles/design', rateLimit(10, 'RATE_DESIGN_PER_MIN'), concurrentGenerationLimit, requireOrigin(), async (req, res) => {
   const { mode, prompt = '' } = req.body || {};
   const parsed = ArticleSchema.pick({ title: true, summary: true, blocks: true }).safeParse(req.body?.article);
-  if (!parsed.success || !['auto', 'prompt'].includes(mode) || typeof prompt !== 'string' || prompt.length > 1000 || (mode === 'prompt' && !prompt.trim())) return res.status(400).json({ error: { code: 'INVALID_DESIGN_INPUT', message: '请提供有效文章、设计方式和不超过1000字的风格要求' } });
+  if (!parsed.success || !['auto', 'prompt'].includes(mode) || typeof prompt !== 'string' || prompt.length > 1000 || (mode === 'prompt' && !prompt.trim())) return sendError(res, 400, 'INVALID_DESIGN_INPUT', '请提供有效文章、设计方式和不超过1000字的风格要求');
   const article = parsed.data;
   const content = layoutSource(article);
-  if (!content.some(item => item.text?.trim() || item.items?.some(text => text.trim()))) return res.status(400).json({ error: { code: 'CONTENT_EMPTY', message: '请先添加文章内容' } });
-  if (new Set(content.map(item => item.ref)).size !== content.length) return res.status(400).json({ error: { code: 'INVALID_CONTENT_REFS', message: '文章内容编号重复，请恢复草稿后重试' } });
-  if (JSON.stringify(content).length > 180_000) return res.status(400).json({ error: { code: 'CONTENT_TOO_LONG', message: '文章过长，请分篇后设计；全文不会被截断提交' } });
-  const controller = new AbortController();
-  res.once('close', () => { if (!res.writableEnded) controller.abort(); });
-  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(LAYOUT_TIMEOUT_MS)]);
-  let config;
-  try { config = await resolveRequestAIConfig(req.body); }
-  catch (error) { return res.status(error.status || 502).json({ error: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '无法连接 AI 服务' } }); }
-  if (rejectMissingAIConfig(res, config)) return;
-  const usages = res.locals.modelUsages = [];
-  let lastError;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (signal.aborted) break;
-    usages.push(normalizeUsage());
-    try {
-      const output = await requestModel({ config, system: layoutInstructions, signal, inputData: { mode, designPrompt: mode === 'prompt' ? prompt.trim() : undefined, content, previousValidationError: lastError?.message.slice(0, 800) } });
-      usages[attempt] = output.usage;
-      const value = JSON.parse(output.text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/, '$1'));
-      const design = validateLayoutDesign(value, article);
+  if (!content.some(item => item.text?.trim() || item.items?.some(text => text.trim()))) return sendError(res, 400, 'CONTENT_EMPTY', '请先添加文章内容');
+  if (new Set(content.map(item => item.ref)).size !== content.length) return sendError(res, 400, 'INVALID_CONTENT_REFS', '文章内容编号重复，请恢复草稿后重试');
+  if (JSON.stringify(content).length > 180_000) return sendError(res, 400, 'CONTENT_TOO_LONG', '文章过长，请分篇后设计；全文不会被截断提交');
+  await runModelTask(req, res, {
+    timeoutMs: LAYOUT_TIMEOUT_MS,
+    failure: { code: 'AI_DESIGN_FAILED', message: '新版式未通过完整性或适配检查，当前排版已保留，请重试', timeoutMessage: '设计超时，当前排版已保留，请重试' },
+    async attempt({ lastError, request }) {
+      const output = await request({ system: layoutInstructions, inputData: { mode, designPrompt: mode === 'prompt' ? prompt.trim() : undefined, content, previousValidationError: lastError?.message.slice(0, 800) } });
+      const design = validateLayoutDesign(parseModelJson(output), article);
       renderArticle({ ...clearArticleStyles(article), layoutDesign: design }, templates[0]);
-      if (!controller.signal.aborted) return res.json({ design, meta: { model: config.model, retried: attempt > 0, ...usageMeta(usages) } });
-      return;
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      lastError = error;
-      if (error.status) break;
-    }
-  }
-  if (controller.signal.aborted) return;
-  return respondModelFailure(res, lastError, signal, { code: 'AI_DESIGN_FAILED', message: '新版式未通过完整性或适配检查，当前排版已保留，请重试', timeoutMessage: '设计超时，当前排版已保留，请重试' });
+      return meta => res.json({ design, meta: meta() });
+    },
+  });
 });
 
-app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGenerationLimit, async (req, res) => {
-  if (!isAllowedOrigin(req)) return res.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: '当前页面来源未被服务端允许' } });
+const listStyles = (styles, count = 6) => styles.slice(0, count).map(style => style.slice(0, 120)).join('、');
+app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGenerationLimit, requireOrigin(), async (req, res) => {
   const parsed = AIEditRequestSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: { code: 'INVALID_EDIT_INPUT', message: '请提供有效文章和1–4000字的修改要求' } });
+  if (!parsed.success) return sendError(res, 400, 'INVALID_EDIT_INPUT', '请提供有效文章和1–4000字的修改要求');
   const { article, prompt, references, messages, attachments, pendingChanges, layoutRepair } = parsed.data;
-  if (new Set(article.blocks.map(block => block.id)).size !== article.blocks.length) return res.status(400).json({ error: { code: 'INVALID_CONTENT_REFS', message: '文章内容编号重复，请恢复草稿后重试' } });
-  const controller = new AbortController();
-  res.once('close', () => { if (!res.writableEnded) controller.abort(); });
-  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(AI_EDIT_TIMEOUT_MS)]);
-  let config;
-  try { config = await resolveRequestAIConfig(req.body); }
-  catch (error) { return res.status(error.status || 502).json({ error: { code: error.code || 'AI_CONFIG_ERROR', message: error.message || '无法连接 AI 服务' } }); }
-  if (rejectMissingAIConfig(res, config)) return;
+  if (new Set(article.blocks.map(block => block.id)).size !== article.blocks.length) return sendError(res, 400, 'INVALID_CONTENT_REFS', '文章内容编号重复，请恢复草稿后重试');
   const assetIds = [...new Set(article.blocks.filter(isImageBlock).map(block => block.assetId))];
   const imageDimensions = await Promise.all(assetIds.map(async assetId => {
     const filename = findImageFiles(uploadDir, assetId)[0];
@@ -734,42 +327,41 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
       return { assetId, width: metadata?.width || null, height: metadata?.height || null };
     } catch { return { assetId, width: null, height: null }; }
   }));
-  const imageAssetIds = [...new Set(attachments.flatMap(attachment => attachment.kind === 'image' ? [attachment.assetId] : attachment.imageAssetIds))];
-  if (imageAssetIds.length > MAX_EDIT_IMAGES) return res.status(400).json({ error: { code: 'TOO_MANY_ATTACHMENT_IMAGES', message: `最多同时使用${MAX_EDIT_IMAGES}张附件图片` } });
+  const attachmentImages = attachments.flatMap(attachment => attachment.kind === 'image' ? [{ assetId: attachment.assetId, name: attachment.name }] : attachment.imageAssetIds.map((assetId, imageIndex) => ({ assetId, name: `${attachment.name} 图片 ${imageIndex + 1}` })));
+  const imageAssetIds = [...new Set(attachmentImages.map(image => image.assetId))];
+  if (imageAssetIds.length > MAX_EDIT_IMAGES) return sendError(res, 400, 'TOO_MANY_ATTACHMENT_IMAGES', `最多同时使用${MAX_EDIT_IMAGES}张附件图片`);
   const imageInputs = [];
   let imageInputBytes = 0;
   for (const [index, imageAssetId] of imageAssetIds.entries()) {
     const filename = findImageFiles(uploadDir, imageAssetId)[0];
-    if (!filename) return res.status(400).json({ error: { code: 'ATTACHMENT_EXPIRED', message: '附件图片缓存已过期，请重新上传' } });
+    if (!filename) return sendError(res, 400, 'ATTACHMENT_EXPIRED', '附件图片缓存已过期，请重新上传');
     const buffer = await fs.promises.readFile(path.join(uploadDir, filename));
     imageInputBytes += buffer.length;
-    if (imageInputBytes > MAX_EDIT_IMAGE_BYTES) return res.status(413).json({ error: { code: 'ATTACHMENT_TOO_LARGE', message: '附件图片总大小不能超过20 MB' } });
-    const mime = ({ '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' })[path.extname(filename).toLowerCase()];
-    if (!mime) return res.status(400).json({ error: { code: 'INVALID_ATTACHMENT_IMAGE', message: '附件图片格式无效，请重新上传' } });
-    imageInputs.push({ name: attachments.flatMap(attachment => attachment.kind === 'image' ? [{ assetId: attachment.assetId, name: attachment.name }] : attachment.imageAssetIds.map((assetId, imageIndex) => ({ assetId, name: `${attachment.name} 图片 ${imageIndex + 1}` }))).find(item => item.assetId === imageAssetId)?.name || `附件图片 ${index + 1}`, mime, buffer });
+    if (imageInputBytes > MAX_EDIT_IMAGE_BYTES) return sendError(res, 413, 'ATTACHMENT_TOO_LARGE', '附件图片总大小不能超过20 MB');
+    const mime = IMAGE_MIME[path.extname(filename).toLowerCase()];
+    if (!mime) return sendError(res, 400, 'INVALID_ATTACHMENT_IMAGE', '附件图片格式无效，请重新上传');
+    imageInputs.push({ name: attachmentImages.find(item => item.assetId === imageAssetId)?.name || `附件图片 ${index + 1}`, mime, buffer });
   }
   const outline = block => ({ id: block.id, type: block.type, text: blockText(block).slice(0, 40), ...(isImageBlock(block) ? { assetId: block.assetId } : {}) });
   const content = article.html ? { html: article.html, blocks: article.blocks.map(outline) } : { blocks: article.blocks, layoutDesign: article.layoutDesign };
   const input = { template: templates.find(template => template.id === article.templateId), article: { mode: article.mode, title: article.title, summary: article.summary, templateId: article.templateId, tone: article.settings.tone, ...content }, imageDimensions, ...(attachments.length ? { attachments } : {}), conversation: aiEditConversation(messages), prompt, references, pendingChanges, ...(layoutRepair ? { layoutRepair } : {}) };
-  if (JSON.stringify(input).length > 1_100_000) return res.status(400).json({ error: { code: 'CONTENT_TOO_LONG', message: '文章、附件文字或引用内容过长，请移除部分附件或减少引用后重试；正文不会被截断提交' } });
-  const usages = res.locals.modelUsages = [];
-  let lastError, fallback;
-  const respond = ({ result, candidate, ignored }, retried) => {
-    const note = ignored.length ? `\n已忽略公众号不支持的样式：${ignored.slice(0, 6).map(style => style.slice(0, 120)).join('、')}${ignored.length > 6 ? ' 等' : ''}` : '';
-    return res.json({ ...result, message: result.message.slice(0, 4000 - note.length) + note, changes: describeAIEdit(article, candidate), meta: { model: config.model, retried, ...usageMeta(usages) } });
+  if (JSON.stringify(input).length > 1_100_000) return sendError(res, 400, 'CONTENT_TOO_LONG', '文章、附件文字或引用内容过长，请移除部分附件或减少引用后重试；正文不会被截断提交');
+  let fallback;
+  const respond = ({ result, candidate, ignored }) => meta => {
+    const note = ignored.length ? `\n已忽略公众号不支持的样式：${listStyles(ignored)}${ignored.length > 6 ? ' 等' : ''}` : '';
+    res.json({ ...result, message: result.message.slice(0, 4000 - note.length) + note, changes: describeAIEdit(article, candidate), meta: meta() });
   };
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (signal.aborted) break;
-    usages.push(normalizeUsage());
-    try {
-      const output = await requestModel({ config, system: article.html ? htmlEditInstructions : editInstructions, signal, inputData: { ...input, previousValidationError: lastError?.message.slice(0, 1200) }, imageInputs });
-      usages[attempt] = output.usage;
-      const result = AIEditResponseSchema.parse(JSON.parse(output.text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/, '$1')));
+  await runModelTask(req, res, {
+    timeoutMs: AI_EDIT_TIMEOUT_MS,
+    failure: { code: 'AI_EDIT_FAILED', message: '修改方案未通过内容或版式检查，原稿已保留，请重试', timeoutMessage: '修改方案生成超时，原稿已保留，请重试' },
+    async attempt({ attempt, lastError, request }) {
+      const output = await request({ system: article.html ? htmlEditInstructions : editInstructions, inputData: { ...input, previousValidationError: lastError?.message.slice(0, 1200) }, imageInputs });
+      const result = AIEditResponseSchema.parse(parseModelJson(output));
       const ignored = [...new Set(result.operations.flatMap(op => op.html ? unsupportedStyles(op.html) : []))];
       let candidate;
       try { candidate = buildAIEdit(article, result.operations, { references }); }
       catch (error) {
-        if (ignored.length) throw new Error(`${error.message}；不支持的样式：${ignored.slice(0, 6).map(style => style.slice(0, 120)).join('、')}`);
+        if (ignored.length) throw new Error(`${error.message}；不支持的样式：${listStyles(ignored)}`);
         throw error;
       }
       renderArticle(candidate, templates.find(template => template.id === candidate.templateId));
@@ -777,18 +369,13 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
         fallback = { result, candidate, ignored };
         throw new Error(`方案使用了公众号不支持的样式（${ignored.slice(0, 8).join('；')}），这些样式会被移除；请改用单列流式排版中最接近的合规写法，并在 message 中说明`);
       }
-      if (!controller.signal.aborted) return respond({ result, candidate, ignored }, attempt > 0);
-      return;
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      lastError = error;
-      if (error.status) break;
-    }
-  }
-  if (controller.signal.aborted) return;
-  if (fallback) return respond(fallback, true);
-  if (imageInputs.length && isUnsupportedVisionRequest(lastError)) return res.status(422).json({ error: { code: 'VISION_UNSUPPORTED', message: '当前模型不支持多模态识图' } });
-  return respondModelFailure(res, lastError, signal, { code: 'AI_EDIT_FAILED', message: '修改方案未通过内容或版式检查，原稿已保留，请重试', timeoutMessage: '修改方案生成超时，原稿已保留，请重试' });
+      return respond({ result, candidate, ignored });
+    },
+    fallback: lastError => {
+      if (fallback) return respond(fallback);
+      if (imageInputs.length && isUnsupportedVisionRequest(lastError)) return () => sendError(res, 422, 'VISION_UNSUPPORTED', '当前模型不支持多模态识图');
+    },
+  });
 });
 
 app.use(express.static(path.join(root, 'dist')));
@@ -799,11 +386,11 @@ app.use((error, req, res, next) => {
   const status = tooLarge ? 413 : error instanceof multer.MulterError ? 400 : 500;
   const code = tooLarge ? 'FILE_TOO_LARGE' : tooMany ? 'TOO_MANY_FILES' : status === 500 ? 'INTERNAL_ERROR' : 'INVALID_UPLOAD';
   const message = tooLarge ? '文件超过大小限制' : tooMany ? '每次最多解析 5 个文件' : status === 500 ? '服务暂时不可用' : '上传内容无效';
-  res.status(status).json({ error: { code, message } });
+  sendError(res, status, code, message);
 });
 app.use((req, res) => {
   if (req.method === 'GET' && fs.existsSync(path.join(root, 'dist', 'index.html'))) return res.sendFile(path.join(root, 'dist', 'index.html'));
-  res.status(404).json({ error: { code: 'NOT_FOUND', message: '接口不存在' } });
+  sendError(res, 404, 'NOT_FOUND', '接口不存在');
 });
 
 cleanupExpiredAssets(uploadDir);

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Check, FileText, Image, Paperclip, Sparkles, RefreshCw, Square, X } from 'lucide-react';
 import { uid } from './core.js';
+import { assetAvailable, postJson, requestJson, uploadAsset } from './api.js';
 import { AIEditResponseSchema, AI_EDIT_TIMEOUT_MS, aiEditConversation, aiEditSummary, aiEditTargets, appliedAIEditStatus, buildAIEdit, createAIReference, describeAIEdit, mergeAIEdit, revertAIEdit, sameAIReference, validAIReference } from './ai-edit.js';
 import { loadAIEditAttachments, saveAIEditAttachments } from './storage.js';
 import { renderArticle } from './renderer.js';
@@ -139,9 +140,7 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
       for (const file of pendingFiles) {
         const form = new FormData();
         form.append('file', file, file.name);
-        const response = await fetch('/api/articles/edit/attachments', { method: 'POST', body: form });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error?.message || '附件上传失败');
+        const data = await requestJson('/api/articles/edit/attachments', { method: 'POST', body: form, fallback: '附件上传失败' });
         let attachment = { ...data.attachment, id: uid('att') };
         if (attachment.kind === 'image') {
           attachment = { ...attachment, blob: file, previewUrl: URL.createObjectURL(file) };
@@ -183,16 +182,11 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
   const toggleAttachment = attachmentId => replaceAttachments(latest.current.attachments.map(attachment => attachment.id === attachmentId ? { ...attachment, enabled: attachment.enabled === false } : attachment));
   const ensureImageCache = async (image, signal) => {
     try {
-      const existing = await fetch(image.cacheUrl, { method: 'HEAD', signal });
-      if (existing.ok) return image;
+      if (await assetAvailable(image.cacheUrl, signal)) return image;
     } catch (cause) { if (signal.aborted) throw cause; }
     if (!image.blob) throw new Error('附件图片缓存已过期，请移除后重新上传');
-    const form = new FormData();
-    form.append('file', image.blob, image.name || 'attachment.png');
-    const response = await fetch('/api/assets', { method: 'POST', body: form, signal });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error?.message || '附件图片缓存恢复失败');
-    return { ...image, assetId: data.asset.id, cacheUrl: data.asset.cacheUrl, mime: data.asset.mime, bytes: data.asset.bytes };
+    const asset = await uploadAsset(image.blob, { filename: image.name || 'attachment.png', signal, fallback: '附件图片缓存恢复失败' });
+    return { ...image, assetId: asset.id, cacheUrl: asset.cacheUrl, mime: asset.mime, bytes: asset.bytes };
   };
   const ensureAttachmentCaches = async (values, signal) => Promise.all(values.map(async attachment => {
     if (attachment.kind === 'image') return { ...await ensureImageCache(attachment, signal) };
@@ -241,13 +235,10 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
       const payload = { article: working, prompt: instruction, references: generationRequest.references, messages: aiEditConversation(messages.filter(message => message.id !== userMessageId).map(message => regenerate && message.id === candidate.messageId ? { ...message, status: 'discarded' } : message)), attachments: requestAttachments, pendingChanges: aiEditSummary(original, working), ...aiRequest };
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(AI_EDIT_TIMEOUT_MS + 10000)]);
       const generate = async layoutRepair => {
-        const response = await fetch('/api/articles/edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, ...(layoutRepair ? { layoutRepair } : {}) }), signal });
-        const data = await response.json();
-        if (!response.ok) {
-          const issue = new Error(data.error?.code === 'NOT_FOUND' ? 'AI修改接口尚未启动，请重启后端服务' : data.error?.message || '修改方案生成失败');
-          issue.code = data.error?.code;
+        const data = await postJson('/api/articles/edit', { ...payload, ...(layoutRepair ? { layoutRepair } : {}) }, { signal, fallback: '修改方案生成失败' }).catch(issue => {
+          if (issue.code === 'NOT_FOUND') issue.message = 'AI修改接口尚未启动，请重启后端服务';
           throw issue;
-        }
+        });
         return AIEditResponseSchema.parse({ message: data.message, operations: data.operations });
       };
       const sentReferenceIds = new Set(selected.map(reference => reference.id));

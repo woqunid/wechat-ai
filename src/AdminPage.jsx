@@ -1,21 +1,12 @@
 import { useEffect, useState } from 'react';
 import { KeyRound, LoaderCircle, LogOut, RefreshCw, Save } from 'lucide-react';
+import { requestJson } from './api.js';
 
-async function request(path, options = {}) {
-  const response = await fetch(`/api/admin${path}`, {
-    ...options,
-    credentials: 'same-origin',
-    headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers },
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(data.error?.message || '请求失败，请重试');
-    error.code = data.error?.code;
-    error.status = response.status;
-    throw error;
-  }
-  return data;
-}
+const request = (path, options = {}) => requestJson(`/api/admin${path}`, {
+  ...options,
+  credentials: 'same-origin',
+  headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers },
+});
 
 export function AdminPage() {
   const [access, setAccess] = useState('checking');

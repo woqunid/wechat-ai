@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Trash2, X } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
+import { Modal } from './Modal.jsx';
 import { deleteArticleHistory, listArticleHistory } from './storage.js';
 
 const savedTime = value => new Date(value).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -86,9 +87,7 @@ export function ArticleHistory({ onClose, onOpen, setToast, drafts, onOpenDraft,
       <button className="icon-action article-history-delete" title="删除" aria-label={`删除${record.title}`} disabled={Boolean(busy)} onClick={() => remove(record)}><Trash2 size={16}/></button>
     </div>
   </li>)}</ul> : <div className="article-history-empty">暂无已保存历史</div>;
-  return <div className="modal-backdrop" onClick={onClose}>
-    <section ref={dialog} className="small-modal article-history-modal" role="dialog" aria-modal="true" aria-labelledby="article-history-title" onClick={event => event.stopPropagation()}>
-      <button className="modal-close" aria-label="关闭历史记录" onClick={onClose}><X size={18}/></button>
+  return <Modal ref={dialog} className="article-history-modal" aria-labelledby="article-history-title" onClose={onClose} closeLabel="关闭历史记录">
       <h2 id="article-history-title">历史记录</h2>
       <p className="article-history-retention">{showDrafts ? '草稿 30 天未修改自动删除；已保存历史保留 30 天，图片保留 30 天。' : '历史记录保留 30 天，图片保留 30 天。'}</p>
       {showDrafts && <div className="article-history-tabs" role="tablist" aria-label="历史记录类型">
@@ -109,6 +108,5 @@ export function ArticleHistory({ onClose, onOpen, setToast, drafts, onOpenDraft,
           <h3 id="article-saved-title">已保存历史{records && <span>{records.length}</span>}</h3>{savedContent}
         </section>}
       </div>
-    </section>
-  </div>;
+  </Modal>;
 }

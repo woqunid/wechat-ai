@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowRight, RefreshCw, WandSparkles, X } from 'lucide-react';
+import { ArrowRight, RefreshCw, WandSparkles } from 'lucide-react';
+import { postJson } from './api.js';
+import { Modal } from './Modal.jsx';
 import { clearArticleStyles, layoutLeaves, layoutSignature, layoutSource, LAYOUT_TIMEOUT_MS, validateLayoutDesign } from './layout-design.js';
 import { renderArticle } from './renderer.js';
 import { getTemplate } from './templates.js';
@@ -59,13 +61,10 @@ export function LayoutDesigner({ article, setArticle, aiRequest, onTrial, resetK
     setError('');
     cancelTrial();
     try {
-      const response = await fetch('/api/articles/design', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ article: { title: sourceArticle.title, summary: sourceArticle.summary, blocks: sourceArticle.blocks }, mode, prompt: mode === 'prompt' ? prompt.trim() : '', ...aiRequest }),
+      const data = await postJson('/api/articles/design', { article: { title: sourceArticle.title, summary: sourceArticle.summary, blocks: sourceArticle.blocks }, mode, prompt: mode === 'prompt' ? prompt.trim() : '', ...aiRequest }, {
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(LAYOUT_TIMEOUT_MS + 10_000)]),
+        fallback: '新版式生成失败，请重试',
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error?.message || '新版式生成失败，请重试');
       const design = validateLayoutDesign(data.design, sourceArticle);
       const html = renderArticle({ ...clearArticleStyles(sourceArticle), layoutDesign: design }, getTemplate(sourceArticle.templateId), new Map(), { mode: 'preview' }).html;
       await inspectLayoutPreview(html, controller.signal);
@@ -104,9 +103,7 @@ export function LayoutDesigner({ article, setArticle, aiRequest, onTrial, resetK
         {changedStructure && <small>内容结构已变化，已沿用样式；重新设计可优化分组。</small>}
       </>}
     </div>
-    {open && <div className="modal-backdrop" onClick={close}>
-      <form ref={dialog} className="small-modal layout-design-modal" role="dialog" aria-modal="true" aria-labelledby="layout-design-title" tabIndex={-1} onClick={event => event.stopPropagation()} onSubmit={generate}>
-        <button className="modal-close" type="button" onClick={close} aria-label="关闭定制排版"><X size={19} /></button>
+    {open && <Modal as="form" ref={dialog} className="layout-design-modal" aria-labelledby="layout-design-title" tabIndex={-1} onClose={close} closeLabel="关闭定制排版" onSubmit={generate}>
         <span className="eyebrow">AI 排版</span>
         <h2 id="layout-design-title">为这篇文章开始设计</h2>
         <p>保留文字与图片，重新设计版式。</p>
@@ -120,7 +117,6 @@ export function LayoutDesigner({ article, setArticle, aiRequest, onTrial, resetK
         {error && <p className="layout-design-error" role="alert">{error}</p>}
         {busy && <p className="layout-design-progress" role="status"><RefreshCw size={15} className="spin" />正在设计并检查适配…</p>}
         <div className="modal-buttons"><button className="ghost-action" type="button" onClick={close}>{busy ? '取消生成' : '取消'}</button><button className="publish-action" type="submit" disabled={busy || (mode === 'prompt' && !prompt.trim())}><WandSparkles size={15} />{busy ? '正在设计' : '生成新版式'}</button></div>
-      </form>
-    </div>}
+    </Modal>}
   </>;
 }

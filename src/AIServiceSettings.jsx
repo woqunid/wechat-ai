@@ -1,11 +1,7 @@
 import { useEffect, useState } from "react";
-import { Building2, Check, KeyRound, LoaderCircle, RefreshCw, Save, Trash2, UserRound, X } from "lucide-react";
-
-async function readResponse(response) {
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error?.message || "AI 服务请求失败");
-  return data;
-}
+import { Building2, Check, KeyRound, LoaderCircle, RefreshCw, Save, Trash2, UserRound } from "lucide-react";
+import { postJson } from "./api.js";
+import { Modal } from "./Modal.jsx";
 
 export function AIServiceSettings({ open, onClose, platformStatus, preferences, onPreferencesChange }) {
   const [baseUrl, setBaseUrl] = useState("");
@@ -61,11 +57,7 @@ export function AIServiceSettings({ open, onClose, platformStatus, preferences, 
     setError("");
     setNotice("");
     try {
-      const data = await readResponse(await fetch("/api/config/models", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl, apiKey }),
-      }));
+      const data = await postJson("/api/config/models", { baseUrl, apiKey }, { fallback: "AI 服务请求失败" });
       setBaseUrl(data.baseUrl);
       setModels(data.models);
       setModel(current => data.models.includes(current) ? current : data.models[0]);
@@ -106,9 +98,7 @@ export function AIServiceSettings({ open, onClose, platformStatus, preferences, 
   const loading = Boolean(busy);
 
   return (
-    <div className="modal-backdrop ai-settings-backdrop" onClick={onClose}>
-      <section className="small-modal ai-settings-modal" role="dialog" aria-modal="true" aria-labelledby="ai-settings-title" onClick={event => event.stopPropagation()}>
-        <button className="modal-close" aria-label="关闭 AI 服务设置" onClick={onClose}><X size={18} /></button>
+    <Modal className="ai-settings-modal" backdropClassName="ai-settings-backdrop" aria-labelledby="ai-settings-title" onClose={onClose} closeLabel="关闭 AI 服务设置">
         <h2 id="ai-settings-title">AI 服务</h2>
         <div className="segmented ai-provider-switch" role="group" aria-label="AI 服务来源">
           <button type="button" className={`ai-provider-option ${provider === "platform" ? "selected" : ""}`} aria-pressed={provider === "platform"} onClick={() => selectProvider("platform")}>
@@ -165,7 +155,6 @@ export function AIServiceSettings({ open, onClose, platformStatus, preferences, 
             </button>
           </div>}
         </div>
-      </section>
-    </div>
+    </Modal>
   );
 }
