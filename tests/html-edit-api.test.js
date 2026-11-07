@@ -49,6 +49,12 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
         if (!image?.width || !content.some(item => item.type === 'input_text' && item.text.includes(image.assetId)) || !content.some(item => item.type === 'input_image')) throw new Error('Missing insertable image');
         return Response.json({output_text:JSON.stringify({message:'已插入附件图片',operations:[{type:'setHtml',intent:'content',html:input.article.html + '<img data-asset-id="' + image.assetId + '" alt="附件图">'}]})});
       }
+      if (input.prompt === 'describe-reference') {
+        const content = body.input[1].content;
+        const assetId = input.visibleReferenceImages?.[0];
+        if (!assetId || input.references[0].assetId !== assetId || !content.some(item => item.type === 'input_text' && item.text.startsWith('引用图片：') && item.text.includes(assetId)) || !content.some(item => item.type === 'input_image' && item.image_url.startsWith('data:image/jpeg;base64,'))) throw new Error('Missing referenced image');
+        return Response.json({output_text:JSON.stringify({message:'图中是一片绿色',operations:[]})});
+      }
       if (input.prompt === 'ambiguous') return Response.json({output_text:JSON.stringify({message:'需要调整哪一段？',operations:[]})});
       if (input.prompt === 'garbage') return Response.json({output_text:'not json'});
       if (input.prompt === 'unsupported-styles' && !input.previousValidationError) return Response.json({output_text:JSON.stringify({message:'调整样式',operations:[{type:'setHtml',html:input.article.html.replace('padding:16px;', 'padding:8px;display:grid;')}]})});
@@ -125,6 +131,18 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
     assert.equal(inserted.status, 200);
     assert.match(buildAIEdit(article, inserted.data.operations, { assetIds: [attachment.assetId] }).html, new RegExp(attachment.assetId));
     assert.equal((await request('insert-attachment', { references: [] })).data.error.code, 'AI_EDIT_FAILED');
+    const imageForm = new FormData();
+    imageForm.append('file', new Blob([await sharp({ create: { width: 2000, height: 1500, channels: 3, background: '#99bda1' } }).png().toBuffer()], { type: 'image/png' }), 'photo.png');
+    const { asset } = await (await fetch(`http://127.0.0.1:${port}/api/assets`, { method: 'POST', body: imageForm })).json();
+    const withImage = articleWithHtml(article, `<section data-node-id="page"><p data-node-id="target">保留选中文字结尾</p><img data-node-id="pic" data-asset-id="${asset.id}" alt="现场照片"></section>`);
+    const imageReference = createAIReference(withImage, { kind: 'image', keys: ['html:pic'], text: '现场照片' });
+    assert.equal(imageReference.assetId, asset.id);
+    const { snapshot, ...sentReference } = imageReference;
+    const described = await request('describe-reference', { article: withImage, references: [sentReference] });
+    assert.equal(described.status, 200);
+    assert.equal(described.data.message, '图中是一片绿色');
+    const { assetId, ...withoutImage } = sentReference;
+    assert.equal((await request('describe-reference', { article: withImage, references: [withoutImage] })).data.error.code, 'AI_EDIT_FAILED');
     const ambiguous = await request('ambiguous', { references: [] });
     assert.equal(ambiguous.status, 200);
     assert.deepEqual(ambiguous.data.operations, []);

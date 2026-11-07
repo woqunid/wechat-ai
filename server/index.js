@@ -341,12 +341,23 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
     if (imageInputBytes > MAX_EDIT_IMAGE_BYTES) return sendError(res, 413, 'ATTACHMENT_TOO_LARGE', '附件图片总大小不能超过20 MB');
     const mime = IMAGE_MIME[path.extname(filename).toLowerCase()];
     if (!mime) return sendError(res, 400, 'INVALID_ATTACHMENT_IMAGE', '附件图片格式无效，请重新上传');
-    imageInputs.push({ assetId: imageAssetId, name: attachmentImages.find(item => item.assetId === imageAssetId)?.name || `附件图片 ${index + 1}`, mime, buffer });
+    const name = attachmentImages.find(item => item.assetId === imageAssetId)?.name || `附件图片 ${index + 1}`;
+    imageInputs.push({ assetId: imageAssetId, name, label: `附件图片：${name}（assetId：${imageAssetId}）`, mime, buffer });
   }
+  const referencedImages = [...new Map(references.filter(reference => reference.kind === 'image' && assetIds.includes(reference.assetId)).map(reference => [reference.assetId, reference])).values()];
+  const referenceInputs = (await Promise.all(referencedImages.map(async ({ assetId, text }) => {
+    const filename = findImageFiles(uploadDir, assetId)[0];
+    if (!filename) return [];
+    try {
+      const buffer = await sharp(path.join(uploadDir, filename)).resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer();
+      return [{ assetId, label: `引用图片：${text.slice(0, 60)}（assetId：${assetId}）`, mime: 'image/jpeg', buffer }];
+    } catch { return []; }
+  }))).flat();
+  const visionInputs = [...imageInputs, ...referenceInputs];
   const insertableImages = (await dimensions(imageAssetIds)).map(item => ({ ...item, name: imageInputs.find(image => image.assetId === item.assetId).name }));
   const outline = block => ({ id: block.id, type: block.type, text: blockText(block).slice(0, 40), ...(isImageBlock(block) ? { assetId: block.assetId } : {}) });
   const content = article.html ? { html: article.html, blocks: article.blocks.map(outline) } : { blocks: article.blocks, layoutDesign: article.layoutDesign };
-  const input = { template: templates.find(template => template.id === article.templateId), article: { mode: article.mode, title: article.title, summary: article.summary, templateId: article.templateId, tone: article.settings.tone, ...content }, imageDimensions, ...(attachments.length ? { attachments } : {}), ...(insertableImages.length ? { insertableImages } : {}), conversation: aiEditConversation(messages), prompt, references, pendingChanges, ...(layoutRepair ? { layoutRepair } : {}) };
+  const input = { template: templates.find(template => template.id === article.templateId), article: { mode: article.mode, title: article.title, summary: article.summary, templateId: article.templateId, tone: article.settings.tone, ...content }, imageDimensions, ...(referenceInputs.length ? { visibleReferenceImages: referenceInputs.map(image => image.assetId) } : {}), ...(attachments.length ? { attachments } : {}), ...(insertableImages.length ? { insertableImages } : {}), conversation: aiEditConversation(messages), prompt, references, pendingChanges, ...(layoutRepair ? { layoutRepair } : {}) };
   if (JSON.stringify(input).length > 1_100_000) return sendError(res, 400, 'CONTENT_TOO_LONG', '文章、附件文字或引用内容过长，请移除部分附件或减少引用后重试；正文不会被截断提交');
   let fallback;
   const respond = ({ result, candidate, ignored }) => meta => {
@@ -357,7 +368,7 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
     timeoutMs: AI_EDIT_TIMEOUT_MS,
     failure: { code: 'AI_EDIT_FAILED', message: '修改方案未通过内容或版式检查，原稿已保留，请重试', timeoutMessage: '修改方案生成超时，原稿已保留，请重试' },
     async attempt({ attempt, lastError, request }) {
-      const output = await request({ system: article.html ? htmlEditInstructions : editInstructions, inputData: { ...input, previousValidationError: lastError?.message.slice(0, 1200) }, imageInputs });
+      const output = await request({ system: article.html ? htmlEditInstructions : editInstructions, inputData: { ...input, previousValidationError: lastError?.message.slice(0, 1200) }, imageInputs: visionInputs });
       const result = AIEditResponseSchema.parse(parseModelJson(output));
       const ignored = [...new Set(result.operations.flatMap(op => op.html ? unsupportedStyles(op.html) : []))];
       let candidate;
@@ -375,7 +386,7 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
     },
     fallback: lastError => {
       if (fallback) return respond(fallback);
-      if (imageInputs.length && isUnsupportedVisionRequest(lastError)) return () => sendError(res, 422, 'VISION_UNSUPPORTED', '当前模型不支持多模态识图');
+      if (visionInputs.length && isUnsupportedVisionRequest(lastError)) return () => sendError(res, 422, 'VISION_UNSUPPORTED', '当前模型不支持多模态识图');
     },
   });
 });

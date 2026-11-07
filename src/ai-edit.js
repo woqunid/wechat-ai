@@ -12,6 +12,7 @@ const text = max => z.string().max(max).refine(value => !/[\u0000-\u0008\u000b\u
 export const AIReferenceSchema = z.object({
   id, kind: z.enum(['text', 'image']), keys: z.array(z.string().min(1).max(90)).min(1).max(122),
   text: text(180000), startOffset: z.number().int().nonnegative().optional(), endOffset: z.number().int().nonnegative().optional(),
+  assetId: z.string().regex(/^img_[a-zA-Z0-9_-]{3,80}$/).optional(),
 });
 export const AIConversationMessageSchema = z.object({
   role: z.enum(['user', 'assistant']), text: text(4000),

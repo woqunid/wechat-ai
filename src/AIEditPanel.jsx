@@ -294,7 +294,8 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
       const requestAttachments = cachedAttachments.map(attachment => attachment.kind === 'image'
         ? { kind: 'image', name: attachment.name, assetId: attachment.assetId }
         : { kind: 'document', name: attachment.name, text: attachment.text, imageAssetIds: attachment.images.map(image => image.assetId) });
-      const payload = { article: working, prompt: instruction, references: generationRequest.references, messages: aiEditConversation(messages.filter(message => message.id !== userMessageId).map(message => regenerate && message.id === candidate.messageId ? { ...message, status: 'discarded' } : message)), attachments: requestAttachments, pendingChanges: aiEditSummary(original, working), ...aiRequest };
+      const requestReferences = selected.map(({ snapshot, assetId, ...reference }) => assetId && !withoutImages ? { ...reference, assetId } : reference);
+      const payload = { article: working, prompt: instruction, references: requestReferences, messages: aiEditConversation(messages.filter(message => message.id !== userMessageId).map(message => regenerate && message.id === candidate.messageId ? { ...message, status: 'discarded' } : message)), attachments: requestAttachments, pendingChanges: aiEditSummary(original, working), ...aiRequest };
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(AI_EDIT_TIMEOUT_MS + 10000)]);
       const generate = async layoutRepair => {
         const data = await postJson('/api/articles/edit', { ...payload, ...(layoutRepair ? { layoutRepair } : {}) }, { signal, fallback: '修改方案生成失败' }).catch(issue => {
