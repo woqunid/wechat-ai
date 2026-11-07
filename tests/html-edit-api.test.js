@@ -42,6 +42,12 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
         }
         return Response.json({choices:[{message:{content:JSON.stringify({message:'兼容接口可用',operations:[]})}}]});
       }
+      if (input.topic?.startsWith('length-')) {
+        if (!JSON.stringify(body).includes('正文目标1200字，允许1020至1380字')) throw new Error('Missing length rule');
+        const chars = input.topic === 'length-revise' && input.revision?.actualBodyChars === 600 ? 1200 : 600;
+        const blocks = Array.from({ length: chars / 300 }, () => ({type:'paragraph',runs:[{text:'字'.repeat(300)}]}));
+        return Response.json({output_text:JSON.stringify({title:'字数',summary:'字数测试',blocks})});
+      }
       if (input.topic?.startsWith('vision-generate')) {
         const content = body.input[1].content;
         const images = content.filter(item => item.type === 'input_image');
@@ -99,7 +105,7 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
     };
     await import(${JSON.stringify(pathToFileURL(path.join(root, 'server/index.js')).href)});
   `);
-  const child = spawn(process.execPath, [bootstrap], { cwd: root, env: { ...process.env, PORT: String(port), AI_BASE_URL: 'http://html-test.invalid/v1', AI_API_KEY: 'test-only', AI_MODEL: 'fixture', AI_API_STYLE: 'auto', AI_TIMEOUT_MS: '2000', RATE_EDIT_PER_MIN: '100', ASSET_DIR: path.join(directory, 'assets') }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [bootstrap], { cwd: root, env: { ...process.env, PORT: String(port), AI_BASE_URL: 'http://html-test.invalid/v1', AI_API_KEY: 'test-only', AI_MODEL: 'fixture', AI_API_STYLE: 'auto', AI_TIMEOUT_MS: '2000', RATE_EDIT_PER_MIN: '100', RATE_GENERATE_PER_MIN: '100', ASSET_DIR: path.join(directory, 'assets') }, stdio: ['ignore', 'pipe', 'pipe'] });
   try {
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Test API did not start')), 8000);
@@ -175,6 +181,13 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
       assert.equal(generated.article.blocks[1].caption, topic.includes('unsupported') ? undefined : '一片绿色草地');
       assert.equal(generated.meta.visionSkipped, topic.includes('unsupported') || undefined);
     }
+    const generate = body => fetch(`http://127.0.0.1:${port}/api/articles/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    assert.equal((await (await generate({ topic: 'length-revise', targetLength: 5000 })).json()).error.code, 'INVALID_SETTINGS');
+    assert.equal((await (await generate({ topic: 'length-revise', targetLength: 1200.5 })).json()).error.code, 'INVALID_SETTINGS');
+    const revised = await (await generate({ topic: 'length-revise', targetLength: 1200 })).json();
+    assert.deepEqual([revised.article.settings.targetLength, revised.meta.length.actual, revised.meta.length.within, revised.meta.retried], [1200, 1200, true, true]);
+    const missed = await (await generate({ topic: 'length-miss', targetLength: 1200 })).json();
+    assert.deepEqual([missed.meta.length.actual, missed.meta.length.within], [600, false]);
     const ambiguous = await request('ambiguous', { references: [] });
     assert.equal(ambiguous.status, 200);
     assert.deepEqual(ambiguous.data.operations, []);

@@ -1,8 +1,38 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, FileText, History, ImagePlus, Plus, RefreshCw, Settings2, Sparkles, Upload, X } from "lucide-react";
-import { CREATION_MODES, TARGET_LENGTHS, WRITING_TONES } from "./creation.js";
+import { bodyLengthStatus, CREATION_MODES, TARGET_LENGTH_MAX, TARGET_LENGTH_MIN, TARGET_LENGTHS, validTargetLength, WRITING_TONES } from "./creation.js";
 import { AISettingsButton } from "./AISettingsButton";
 import { ArticleHistory } from "./ArticleHistory";
+
+function TargetLengthSetting({ value, mode, disabled, onChange }) {
+  const [customOpen, setCustomOpen] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+  const inputRef = useRef(null);
+  useEffect(() => setDraft(String(value)), [value]);
+  const custom = customOpen || !TARGET_LENGTHS.includes(value);
+  const typed = Number(draft);
+  const invalid = custom && !validTargetLength(typed);
+  const { min, max } = bodyLengthStatus([], invalid ? value : typed);
+  const choose = length => { setCustomOpen(false); onChange(length); };
+  const commit = () => {
+    const next = draft ? Math.min(TARGET_LENGTH_MAX, Math.max(TARGET_LENGTH_MIN, typed)) : value;
+    setDraft(String(next)); onChange(next);
+  };
+  return <div className="setting-section">
+    <label htmlFor={custom ? 'target-length' : undefined}>字数</label>
+    <div className="segmented">
+      {TARGET_LENGTHS.map(length => <button className={!custom && value === length ? 'selected' : ''} key={length} aria-pressed={!custom && value === length} disabled={disabled} onClick={() => choose(length)}>{length}</button>)}
+      <button className={custom ? 'selected' : ''} aria-pressed={custom} disabled={disabled} onClick={() => { setCustomOpen(true); requestAnimationFrame(() => inputRef.current?.select()); }}>自定义</button>
+    </div>
+    {custom && <div className={`length-input${invalid ? ' is-invalid' : ''}`}>
+      <input id="target-length" ref={inputRef} inputMode="numeric" value={draft} disabled={disabled} aria-invalid={invalid} aria-describedby="target-length-hint"
+        onChange={event => { const next = event.target.value.replace(/\D/g, '').slice(0, 4); setDraft(next); if (validTargetLength(Number(next))) onChange(Number(next)); }}
+        onBlur={commit} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }}/>
+      <span>字</span>
+    </div>}
+    <p id="target-length-hint" className={`setting-hint${invalid ? ' error' : ''}`}>{invalid ? `请输入 ${TARGET_LENGTH_MIN}–${TARGET_LENGTH_MAX} 之间的整数` : `正文控制在 ${min}–${max} 字，不含标题、摘要和图注${mode === 'polish' ? '；润色优先保留原文信息' : ''}`}</p>
+  </div>;
+}
 
 export function CreatePage({
   drafts,
@@ -110,7 +140,7 @@ export function CreatePage({
         <aside className="settings-column">
           <div className="section-caption"><span>创作设置</span><Settings2 size={14}/></div>
           <div className="setting-section"><label>方式</label><div className="mode-list">{Object.entries(CREATION_MODES).map(([id, { label, hint }]) => <button className={input.mode === id ? 'mode-option active' : 'mode-option'} key={id} disabled={loading} aria-pressed={input.mode === id} onClick={() => setInput({ ...input, mode: id })}><span><strong>{label}</strong><small>{hint}</small></span><span className="radio-dot">{input.mode === id && <Check size={11}/>}</span></button>)}</div></div>
-          {input.mode !== 'raw' && <><div className="setting-section"><label>语气</label><div className="segmented">{Object.entries(WRITING_TONES).map(([id, { label, hint }]) => <button className={input.tone === id ? 'selected' : ''} key={id} title={hint} aria-pressed={input.tone === id} disabled={loading} onClick={() => setInput({ ...input, tone: id })}>{label}</button>)}</div></div><div className="setting-section"><label>字数<small>约 ±15%</small></label><div className="segmented">{TARGET_LENGTHS.map(length => <button className={input.targetLength === length ? 'selected' : ''} key={length} aria-pressed={input.targetLength === length} disabled={loading} onClick={() => setInput({ ...input, targetLength: length })}>{length}</button>)}</div></div></>}
+          {input.mode !== 'raw' && <><div className="setting-section"><label>语气</label><div className="segmented">{Object.entries(WRITING_TONES).map(([id, { label, hint }]) => <button className={input.tone === id ? 'selected' : ''} key={id} title={hint} aria-pressed={input.tone === id} disabled={loading} onClick={() => setInput({ ...input, tone: id })}>{label}</button>)}</div></div><TargetLengthSetting value={input.targetLength} mode={input.mode} disabled={loading} onChange={targetLength => setInput(value => ({ ...value, targetLength }))}/></>}
           {input.mode !== 'raw' && aiConfigured === false && <div className="ai-config-error" role="status"><span>{aiPreferences.provider === 'personal' ? '请先完成个人 AI 配置' : platformStatus?.configurationError?.message || '平台 AI 尚未配置'}</span><button onClick={openService}>设置</button></div>}
           <div className="create-submit"><button className="primary-action" disabled={!valid || textCount > 30000 || loading || isUploading || (input.mode !== 'raw' && !aiConfigured)} onClick={generate}>{loading ? <><RefreshCw size={16} className="spin"/>生成中…</> : <>{input.mode === 'raw' ? <FileText size={16}/> : <Sparkles size={16}/>} {input.mode === 'raw' ? '开始排版' : input.mode === 'polish' ? '润色文章' : '生成文章'}<ArrowRight size={16}/></>}</button>{loading ? <div className="generation-feedback" role="status"><span className="activity-line"/><span>正在撰写与检查内容</span><button className="text-link" onClick={cancelGeneration}>取消</button></div> : <p className="submit-note">{isUploading ? '等待素材上传完成' : input.mode === 'raw' ? '保留原文，直接进入编辑' : aiConfigured ? '生成后可继续编辑与排版' : '选择可用的 AI 服务后开始创作'}</p>}</div>
         </aside>

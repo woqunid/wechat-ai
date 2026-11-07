@@ -6,7 +6,7 @@ import { copyHtml } from "./clipboard";
 import { imageExpiry } from "./image-expiry.js";
 import { checkRawConsistency, parseRaw } from "./rawparser";
 import { uid } from "./core";
-import { GENERATION_TIMEOUT_MS } from "./creation.js";
+import { GENERATION_TIMEOUT_MS, lengthNotice } from "./creation.js";
 import { recommendTemplates } from "./recommender";
 import { AIServiceSettings } from "./AIServiceSettings";
 import { aiRequestOptions, loadAIPreferences, saveAIPreferences, selectedAIIsReady } from "./ai-preferences.js";
@@ -320,7 +320,8 @@ function WorkspaceApp() {
       });
       try {
         await enterEditor({ article: data.article, generationInput: submittedInput, snapshot: null });
-        if (data.meta?.visionSkipped) setToast("当前模型不支持识图，图片按上传顺序排入文中");
+        const notes = [data.meta?.visionSkipped && "当前模型不支持识图，图片按上传顺序排入文中", lengthNotice(data.meta?.length)].filter(Boolean);
+        if (notes.length) setToast(notes.join("；"));
       }
       catch { storageFailure(); }
     } catch (e) {

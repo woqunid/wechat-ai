@@ -10,7 +10,7 @@ import dotenv from 'dotenv';
 import { ArticleSchema, blockText, uid } from '../src/core.js';
 import { templates } from '../src/templates.js';
 import { normalizeDraft } from '../src/content.js';
-import { GENERATION_TIMEOUT_MS, TARGET_LENGTHS, WRITING_TONES } from '../src/creation.js';
+import { GENERATION_TIMEOUT_MS, validTargetLength, WRITING_TONES } from '../src/creation.js';
 import { generationInstructions, inspectDraft, preferDraft, protectedFragments } from './writing-rules.js';
 import { recommendTemplates } from '../src/recommender.js';
 import { fetchModels, getAIConfig, getAIStatus, resolveAIConfig, resolveCredentials, safeAIStatus } from './ai-config.js';
@@ -252,7 +252,7 @@ app.post('/api/articles/generate', rateLimit(10, 'RATE_GENERATE_PER_MIN'), concu
   const { mode = 'create', topic = '', text = '', materials = [], tone = 'plain', targetLength = 1000, assetIds = [], templateId } = req.body || {};
   if (!['create', 'polish'].includes(mode)) return sendError(res, 400, 'INVALID_MODE', '创作方式无效');
   if (typeof topic !== 'string' || typeof text !== 'string' || !Array.isArray(materials) || materials.some(value => typeof value !== 'string') || !Array.isArray(assetIds) || assetIds.length > 10) return sendError(res, 400, 'INVALID_INPUT', '输入内容格式无效');
-  if (typeof tone !== 'string' || !Object.hasOwn(WRITING_TONES, tone) || !TARGET_LENGTHS.includes(targetLength)) return sendError(res, 400, 'INVALID_SETTINGS', '文章设置无效');
+  if (typeof tone !== 'string' || !Object.hasOwn(WRITING_TONES, tone) || !validTargetLength(targetLength)) return sendError(res, 400, 'INVALID_SETTINGS', '文章设置无效');
   const template = templateId === undefined ? undefined : templates.find(item => item.id === templateId);
   if (templateId !== undefined && !template) return sendError(res, 400, 'INVALID_TEMPLATE', '模板不存在');
   const source = [text, ...materials].filter(Boolean).join('\n\n');

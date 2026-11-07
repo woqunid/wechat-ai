@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowLeft, ArrowRight, Check, Copy, History, ImagePlus, LayoutGrid, Plus, PanelRightClose, PanelRightOpen, Undo2, Redo2, RefreshCw, Save, X } from "lucide-react";
 import { uid } from "./core";
-import { bodyCharCount, bodyLengthStatus, TARGET_LENGTHS } from "./creation.js";
+import { bodyCharCount, bodyLengthStatus, lengthNotice, validTargetLength } from "./creation.js";
 import { AISettingsButton } from "./AISettingsButton";
 import { ArticleEditor } from "./ArticleEditor";
 import { AIEditPanel, useAIEdit } from "./AIEditPanel";
@@ -93,7 +93,7 @@ export function EditPage({
   const [account, setAccount] = useState(
     article.settings?.accountName || "我的公众号",
   );
-  const bodyLength = TARGET_LENGTHS.includes(article.settings?.targetLength)
+  const bodyLength = validTargetLength(article.settings?.targetLength)
     ? bodyLengthStatus(article.blocks, article.settings.targetLength) : null;
   const imageInput = useRef();
   const [imageUploads, setImageUploads] = useState(0);
@@ -274,7 +274,7 @@ export function EditPage({
       const result = await onRegenerate();
       if (!result?.pending) {
         onSnapshotSaved?.(previous);
-        setToast(result?.ignoredImages ? `${result.ignoredImages} 张 Markdown 图片未导入，请在编辑器中插入原图` : result?.meta?.visionSkipped ? "文章已重新生成，当前模型不支持识图，图片按原顺序排入" : "文章已重新生成");
+        setToast(result?.ignoredImages ? `${result.ignoredImages} 张 Markdown 图片未导入，请在编辑器中插入原图` : [result?.meta?.visionSkipped ? "文章已重新生成，当前模型不支持识图，图片按原顺序排入" : "文章已重新生成", lengthNotice(result?.meta?.length)].filter(Boolean).join("；"));
       }
     } catch (e) {
       setToast(e.message || "重新生成失败");
@@ -336,7 +336,7 @@ export function EditPage({
             <div className="width-switch" role="group" aria-label="画布宽度">
               {[320, 375, 414, 720].map(width => <button key={width} aria-pressed={canvasWidth === width} className={canvasWidth === width ? 'on' : ''} onClick={() => setCanvasWidth(width)}>{width === 720 ? '宽屏' : width}</button>)}
             </div>
-            <div className="writing-status" aria-label="当前文章创作设置"><span>正文 {bodyLength?.actual ?? bodyCharCount(article.blocks)} 字</span><span className={article.title.length > 64 ? 'error' : ''}>标题 {article.title.length}/64</span></div>
+            <div className="writing-status" aria-label="当前文章创作设置"><span className={bodyLength && !bodyLength.within ? 'warn' : undefined} title={bodyLength ? `目标 ${bodyLength.target} 字，允许 ${bodyLength.min}–${bodyLength.max} 字` : undefined}>正文 {bodyLength ? `${bodyLength.actual} / 目标 ${bodyLength.target}` : bodyCharCount(article.blocks)} 字</span><span className={article.title.length > 64 ? 'error' : ''}>标题 {article.title.length}/64</span></div>
           </div>
           {aiEditor.candidate && !aiEditor.problem && <div className="ai-edit-preview-bar"><span>{aiPreview ? `${aiEditor.changes.length} 处改动 · 应用后可编辑` : '原稿'}</span><div><button className="text-link" disabled={Boolean(aiEditor.busy)} onClick={aiEditor.discard}>取消</button><button className="text-link" onClick={() => aiEditor.setShowCandidate(value => !value)}>{aiEditor.showCandidate ? '看原稿' : '看方案'}</button><button className="preview-apply" disabled={Boolean(aiEditor.busy || aiEditor.problem)} onClick={aiEditor.apply}><Check size={13}/>应用</button></div></div>}
           {layoutTrial && <div className="ai-edit-preview-bar layout-preview-bar"><span>{layoutTrial.design.name} · 应用后可编辑</span><div><button className="text-link" onClick={resetLayoutTrial}>取消</button><button className="preview-apply" onClick={applyLayoutTrial}><Check size={13}/>应用排版</button></div></div>}

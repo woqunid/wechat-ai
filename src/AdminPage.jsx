@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { KeyRound, LoaderCircle, LogOut, RefreshCw, Save } from 'lucide-react';
+import { Home, KeyRound, LoaderCircle, RefreshCw, Save } from 'lucide-react';
 import { requestJson } from './api.js';
 
 const request = (path, options = {}) => requestJson(`/api/admin${path}`, {
@@ -91,12 +91,6 @@ export function AdminPage() {
     finally { setBusy(''); }
   };
 
-  const logout = async () => {
-    setBusy('logout');
-    try { await request('/logout', { method: 'POST', body: '{}' }); }
-    finally { setAccess('locked'); setMessage(null); setBusy(''); }
-  };
-
   const keyCanBeReused = hasApiKey && baseUrl.trim() === savedBaseUrl;
 
   return (
@@ -105,7 +99,11 @@ export function AdminPage() {
         <a className="wordmark admin-wordmark" href="/" aria-label="返回 Weave 工作台">
           <span className="mark">W</span><span><strong>Weave</strong><small>内容工作台</small></span>
         </a>
-        {access === 'authenticated' && <button className="icon-action" type="button" title="退出管理" aria-label="退出管理" disabled={busy === 'logout'} onClick={logout}><LogOut size={16}/></button>}
+        <div className="admin-header-actions">
+          <a className="ghost-action admin-home-action" href="/" title="返回首页">
+            <Home size={15}/><span>返回首页</span>
+          </a>
+        </div>
       </header>
 
       <main className={`admin-main ${access === 'authenticated' ? '' : 'admin-main-compact'}`}>
