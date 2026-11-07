@@ -2165,7 +2165,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 body { background: var(--bg-page); background-image: none; font-size: 14px; }
 .create-shell { max-width: 1200px; padding: 0 48px 64px; }
-.brandbar { height: 72px; background: transparent; backdrop-filter: none; }
+.brandbar { height: 72px; background: var(--bg-page); }
 .wordmark { gap: 10px; }
 .wordmark strong { font-size: 18px; letter-spacing: 0; }
 .wordmark small { font-size: 12px; letter-spacing: 0; }
@@ -2246,7 +2246,7 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
 .image-asset-card .asset-controls button { width: 24px; height: 23px; }
 .image-asset-card .asset-controls .asset-remove { margin-left: auto; }
 .image-asset-card .asset-controls .text-link { width: auto; padding-inline: 2px; font-size: 9px; }
-.settings-column { position: sticky; top: 20px; padding: 20px; border: 1px solid var(--border-subtle); border-radius: 10px; background: #fdfdfb; }
+.settings-column { position: sticky; top: 92px; padding: 20px; border: 1px solid var(--border-subtle); border-radius: 10px; background: #fdfdfb; }
 .setting-section { margin-bottom: 21px; }
 .setting-section > label { margin-bottom: 9px; font-size: 12px; font-weight: 550; letter-spacing: 0; }
 .mode-list { gap: 6px; }
