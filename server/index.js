@@ -128,7 +128,7 @@ app.post('/api/articles/edit/attachments', rateLimit(60, 'RATE_EDIT_ATTACHMENTS_
     if (file.size > MAX_IMAGE_BYTES) return sendError(res, 413, 'FILE_TOO_LARGE', '图片不能超过10 MB');
     try {
       const asset = await cacheImage(file.buffer);
-      return res.json({ attachment: { kind: 'image', name, assetId: asset.id, cacheUrl: asset.cacheUrl, mime: asset.mime, bytes: asset.bytes } });
+      return res.json({ attachment: { kind: 'image', name, assetId: asset.id, cacheUrl: asset.cacheUrl, url: asset.url, mime: asset.mime, bytes: asset.bytes, width: asset.width, height: asset.height, expiresAt: asset.expiresAt } });
     } catch (error) {
       return sendError(res, 400, error.code || 'INVALID_IMAGE', error.message || '图片无法处理');
     }
@@ -175,7 +175,7 @@ app.post('/api/articles/edit/attachments', rateLimit(60, 'RATE_EDIT_ATTACHMENTS_
       try {
         const asset = await cacheImage(imageBuffer);
         imageBytes += asset.bytes;
-        images.push({ assetId: asset.id, name: `${name} 图片 ${index + 1}`, cacheUrl: asset.cacheUrl, mime: asset.mime, bytes: asset.bytes });
+        images.push({ assetId: asset.id, name: `${name} 图片 ${index + 1}`, cacheUrl: asset.cacheUrl, url: asset.url, mime: asset.mime, bytes: asset.bytes, width: asset.width, height: asset.height, expiresAt: asset.expiresAt });
       } catch { omittedImages++; }
     }
     return res.json({ attachment: { kind: 'document', name, text, charCount: text.length, images, ...(omittedImages ? { warning: `有${omittedImages}张内嵌图片无法提取或超过附件上限` } : {}) } });
@@ -320,13 +320,14 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
   const { article, prompt, references, messages, attachments, pendingChanges, layoutRepair } = parsed.data;
   if (new Set(article.blocks.map(block => block.id)).size !== article.blocks.length) return sendError(res, 400, 'INVALID_CONTENT_REFS', '文章内容编号重复，请恢复草稿后重试');
   const assetIds = [...new Set(article.blocks.filter(isImageBlock).map(block => block.assetId))];
-  const imageDimensions = await Promise.all(assetIds.map(async assetId => {
+  const dimensions = assetIds => Promise.all(assetIds.map(async assetId => {
     const filename = findImageFiles(uploadDir, assetId)[0];
     try {
       const metadata = filename && await sharp(path.join(uploadDir, filename)).metadata();
       return { assetId, width: metadata?.width || null, height: metadata?.height || null };
     } catch { return { assetId, width: null, height: null }; }
   }));
+  const imageDimensions = await dimensions(assetIds);
   const attachmentImages = attachments.flatMap(attachment => attachment.kind === 'image' ? [{ assetId: attachment.assetId, name: attachment.name }] : attachment.imageAssetIds.map((assetId, imageIndex) => ({ assetId, name: `${attachment.name} 图片 ${imageIndex + 1}` })));
   const imageAssetIds = [...new Set(attachmentImages.map(image => image.assetId))];
   if (imageAssetIds.length > MAX_EDIT_IMAGES) return sendError(res, 400, 'TOO_MANY_ATTACHMENT_IMAGES', `最多同时使用${MAX_EDIT_IMAGES}张附件图片`);
@@ -340,11 +341,12 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
     if (imageInputBytes > MAX_EDIT_IMAGE_BYTES) return sendError(res, 413, 'ATTACHMENT_TOO_LARGE', '附件图片总大小不能超过20 MB');
     const mime = IMAGE_MIME[path.extname(filename).toLowerCase()];
     if (!mime) return sendError(res, 400, 'INVALID_ATTACHMENT_IMAGE', '附件图片格式无效，请重新上传');
-    imageInputs.push({ name: attachmentImages.find(item => item.assetId === imageAssetId)?.name || `附件图片 ${index + 1}`, mime, buffer });
+    imageInputs.push({ assetId: imageAssetId, name: attachmentImages.find(item => item.assetId === imageAssetId)?.name || `附件图片 ${index + 1}`, mime, buffer });
   }
+  const insertableImages = (await dimensions(imageAssetIds)).map(item => ({ ...item, name: imageInputs.find(image => image.assetId === item.assetId).name }));
   const outline = block => ({ id: block.id, type: block.type, text: blockText(block).slice(0, 40), ...(isImageBlock(block) ? { assetId: block.assetId } : {}) });
   const content = article.html ? { html: article.html, blocks: article.blocks.map(outline) } : { blocks: article.blocks, layoutDesign: article.layoutDesign };
-  const input = { template: templates.find(template => template.id === article.templateId), article: { mode: article.mode, title: article.title, summary: article.summary, templateId: article.templateId, tone: article.settings.tone, ...content }, imageDimensions, ...(attachments.length ? { attachments } : {}), conversation: aiEditConversation(messages), prompt, references, pendingChanges, ...(layoutRepair ? { layoutRepair } : {}) };
+  const input = { template: templates.find(template => template.id === article.templateId), article: { mode: article.mode, title: article.title, summary: article.summary, templateId: article.templateId, tone: article.settings.tone, ...content }, imageDimensions, ...(attachments.length ? { attachments } : {}), ...(insertableImages.length ? { insertableImages } : {}), conversation: aiEditConversation(messages), prompt, references, pendingChanges, ...(layoutRepair ? { layoutRepair } : {}) };
   if (JSON.stringify(input).length > 1_100_000) return sendError(res, 400, 'CONTENT_TOO_LONG', '文章、附件文字或引用内容过长，请移除部分附件或减少引用后重试；正文不会被截断提交');
   let fallback;
   const respond = ({ result, candidate, ignored }) => meta => {
@@ -359,7 +361,7 @@ app.post('/api/articles/edit', rateLimit(20, 'RATE_EDIT_PER_MIN'), concurrentGen
       const result = AIEditResponseSchema.parse(parseModelJson(output));
       const ignored = [...new Set(result.operations.flatMap(op => op.html ? unsupportedStyles(op.html) : []))];
       let candidate;
-      try { candidate = buildAIEdit(article, result.operations, { references }); }
+      try { candidate = buildAIEdit(article, result.operations, { references, assetIds: imageAssetIds }); }
       catch (error) {
         if (ignored.length) throw new Error(`${error.message}；不支持的样式：${listStyles(ignored)}`);
         throw error;

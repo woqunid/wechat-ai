@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, Check, FileText, Image, Paperclip, Sparkles, RefreshCw, Square, X } from 'lucide-react';
+import { ArrowUp, Check, FileText, Image, Link2, Paperclip, Sparkles, RefreshCw, Square, X } from 'lucide-react';
 import { uid } from './core.js';
-import { assetAvailable, postJson, requestJson, uploadAsset } from './api.js';
-import { AIEditResponseSchema, AI_EDIT_TIMEOUT_MS, aiEditConversation, aiEditSummary, aiEditTargets, appliedAIEditStatus, buildAIEdit, createAIReference, describeAIEdit, mergeAIEdit, revertAIEdit, sameAIReference, validAIReference } from './ai-edit.js';
+import { absoluteUrl, assetAvailable, postJson, requestJson, uploadAsset } from './api.js';
+import { AIEditResponseSchema, AI_EDIT_TIMEOUT_MS, aiEditConversation, aiEditSummary, aiEditTargets, appliedAIEditStatus, buildAIEdit, createAIReference, describeAIEdit, isImageBlock, mergeAIEdit, revertAIEdit, sameAIReference, validAIReference } from './ai-edit.js';
+import { readImageLink } from './image-assets.js';
 import { loadAIEditAttachments, saveAIEditAttachments } from './storage.js';
 import { renderArticle } from './renderer.js';
 import { getTemplate } from './templates.js';
@@ -12,10 +13,22 @@ const MAX_ATTACHMENTS = 5;
 const MAX_ATTACHMENT_IMAGES = 10;
 const MAX_ATTACHMENT_IMAGE_BYTES = 20 * 1024 * 1024;
 const attachmentImages = attachment => attachment.kind === 'image' ? [attachment] : attachment.images || [];
+const imageLimitError = values => {
+  const images = values.flatMap(attachmentImages);
+  if (images.length > MAX_ATTACHMENT_IMAGES) return `附件图片最多${MAX_ATTACHMENT_IMAGES}张`;
+  if (images.reduce((bytes, image) => bytes + (image.bytes || 0), 0) > MAX_ATTACHMENT_IMAGE_BYTES) return '附件图片总大小不能超过20 MB';
+  return '';
+};
+const linkName = url => {
+  try {
+    const { hostname, pathname } = new URL(url);
+    return (decodeURIComponent(pathname.split('/').filter(Boolean).at(-1) || '') || hostname).replace(/\p{Cc}/gu, '').slice(0, 240) || '链接图片';
+  } catch { return '链接图片'; }
+};
 const withAttachmentPreviews = attachment => attachment.kind === 'image'
   ? { ...attachment, previewUrl: attachment.blob ? URL.createObjectURL(attachment.blob) : attachment.cacheUrl }
   : { ...attachment, images: (attachment.images || []).map(image => ({ ...image, previewUrl: image.blob ? URL.createObjectURL(image.blob) : image.cacheUrl })) };
-export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, onApplied, onCandidate, setToast }) {
+export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, onApplied, onCandidate, onRegisterAsset, setToast }) {
   const [references, setReferences] = useState([]);
   const [messages, setMessages] = useState([]);
   const [prompt, setPrompt] = useState('');
@@ -123,8 +136,8 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
   const checkReferences = (source, values) => {
     if (values.some(reference => !validAIReference(source, reference))) throw new Error('引用内容已失效，请点击卡片上的×移除后重新选择');
   };
-  const inspect = async (next, signal) => {
-    const html = renderArticle(next, getTemplate(next.templateId), latest.current.assets, { mode: 'preview', interactive: true }).html;
+  const inspect = async (next, signal, assets = latest.current.assets) => {
+    const html = renderArticle(next, getTemplate(next.templateId), assets, { mode: 'preview', interactive: true }).html;
     await inspectLayoutPreview(html, signal);
   };
   const addAttachments = async files => {
@@ -152,11 +165,10 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
             return { ...image, blob, previewUrl: URL.createObjectURL(blob) };
           }));
         }
-        const imageCount = [...latest.current.attachments, ...added].reduce((total, item) => total + attachmentImages(item).length, 0) + attachmentImages(attachment).length;
-        const imageBytes = [...latest.current.attachments, ...added, attachment].reduce((total, item) => total + attachmentImages(item).reduce((bytes, image) => bytes + (image.bytes || 0), 0), 0);
-        if (imageCount > MAX_ATTACHMENT_IMAGES || imageBytes > MAX_ATTACHMENT_IMAGE_BYTES) {
+        const limitError = imageLimitError([...latest.current.attachments, ...added, attachment]);
+        if (limitError) {
           releasePreviewUrls([attachment]);
-          throw new Error(imageCount > MAX_ATTACHMENT_IMAGES ? `附件图片最多${MAX_ATTACHMENT_IMAGES}张` : '附件图片总大小不能超过20 MB');
+          throw new Error(limitError);
         }
         added.push(attachment);
         registerPreviewUrls([attachment]);
@@ -170,6 +182,40 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
       if (added.length) releasePreviewUrls(added);
       setError(cause.message || '附件上传失败');
     } finally { setAttachmentBusy(false); }
+  };
+  const addImageLink = async value => {
+    if (!attachmentsReady || attachmentBusy || disabled || busy) return false;
+    if (latest.current.attachments.length >= MAX_ATTACHMENTS) { setError(`最多保留${MAX_ATTACHMENTS}个附件`); return false; }
+    setAttachmentBusy(true); setError('');
+    let asset;
+    try {
+      asset = await readImageLink(value);
+      const attachment = { id: uid('att'), kind: 'image', name: linkName(asset.sourceUrl || value), assetId: asset.id, cacheUrl: asset.cacheUrl, url: asset.url, sourceUrl: asset.sourceUrl, mime: asset.mime, bytes: asset.bytes, width: asset.width, height: asset.height, expiresAt: asset.expiresAt, blob: asset.blob, previewUrl: asset.previewUrl };
+      const next = [...latest.current.attachments, attachment];
+      const limitError = imageLimitError(next);
+      if (limitError) throw new Error(limitError);
+      if (latest.current.article.id !== article.id) throw new Error('文章已切换，请重新添加图片链接');
+      await saveAIEditAttachments(article.id, next);
+      registerPreviewUrls([attachment]);
+      replaceAttachments(next);
+      return true;
+    } catch (cause) {
+      if (asset && !previewUrls.current.has(asset.previewUrl)) URL.revokeObjectURL(asset.previewUrl);
+      setError(cause.name === 'TimeoutError' ? '图片读取超时，请重试' : cause.message || '图片读取失败');
+      return false;
+    } finally { setAttachmentBusy(false); }
+  };
+  const registerInsertedImages = async (next, values, assets) => {
+    const images = values.flatMap(attachmentImages);
+    let registered = assets;
+    for (const block of next.blocks.filter(isImageBlock)) {
+      const image = !registered.has(block.assetId) && images.find(item => item.assetId === block.assetId);
+      if (!image?.blob) continue;
+      const asset = { id: image.assetId, filename: image.name, mime: image.mime, bytes: image.bytes, width: image.width, height: image.height, cacheUrl: image.cacheUrl, url: absoluteUrl(image.url || image.cacheUrl), ...(image.sourceUrl ? { sourceUrl: image.sourceUrl } : {}), expiresAt: image.expiresAt, pasteStatus: 'needs-manual', blob: image.blob };
+      await onRegisterAsset(asset);
+      registered = new Map(registered).set(asset.id, { ...asset, previewUrl: image.previewUrl });
+    }
+    return registered;
   };
   const removeAttachment = attachmentId => {
     const current = latest.current.attachments;
@@ -243,14 +289,16 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
       };
       const sentReferenceIds = new Set(selected.map(reference => reference.id));
       setReferences(previous => previous.filter(reference => !sentReferenceIds.has(reference.id)));
-      let result, next, checkedSource, merged, errorReport;
+      const insertableAssetIds = cachedAttachments.flatMap(attachmentImages).map(image => image.assetId);
+      let result, next, checkedSource, merged, errorReport, previewAssets = latest.current.assets;
       for (let attempt = 0; attempt < 2; attempt++) {
         result = await generate(attempt ? { result, issue: errorReport } : undefined);
-        next = buildAIEdit(working, result.operations, { references: selected });
+        next = buildAIEdit(working, result.operations, { references: selected, assetIds: insertableAssetIds });
         checkedSource = latest.current.article;
         merged = mergeAIEdit(original, next, checkedSource);
+        previewAssets = await registerInsertedImages(next, cachedAttachments, previewAssets);
         try {
-          if (describeAIEdit(original, next).length) await inspect(merged, signal);
+          if (describeAIEdit(original, next).length) await inspect(merged, signal, previewAssets);
           break;
         } catch (cause) {
           if (attempt || cause.code !== 'LAYOUT_OVERFLOW') throw cause;
@@ -310,12 +358,20 @@ export function useAIEdit({ article, setArticle, assets, aiRequest, disabled, on
       setError('');
     } catch (cause) { setError(cause.message); }
   };
-  return { references, referenceArticle, messages, prompt, setPrompt, busy, error, attachments, attachmentsReady, attachmentBusy, addAttachments, removeAttachment, toggleAttachment, autoApply, setAutoApply, candidate, problem: resolved.problem, changes, invalidReferences, showCandidate, setShowCandidate, previewArticle: showCandidate && !disabled ? resolved.article : null, addReference, removeReference: referenceId => setReferences(previous => previous.filter(reference => reference.id !== referenceId)), submit, retry: (message, withoutImages) => submit(null, { retry: message, withoutImages }), regenerate: () => submit(null, { regenerate: true }), revertChange, stop, discard, apply };
+  return { references, referenceArticle, messages, prompt, setPrompt, busy, error, attachments, attachmentsReady, attachmentBusy, addAttachments, addImageLink, removeAttachment, toggleAttachment, autoApply, setAutoApply, candidate, problem: resolved.problem, changes, invalidReferences, showCandidate, setShowCandidate, previewArticle: showCandidate && !disabled ? resolved.article : null, addReference, removeReference: referenceId => setReferences(previous => previous.filter(reference => reference.id !== referenceId)), submit, retry: (message, withoutImages) => submit(null, { retry: message, withoutImages }), regenerate: () => submit(null, { regenerate: true }), revertChange, stop, discard, apply };
 }
 
 export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
   const end = useRef(null);
   const fileInput = useRef(null);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [link, setLink] = useState('');
+  const hasImages = editor.attachments.some(attachment => attachment.enabled !== false && attachmentImages(attachment).length);
+  const addLink = async () => {
+    if (!link.trim() || editor.attachmentBusy) return;
+    if (await editor.addImageLink(link.trim())) { setLink(''); setLinkOpen(false); }
+  };
+  const attachDisabled = disabled || Boolean(editor.busy) || editor.attachmentBusy || editor.attachmentsReady === false;
   useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }); }, [editor.messages, editor.busy]);
   const pasteAttachments = event => {
     const clipboard = event.clipboardData;
@@ -334,7 +390,7 @@ export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
   };
   return <section className="ai-edit-panel" aria-label="AI修改对话">
     <div className="ai-edit-messages" role="log" aria-label="修改对话记录" aria-live="polite" aria-relevant="additions text">
-      {!editor.messages.length && <div className="ai-edit-empty"><span className="ai-empty-icon"><Sparkles size={23}/></span><h3>让文章更进一步</h3><p>调整文字、图片或排版。</p><div className="ai-prompt-suggestions">{['精简表达，保留关键信息', '优化开头，更快切入主题', '统一段落间距与文字样式'].map(text => <button type="button" key={text} disabled={disabled} onClick={() => editor.setPrompt(text)}>{text}<ArrowUp size={13}/></button>)}</div></div>}
+      {!editor.messages.length && <div className="ai-edit-empty"><span className="ai-empty-icon"><Sparkles size={23}/></span><h3>让文章更进一步</h3><p>调整文字、图片或排版。</p><div className="ai-prompt-suggestions">{[...(hasImages ? ['把附件图片插入到合适的位置'] : []), '精简表达，保留关键信息', '优化开头，更快切入主题', '统一段落间距与文字样式'].map(text => <button type="button" key={text} disabled={disabled} onClick={() => editor.setPrompt(text)}>{text}<ArrowUp size={13}/></button>)}</div></div>}
       {editor.messages.map(message => <div key={message.id} className={`ai-edit-message ${message.role}`}><strong>{message.role === 'user' ? '你' : <><Sparkles size={12}/>Weave AI</>}</strong><p>{message.text}</p>{message.referenceCount > 0 && <details className="ai-edit-message-references"><summary>{message.referenceCount} 处引用</summary><div>{message.references?.map((reference, index) => <p key={index}>{reference.text || '图片引用'}</p>)}</div></details>}{message.attachmentNames?.length > 0 && <small>附件：{message.attachmentNames.join('、')}{message.withoutImages ? '（仅文字）' : ''}</small>}{message.status && message.status !== 'answered' && <small className={`ai-message-status ${message.status}`}>{({ pending: message.role === 'user' ? '发送中' : editor.problem ? '方案已失效' : '待应用', applied: '已应用', discarded: '已取消', superseded: '已被后续修改替代', failed: message.failure || '生成失败', stopped: '已停止', reverted: '已撤销' })[message.status]}</small>}{['failed', 'stopped'].includes(message.status) && <div className="ai-message-retry"><button className="text-link" type="button" disabled={Boolean(editor.busy || disabled)} onClick={() => editor.retry(message)}>重试</button>{message.errorCode === 'VISION_UNSUPPORTED' && <button className="text-link" type="button" disabled={Boolean(editor.busy || disabled)} onClick={() => editor.retry(message, true)}>去掉图片后重试</button>}</div>}</div>)}
       {editor.busy && <div className="ai-edit-progress" role="status"><span className="ai-thinking"><i/><i/><i/></span><span>{editor.busy === 'checking' ? '检查改动与布局…' : editor.busy === 'repairing' ? '修复手机布局溢出…' : '生成修改方案…'}</span></div>}
       <div ref={end}/>
@@ -359,15 +415,21 @@ export function AIEditPanel({ editor, article, assets, disabled, onLocate }) {
       {editor.attachments?.length > 0 && <div className="ai-edit-attachments" aria-label="已添加附件">{editor.attachments.map(attachment => <div className={`ai-edit-attachment${attachment.kind === 'image' ? ' is-image' : ''}`} key={attachment.id}>
         <input type="checkbox" aria-label={`本轮使用附件：${attachment.name}`} checked={attachment.enabled !== false} disabled={Boolean(editor.busy)} onChange={() => editor.toggleAttachment(attachment.id)}/>
         {attachment.kind === 'image' ? <img className="ai-edit-attachment-thumb" src={attachment.previewUrl} alt="附件图片预览"/> : <span className="ai-edit-attachment-icon"><FileText size={17}/></span>}
-        <div className="ai-edit-attachment-meta"><strong title={attachment.name}>{attachment.name}</strong><small>{attachment.kind === 'image' ? '图片' : `${attachment.charCount.toLocaleString()} 字${attachment.images?.length ? ` · ${attachment.images.length} 张图片` : ''}`}</small></div>
+        <div className="ai-edit-attachment-meta"><strong title={attachment.name}>{attachment.name}</strong><small>{attachment.kind === 'image' ? [attachment.sourceUrl ? '链接图片' : '图片', attachment.width && `${attachment.width}×${attachment.height}`].filter(Boolean).join(' · ') : `${attachment.charCount.toLocaleString()} 字${attachment.images?.length ? ` · ${attachment.images.length} 张图片` : ''}`}</small></div>
         {attachment.kind === 'document' && attachment.images?.length > 0 && <div className="ai-edit-attachment-images" aria-label="文档内嵌图片">{attachment.images.slice(0, 3).map(image => <img key={image.assetId} src={image.previewUrl} alt="文档内嵌图片预览"/>)}{attachment.images.length > 3 && <small>+{attachment.images.length - 3}</small>}</div>}
         <button type="button" className="ai-edit-reference-remove" aria-label={`移除附件：${attachment.name}`} title="移除附件" disabled={Boolean(editor.busy)} onClick={() => editor.removeAttachment(attachment.id)}><X size={12}/></button>
       </div>)}</div>}
       <input ref={fileInput} className="ai-edit-file-input" type="file" multiple accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,.pdf,.docx,.txt,.md" onChange={event => { editor.addAttachments(event.target.files); event.target.value = ''; }}/>
+      {linkOpen && <div className="ai-edit-link">
+        <Link2 size={13}/>
+        <input type="url" aria-label="图片链接" autoFocus value={link} disabled={editor.attachmentBusy} spellCheck={false} placeholder="粘贴 HTTPS 图片直链" onChange={event => setLink(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); addLink(); } else if (event.key === 'Escape') setLinkOpen(false); }}/>
+        <button type="button" className="ai-edit-link-add" disabled={attachDisabled || !link.trim()} onClick={addLink}>{editor.attachmentBusy ? <RefreshCw size={12} className="spin"/> : '添加'}</button>
+        <button type="button" className="ai-edit-link-close" aria-label="收起图片链接" disabled={editor.attachmentBusy} onClick={() => setLinkOpen(false)}><X size={12}/></button>
+      </div>}
       <label className="ai-edit-auto-apply"><input type="checkbox" checked={editor.autoApply} disabled={Boolean(editor.busy)} onChange={event => editor.setAutoApply(event.target.checked)}/>校验通过后直接应用</label>
-      <textarea aria-label="AI修改要求" value={editor.prompt} disabled={disabled} onChange={event => editor.setPrompt(event.target.value)} maxLength={4000} rows={3} placeholder={editor.candidate ? '继续调整方案…' : '你想如何调整？'} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); editor.submit(); } }}/>
-      <div className="ai-edit-composer-footer"><button className="ai-edit-upload" type="button" aria-label="上传图片或文档" title="上传图片或文档" disabled={disabled || editor.busy || editor.attachmentBusy || editor.attachmentsReady === false} onClick={() => fileInput.current?.click()}><Paperclip size={16}/></button><span>Enter 发送 · Shift + Enter 换行</span>{editor.busy ? <button className="ai-edit-send stop" type="button" onClick={editor.stop} aria-label="停止生成"><Square size={13}/></button> : <button className="ai-edit-send" type="submit" aria-label="发送修改要求" disabled={disabled || editor.attachmentBusy || editor.attachmentsReady === false || !editor.prompt.trim() || editor.invalidReferences.length > 0 || Boolean(editor.problem)}><ArrowUp size={18}/></button>}</div>
-      {editor.attachmentBusy && <p className="ai-edit-upload-progress" role="status"><RefreshCw size={12} className="spin"/>正在处理附件…</p>}
+      <textarea aria-label="AI修改要求" value={editor.prompt} disabled={disabled} onChange={event => editor.setPrompt(event.target.value)} maxLength={4000} rows={3} placeholder={editor.candidate ? '继续调整方案…' : hasImages ? '例如：把图片放到合适的位置' : '你想如何调整？'} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); editor.submit(); } }}/>
+      <div className="ai-edit-composer-footer"><div className="ai-edit-composer-tools"><button className="ai-edit-upload" type="button" aria-label="上传图片或文档" title="上传图片或文档" disabled={attachDisabled} onClick={() => fileInput.current?.click()}><Paperclip size={16}/></button><button className={`ai-edit-upload${linkOpen ? ' on' : ''}`} type="button" aria-label="添加图片链接" aria-expanded={linkOpen} title="添加图床图片链接" disabled={attachDisabled} onClick={() => setLinkOpen(value => !value)}><Link2 size={16}/></button></div><span>Enter 发送 · Shift + Enter 换行</span>{editor.busy ? <button className="ai-edit-send stop" type="button" onClick={editor.stop} aria-label="停止生成"><Square size={13}/></button> : <button className="ai-edit-send" type="submit" aria-label="发送修改要求" disabled={disabled || editor.attachmentBusy || editor.attachmentsReady === false || !editor.prompt.trim() || editor.invalidReferences.length > 0 || Boolean(editor.problem)}><ArrowUp size={18}/></button>}</div>
+      {editor.attachmentBusy && <p className="ai-edit-upload-progress" role="status"><RefreshCw size={12} className="spin"/>{linkOpen ? '正在读取图片链接…' : '正在处理附件…'}</p>}
       {editor.invalidReferences.length > 0 && <p className="ai-edit-reference-warning" role="status">请移除失效引用后重选。</p>}
     </form>
   </section>;

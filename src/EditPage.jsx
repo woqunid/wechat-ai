@@ -82,7 +82,7 @@ export function EditPage({
   };
   const snapshot = savedSnapshot;
   const [regenerating, setRegenerating] = useState(false);
-  const aiEditor = useAIEdit({ article, setArticle, assets, aiRequest, disabled: !aiConfigured || library || regenerating || Boolean(layoutTrial), onApplied: resetLayoutTrial, onCandidate: () => { if (window.matchMedia('(max-width: 760px)').matches) setToolsOpen(false); }, setToast });
+  const aiEditor = useAIEdit({ article, setArticle, assets, aiRequest, disabled: !aiConfigured || library || regenerating || Boolean(layoutTrial), onApplied: resetLayoutTrial, onCandidate: () => { if (window.matchMedia('(max-width: 760px)').matches) setToolsOpen(false); }, onRegisterAsset: asset => registerImageAsset(asset), setToast });
   const history = useRef([]);
   const future = useRef([]);
   const [historySize, setHistorySize] = useState(0);

@@ -41,11 +41,11 @@ async function requestModel({ config, system, inputData, signal, imageInputs = [
   const input = JSON.stringify(inputData);
   const imageUrl = image => `data:${image.mime};base64,${image.buffer.toString('base64')}`;
   const responsesUserContent = [{ type: 'input_text', text: input }, ...imageInputs.flatMap(image => [
-    { type: 'input_text', text: `附件图片：${image.name}` },
+    { type: 'input_text', text: `附件图片：${image.name}（assetId：${image.assetId}）` },
     { type: 'input_image', image_url: imageUrl(image) },
   ])];
   const chatUserContent = imageInputs.length ? [{ type: 'text', text: input }, ...imageInputs.flatMap(image => [
-    { type: 'text', text: `附件图片：${image.name}` },
+    { type: 'text', text: `附件图片：${image.name}（assetId：${image.assetId}）` },
     { type: 'image_url', image_url: { url: imageUrl(image) } },
   ])] : input;
   const responsesBody = { model: config.model, input: [{ role: 'system', content: [{ type: 'input_text', text: system }] }, { role: 'user', content: responsesUserContent }], text: { format: { type: 'json_object' } } };

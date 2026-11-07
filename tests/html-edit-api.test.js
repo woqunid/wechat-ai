@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import sharp from 'sharp';
 import { articleWithHtml, findHtmlNode } from '../src/html-document.js';
 import { AIConversationMessageSchema, aiEditTargets, buildAIEdit, createAIReference } from '../src/ai-edit.js';
 
@@ -42,6 +43,12 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
       if (!input.article.html || !body.input[0].content[0].text.includes('article.html')) throw new Error('Missing HTML model context');
       if ('scope' in input) throw new Error('Manual scope must not be sent');
       if ('layoutDesign' in input.article || input.article.blocks.some(block => block.runs || block.text.length > 40)) throw new Error('HTML article must send block outline only');
+      if (input.prompt === 'insert-attachment') {
+        const image = input.insertableImages?.[0];
+        const content = body.input[1].content;
+        if (!image?.width || !content.some(item => item.type === 'input_text' && item.text.includes(image.assetId)) || !content.some(item => item.type === 'input_image')) throw new Error('Missing insertable image');
+        return Response.json({output_text:JSON.stringify({message:'已插入附件图片',operations:[{type:'setHtml',intent:'content',html:input.article.html + '<img data-asset-id="' + image.assetId + '" alt="附件图">'}]})});
+      }
       if (input.prompt === 'ambiguous') return Response.json({output_text:JSON.stringify({message:'需要调整哪一段？',operations:[]})});
       if (input.prompt === 'garbage') return Response.json({output_text:'not json'});
       if (input.prompt === 'unsupported-styles' && !input.previousValidationError) return Response.json({output_text:JSON.stringify({message:'调整样式',operations:[{type:'setHtml',html:input.article.html.replace('padding:16px;', 'padding:8px;display:grid;')}]})});
@@ -110,6 +117,14 @@ test('HTML 自动修改接口：选区、全文、主动定位、多轮延续与
     assert.match(concurrent.find(result => result.status === 429).data.error.message, /已有生成任务进行中/);
     const differentSources = await Promise.all(Array.from({ length: 3 }, (_, i) => request('slow', { headers: { 'X-Forwarded-For': `192.0.2.${i + 1}` } })));
     assert.deepEqual(differentSources.map(result => result.status), [200, 200, 200]);
+    const form = new FormData();
+    form.append('file', new Blob([await sharp({ create: { width: 4, height: 3, channels: 3, background: '#99bda1' } }).png().toBuffer()], { type: 'image/png' }), 'photo.png');
+    const { attachment } = await (await fetch(`http://127.0.0.1:${port}/api/articles/edit/attachments`, { method: 'POST', body: form })).json();
+    assert.deepEqual([attachment.width, attachment.height], [4, 3]);
+    const inserted = await request('insert-attachment', { references: [], attachments: [{ kind: 'image', name: attachment.name, assetId: attachment.assetId }] });
+    assert.equal(inserted.status, 200);
+    assert.match(buildAIEdit(article, inserted.data.operations, { assetIds: [attachment.assetId] }).html, new RegExp(attachment.assetId));
+    assert.equal((await request('insert-attachment', { references: [] })).data.error.code, 'AI_EDIT_FAILED');
     const ambiguous = await request('ambiguous', { references: [] });
     assert.equal(ambiguous.status, 200);
     assert.deepEqual(ambiguous.data.operations, []);

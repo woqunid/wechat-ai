@@ -80,7 +80,7 @@ function checkedArticle(article, allowedAssets) {
   if (new Set(parsed.blocks.map(block => block.id)).size !== parsed.blocks.length) throw new Error('内容段落编号不能重复');
   if (parsed.blocks.filter(isImageBlock).length > 10) throw new Error('正文最多添加10张图片');
   for (const block of parsed.blocks) {
-    if (isImageBlock(block) && !allowedAssets.has(block.assetId)) throw new Error('只能使用当前文章已有图片，不能生成或替换图片资源');
+    if (isImageBlock(block) && !allowedAssets.has(block.assetId)) throw new Error('只能使用当前文章已有图片或本轮附件图片，不能生成图片资源');
     if (block.type === 'heading' && block.runs && block.runs.map(run => run.text).join('') !== block.text) throw new Error('标题文字和文字格式内容不一致');
   }
   return parsed;
@@ -94,7 +94,7 @@ function checkReadability(before, after) {
   return after;
 }
 
-export function buildAIEdit(article, operations, { references = [] } = {}) {
+export function buildAIEdit(article, operations, { references = [], assetIds = [] } = {}) {
   if (article.html) {
     let html = article.html;
     const used = new Set();
@@ -125,8 +125,8 @@ export function buildAIEdit(article, operations, { references = [] } = {}) {
     if (!operations.length) return structuredClone(article);
     const safe = sanitizeHtml(html);
     if (renderHtmlDocument(safe, new Map(), { mode: 'source' }) === renderHtmlDocument(article.html, new Map(), { mode: 'source' })) throw new Error('方案没有产生有效变化，请修改实际生效的内联样式或内容');
-    const allowed = new Set(htmlElements(htmlTree(article.html)).filter(node => node.name === 'img').map(node => node.attribs['data-asset-id']));
-    for (const node of htmlElements(htmlTree(safe))) if (node.name === 'img' && !allowed.has(node.attribs['data-asset-id'])) throw new Error('只能使用当前文章已有图片，请先从图片库插入图片');
+    const allowed = new Set([...htmlElements(htmlTree(article.html)).filter(node => node.name === 'img').map(node => node.attribs['data-asset-id']), ...assetIds]);
+    for (const node of htmlElements(htmlTree(safe))) if (node.name === 'img' && !allowed.has(node.attribs['data-asset-id'])) throw new Error('只能使用当前文章已有图片或本轮附件图片');
     return checkReadability(article, ArticleSchema.parse(articleWithHtml(article, safe)));
   }
   const next = structuredClone(article);
@@ -154,7 +154,7 @@ export function buildAIEdit(article, operations, { references = [] } = {}) {
       next.blocks.splice(index, 0, block);
     }
   }
-  const result = checkedArticle(next, new Set(article.blocks.filter(isImageBlock).map(block => block.assetId)));
+  const result = checkedArticle(next, new Set([...article.blocks.filter(isImageBlock).map(block => block.assetId), ...assetIds]));
   if (design) result.layoutDesign = validateLayoutDesign(design, result);
   return checkReadability(article, result);
 }
@@ -265,7 +265,7 @@ export function mergeAIEdit(base, candidate, current) {
     const at = previousId ? merged.blocks.findIndex(item => item.id === previousId) + 1 : 0;
     merged.blocks.splice(at, 0, moving);
   }
-  return checkReadability(current, checkedArticle(merged, new Set(current.blocks.filter(isImageBlock).map(block => block.assetId))));
+  return checkReadability(current, checkedArticle(merged, new Set([...current.blocks, ...candidate.blocks].filter(isImageBlock).map(block => block.assetId))));
 }
 
 export function revertAIEdit(base, candidate, key) {
@@ -329,6 +329,8 @@ function layoutDescription(design) {
   const nodes = values => values.flatMap(node => node.type === 'group' ? [`分组：${styleText(node.style)}`, ...nodes(node.children)] : [`${node.ref === 'title' ? '标题' : node.ref === 'summary' ? '摘要' : '内容段落'}：${styleText(node.style)}${node.emphasis?.length ? `；强调：${node.emphasis.join('、')}` : ''}`]);
   return [design.name, styleText(design.page), ...Object.entries(design.rules).map(([type, style]) => `${({ title: '标题', summary: '摘要', heading: '小标题', paragraph: '正文', quote: '引用', list: '列表', image: '图片', callout: '重点', divider: '分隔线' })[type]}：${styleText(style)}`), ...nodes(design.nodes)].join('\n');
 }
+const imageCount = text => text.split('\uFFFC').length - 1;
+const addedImagesOnly = (before, after) => imageCount(after) > imageCount(before) && before.replace(/\uFFFC|\s/g, '') === after.replace(/\uFFFC|\s/g, '');
 export function describeAIEdit(base, candidate) {
   if (base.html || candidate.html) {
     if (base.html === candidate.html) return [];
@@ -340,7 +342,7 @@ export function describeAIEdit(base, candidate) {
     return top.map(id => {
       const original = nodeText(before.get(id) || htmlTree('')), proposed = nodeText(after.get(id) || htmlTree(''));
       const styles = htmlStyleChanges(before.get(id), after.get(id));
-      return { key: `html:${id}`, label: !before.has(id) ? '新增段落' : !after.has(id) ? '删除段落' : original === proposed ? '调整自定义版式' : '修改内容与版式', before: original.slice(0, 800) || '空', after: [proposed.slice(0, 800) || '空', ...new Set(styles)].join('\n') };
+      return { key: `html:${id}`, label: !after.has(id) ? '删除段落' : addedImagesOnly(original, proposed) ? '插入图片' : !before.has(id) ? '新增段落' : original === proposed ? '调整自定义版式' : '修改内容与版式', before: original.slice(0, 800) || '空', after: [proposed.slice(0, 800) || '空', ...new Set(styles)].join('\n') };
     });
   }
   const changes = [];
@@ -351,7 +353,7 @@ export function describeAIEdit(base, candidate) {
     if (!same(block, next)) changes.push({ key: `block:${block.id}`, label: `${next ? '修改' : '删除'}第${index + 1}${isImageBlock(block) ? '项图片' : '段'}`, before: blockDescription(block), after: next ? blockDescription(next) : '已删除' });
   });
   candidate.blocks.forEach((block, index) => {
-    if (!base.blocks.some(item => item.id === block.id)) changes.push({ key: `block:${block.id}`, label: `新增第${index + 1}段`, before: '无', after: blockDescription(block) });
+    if (!base.blocks.some(item => item.id === block.id)) changes.push({ key: `block:${block.id}`, label: isImageBlock(block) ? `在第${index + 1}项插入图片` : `新增第${index + 1}段`, before: '无', after: blockDescription(block) });
     else if (moved.has(block.id)) changes.push({ key: `block:${block.id}`, label: `${isImageBlock(block) ? '图片' : '段落'}位置调整`, before: `第${base.blocks.findIndex(item => item.id === block.id) + 1}项`, after: `第${index + 1}项` });
   });
   if (!same(base.layoutDesign, candidate.layoutDesign)) changes.push({ key: 'layout', label: '调整整篇版式（影响全文）', before: layoutDescription(base.layoutDesign), after: layoutDescription(candidate.layoutDesign) });

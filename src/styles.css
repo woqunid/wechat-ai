@@ -1178,7 +1178,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .ai-edit-attachment-icon { display: grid; flex: 0 0 30px; width: 30px; height: 32px; place-items: center; border: 1px solid var(--border-subtle); border-radius: 4px; color: var(--text-secondary); background: white; }
 .ai-edit-attachment-meta { min-width: 0; flex: 1; }
 .ai-edit-attachment-meta strong { display: block; overflow: hidden; font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.ai-edit-attachment-meta small { display: block; margin-top: 3px; color: var(--text-secondary); font-size: 9px; }
+.ai-edit-attachment-meta small { display: block; margin-top: 3px; overflow: hidden; color: var(--text-secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .ai-edit-attachment-images { display: flex; align-items: center; gap: 2px; }
 .ai-edit-attachment-images img { width: 20px; height: 24px; object-fit: cover; border-radius: 2px; }
 .ai-edit-attachment-images small { color: var(--text-secondary); font-size: 9px; }
@@ -2384,7 +2384,18 @@ body { background: var(--bg-page); background-image: none; font-size: 14px; }
 .ai-edit-composer:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-glow); }
 .ai-edit-composer textarea { min-height: 55px; max-height: 120px; padding: 2px 1px; font-size: 11px; line-height: 1.7; }
 .ai-edit-composer textarea::placeholder { color: var(--text-tertiary); }
-.ai-edit-composer-footer { display: grid; grid-template-columns: 28px minmax(0,1fr) 28px; align-items: center; gap: 5px; margin-top: 5px; }
+.ai-edit-composer-footer { display: grid; grid-template-columns: 60px minmax(0,1fr) 60px; align-items: center; gap: 5px; margin-top: 5px; }
+.ai-edit-composer-footer > .ai-edit-send { justify-self: end; }
+.ai-edit-composer-tools { display: flex; gap: 2px; }
+.ai-edit-upload.on { color: var(--primary); background: var(--primary-subtle); }
+.ai-edit-link { display: flex; align-items: center; gap: 6px; height: 32px; margin-bottom: 7px; padding: 0 4px 0 9px; border: 1px solid var(--border-subtle); border-radius: 6px; color: var(--text-secondary); background: var(--bg-subtle); transition: border-color 150ms, background 150ms; }
+.ai-edit-link:focus-within { border-color: var(--primary-border); background: white; }
+.ai-edit-link input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--text-main); font-size: 11px; }
+.ai-edit-link input::placeholder { color: var(--text-tertiary); }
+.ai-edit-link-add { display: grid; place-items: center; min-width: 40px; height: 24px; padding: 0 9px; border-radius: 4px; color: white; background: var(--primary); font-size: 10px; }
+.ai-edit-link-add:disabled { opacity: .45; cursor: not-allowed; }
+.ai-edit-link-close { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; color: var(--text-secondary); }
+.ai-edit-link-close:hover:not(:disabled) { background: var(--border-subtle); }
 .ai-edit-composer-footer > span { color: var(--text-tertiary); font-size: 9px; }
 .ai-edit-attachments { max-height: 92px; }
 .ai-edit-attachment { flex-basis: 170px; min-height: 42px; padding: 5px 22px 5px 5px; }
